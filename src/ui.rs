@@ -18,7 +18,9 @@ use crate::riot::launcher_session::{
     CapturedLauncherSession, apply_launcher_session_backup, capture_current_launcher_session,
     clear_existing_launcher_data_dirs, launcher_cookie_header, read_backup_cookies,
 };
-use crate::riot::models::{BonusStoreOffer, PlayerLoadoutResponse, StoreOffer, StorefrontResponse};
+use crate::riot::models::{
+    BonusStoreOffer, BundleItem, PlayerLoadoutResponse, StoreOffer, StorefrontResponse,
+};
 use crate::storage::{AccountRepository, StoredState};
 
 pub fn run() -> iced::Result {
@@ -621,26 +623,20 @@ impl PrimeApp {
                     summary.bundle_remaining_seconds
                 )))
                 .push(text(format!(
+                    "Bundle items: {}",
+                    offer_labels(&summary.featured_bundle_items)
+                )))
+                .push(text(format!(
                     "Daily offers expire in {} seconds",
                     summary.daily_remaining_seconds
                 )))
                 .push(text(format!(
                     "Daily offers: {}",
-                    summary
-                        .daily_offers
-                        .iter()
-                        .map(StoreOfferDisplay::label)
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    offer_labels(&summary.daily_offers)
                 )))
                 .push(text(format!(
                     "Night market offers: {}",
-                    summary
-                        .night_market_offers
-                        .iter()
-                        .map(StoreOfferDisplay::label)
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    offer_labels(&summary.night_market_offers)
                 )));
         }
 
@@ -810,6 +806,7 @@ struct LoadoutResult {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StoreSummary {
+    featured_bundle_items: Vec<StoreOfferDisplay>,
     daily_offers: Vec<StoreOfferDisplay>,
     daily_remaining_seconds: i64,
     bundle_remaining_seconds: i64,
@@ -822,6 +819,13 @@ impl StoreSummary {
         skins: &SkinCatalog,
         currencies: &CurrencyCatalog,
     ) -> Self {
+        let featured_bundle_items = response
+            .featured_bundle
+            .bundle
+            .items
+            .iter()
+            .map(|item| bundle_item_display(item, skins, currencies))
+            .collect();
         let daily_offers = response
             .skins_panel_layout
             .single_item_offers
@@ -848,6 +852,7 @@ impl StoreSummary {
             .unwrap_or_default();
 
         Self {
+            featured_bundle_items,
             daily_offers,
             daily_remaining_seconds: response
                 .skins_panel_layout
@@ -958,6 +963,25 @@ fn bonus_store_offer_display(
     }
 }
 
+fn bundle_item_display(
+    item: &BundleItem,
+    skins: &SkinCatalog,
+    currencies: &CurrencyCatalog,
+) -> StoreOfferDisplay {
+    StoreOfferDisplay {
+        skin: SkinDisplay::from(skins.resolve(&item.item.item_id)),
+        price: Some(OfferPrice {
+            amount: if item.discounted_price > 0 {
+                item.discounted_price
+            } else {
+                item.base_price
+            },
+            currency: CurrencyDisplay::from(currencies.resolve(&item.currency_id)),
+        }),
+        discount_percent: item.discount_percent,
+    }
+}
+
 fn offer_price(
     costs: &std::collections::HashMap<String, i64>,
     currencies: &CurrencyCatalog,
@@ -968,6 +992,18 @@ fn offer_price(
         amount: *amount,
         currency: CurrencyDisplay::from(currencies.resolve(currency_id)),
     })
+}
+
+fn offer_labels(offers: &[StoreOfferDisplay]) -> String {
+    if offers.is_empty() {
+        "none".to_string()
+    } else {
+        offers
+            .iter()
+            .map(StoreOfferDisplay::label)
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1300,7 +1336,18 @@ mod tests {
                     "ID": "bundle",
                     "DataAssetID": "asset",
                     "CurrencyID": "vp",
-                    "Items": [],
+                    "Items": [{
+                        "Item": {
+                            "ItemTypeID": "skin-type",
+                            "ItemID": "a",
+                            "Amount": 1
+                        },
+                        "BasePrice": 1775,
+                        "CurrencyID": "vp",
+                        "DiscountPercent": 20,
+                        "DiscountedPrice": 1420,
+                        "IsPromoItem": false
+                    }],
                     "DurationRemainingInSeconds": 10
                 },
                 "Bundles": [],
@@ -1362,6 +1409,14 @@ mod tests {
         }]);
         let summary = StoreSummary::from_response(response, &catalog, &currencies);
 
+        assert_eq!(
+            summary
+                .featured_bundle_items
+                .iter()
+                .map(StoreOfferDisplay::label)
+                .collect::<Vec<_>>(),
+            ["Prime Vandal Level 1 (1420 VP), 20% off"]
+        );
         assert_eq!(
             summary
                 .daily_offers

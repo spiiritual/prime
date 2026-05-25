@@ -15,6 +15,7 @@ Current scope:
 - Cache refreshed Riot API sessions and entitlement tokens after successful shop/loadout checks.
 - Query the unofficial player store and player loadout endpoints when a valid token, entitlement token, PUUID, shard, and client version are available.
 - Resolve store/loadout skin UUIDs and store currency IDs to display names through the public Valorant content API.
+- Display featured bundle items, daily offers, and Night Market offers with resolved prices where available.
 - Resolve loadout weapon IDs so equipped skins are shown by weapon.
 - Fetch the current Riot client version automatically from the public Valorant version endpoint.
 
