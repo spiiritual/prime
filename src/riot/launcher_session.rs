@@ -89,6 +89,34 @@ pub fn apply_launcher_session_backup_to_dir(
     replace_dir_contents(&backup.data_dir, target_data_dir.as_ref())
 }
 
+pub fn read_backup_cookies(
+    backup: &LauncherSessionBackup,
+) -> Result<Vec<LauncherCookie>, LauncherSessionError> {
+    let settings_path = backup.data_dir.join(PRIVATE_SETTINGS_FILE);
+    let settings = fs::read_to_string(&settings_path).map_err(|source| {
+        LauncherSessionError::ReadPrivateSettings {
+            path: settings_path,
+            source,
+        }
+    })?;
+
+    Ok(parse_private_settings_cookies(&settings))
+}
+
+pub fn launcher_cookie_header(cookies: &[LauncherCookie]) -> Result<String, LauncherSessionError> {
+    let usable = cookies
+        .iter()
+        .filter(|cookie| !cookie.name.trim().is_empty() && !cookie.value.trim().is_empty())
+        .map(|cookie| format!("{}={}", cookie.name.trim(), cookie.value.trim()))
+        .collect::<Vec<_>>();
+
+    if !usable.iter().any(|cookie| cookie.starts_with("ssid=")) {
+        return Err(LauncherSessionError::MissingSsid);
+    }
+
+    Ok(usable.join("; "))
+}
+
 pub fn parse_private_settings_cookies(contents: &str) -> Vec<LauncherCookie> {
     let mut cookies = Vec::new();
     let mut current_name: Option<String> = None;
@@ -297,6 +325,16 @@ rso-authenticator:
             cookie_value(&cookies, "sub").as_deref(),
             Some("puuid-value")
         );
+    }
+
+    #[test]
+    fn builds_cookie_reauth_header() {
+        let cookies = parse_private_settings_cookies(sample_private_settings());
+
+        let header = launcher_cookie_header(&cookies).expect("cookie header");
+
+        assert!(header.contains("ssid=ssid-value"));
+        assert!(header.contains("sub=puuid-value"));
     }
 
     #[test]

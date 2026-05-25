@@ -1,8 +1,9 @@
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE, LOCATION};
 use thiserror::Error;
 
 use crate::account::Shard;
 
+use super::auth::{AuthParseError, COOKIE_REAUTH_URL, RedirectTokens, parse_redirect_tokens};
 use super::endpoints::{
     CLIENT_PLATFORM, ENTITLEMENTS_URL, HEADER_CLIENT_PLATFORM, HEADER_CLIENT_VERSION,
     HEADER_ENTITLEMENTS, PLAYER_INFO_URL, player_loadout_url, storefront_url,
@@ -45,6 +46,7 @@ impl ApiCredentials {
 #[derive(Clone)]
 pub struct RiotApi {
     client: reqwest::Client,
+    no_redirect_client: reqwest::Client,
 }
 
 impl RiotApi {
@@ -53,8 +55,33 @@ impl RiotApi {
             .cookie_store(true)
             .user_agent("prime-valorant-manager/0.1")
             .build()?;
+        let no_redirect_client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .user_agent("prime-valorant-manager/0.1")
+            .build()?;
 
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            no_redirect_client,
+        })
+    }
+
+    pub async fn cookie_reauth(&self, cookie_header: &str) -> Result<RedirectTokens, RiotApiError> {
+        let response = self
+            .no_redirect_client
+            .get(COOKIE_REAUTH_URL)
+            .header(COOKIE, cookie_header)
+            .send()
+            .await?;
+        let location = response
+            .headers()
+            .get(LOCATION)
+            .ok_or(RiotApiError::MissingRedirectLocation)?
+            .to_str()
+            .map_err(|_| RiotApiError::InvalidRedirectLocation)?
+            .to_string();
+
+        parse_redirect_tokens(&location).map_err(RiotApiError::AuthParse)
     }
 
     pub async fn entitlement(
@@ -147,6 +174,12 @@ pub enum RiotApiError {
     MissingField(&'static str),
     #[error("invalid header value: {0}")]
     Header(#[from] reqwest::header::InvalidHeaderValue),
+    #[error("cookie reauth response did not include a redirect location")]
+    MissingRedirectLocation,
+    #[error("cookie reauth redirect location header was not valid UTF-8")]
+    InvalidRedirectLocation,
+    #[error("cookie reauth redirect did not contain Riot tokens: {0}")]
+    AuthParse(#[from] AuthParseError),
     #[error("Riot API HTTP error: {0}")]
     Http(#[from] reqwest::Error),
 }

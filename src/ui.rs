@@ -11,6 +11,7 @@ use crate::riot::client::{ApiCredentials, RiotApi};
 use crate::riot::content::{ResolvedSkin, SkinCatalog, ValorantContentApi};
 use crate::riot::launcher_session::{
     CapturedLauncherSession, apply_launcher_session_backup, capture_current_launcher_session,
+    launcher_cookie_header, read_backup_cookies,
 };
 use crate::riot::models::{PlayerLoadoutResponse, StorefrontResponse};
 use crate::storage::{AccountRepository, StoredState};
@@ -774,18 +775,17 @@ async fn resolve_credentials(
     account: &AccountProfile,
     client_version: String,
 ) -> Result<ApiCredentials, String> {
-    let session = account
-        .session
-        .as_ref()
-        .ok_or_else(|| "selected account does not have an imported Riot token".to_string())?;
+    let session = active_api_session(api, account).await?;
 
-    if session.is_expired() {
-        return Err("selected account token is expired; import a fresh redirect token".to_string());
-    }
-
-    let entitlements_token = entitlement_token(api, session).await?;
+    let entitlements_token = entitlement_token(api, &session).await?;
     let puuid = match &account.puuid {
         Some(puuid) if !puuid.trim().is_empty() => puuid.clone(),
+        _ if account.launcher_session.is_some() => account
+            .launcher_session
+            .as_ref()
+            .map(|backup| backup.puuid.clone())
+            .filter(|puuid| !puuid.trim().is_empty())
+            .unwrap_or_default(),
         _ => {
             api.player_info(&session.access_token)
                 .await
@@ -801,6 +801,35 @@ async fn resolve_credentials(
         shard: account.shard,
         puuid,
     })
+}
+
+async fn active_api_session(
+    api: &RiotApi,
+    account: &AccountProfile,
+) -> Result<AuthSession, String> {
+    if let Some(session) = &account.session
+        && !session.is_expired()
+    {
+        return Ok(session.clone());
+    }
+
+    let Some(backup) = &account.launcher_session else {
+        return Err(
+            "selected account needs an imported Riot token or a captured launcher session"
+                .to_string(),
+        );
+    };
+
+    let cookies = read_backup_cookies(backup).map_err(|error| error.to_string())?;
+    let cookie_header = launcher_cookie_header(&cookies).map_err(|error| error.to_string())?;
+    api.cookie_reauth(&cookie_header)
+        .await
+        .map(|tokens| tokens.into_session())
+        .map_err(|error| {
+            format!(
+                "launcher session reauth failed; recapture the Riot Client session or import a fresh redirect token: {error}"
+            )
+        })
 }
 
 async fn entitlement_token(api: &RiotApi, session: &AuthSession) -> Result<String, String> {
