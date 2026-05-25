@@ -12,6 +12,7 @@ Current scope:
 - Refresh a profile's PUUID and Riot ID from a stored API token or captured launcher session.
 - Import Riot web redirect tokens for API access.
 - Re-authenticate API requests from a captured remembered launcher session when possible.
+- Cache refreshed Riot API sessions and entitlement tokens after successful shop/loadout checks.
 - Query the unofficial player store and player loadout endpoints when a valid token, entitlement token, PUUID, shard, and client version are available.
 - Resolve store/loadout skin UUIDs and store currency IDs to display names through the public Valorant content API.
 - Resolve loadout weapon IDs so equipped skins are shown by weapon.

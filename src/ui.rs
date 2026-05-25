@@ -359,13 +359,20 @@ impl PrimeApp {
             }
             Message::StorefrontLoaded(result) => {
                 match result {
-                    Ok(summary) => {
+                    Ok(result) => {
+                        cache_account_session(&mut self.state, result.account_id, result.session);
+                        let daily_count = result.summary.daily_offers.len();
+                        let night_market_count = result.summary.night_market_offers.len();
+
                         self.status = format!(
                             "Loaded {} daily offer(s) and {} night market offer(s)",
-                            summary.daily_offers.len(),
-                            summary.night_market_offers.len()
+                            daily_count, night_market_count
                         );
-                        self.store_summary = Some(summary);
+                        if self.state.selected_account == Some(result.account_id) {
+                            self.store_summary = Some(result.summary);
+                        }
+
+                        return self.save_task();
                     }
                     Err(error) => {
                         self.status = format!("Store check failed: {error}");
@@ -388,12 +395,16 @@ impl PrimeApp {
             }
             Message::LoadoutLoaded(result) => {
                 match result {
-                    Ok(summary) => {
-                        self.status = format!(
-                            "Loaded loadout with {} gun skin(s)",
-                            summary.gun_skins.len()
-                        );
-                        self.loadout_summary = Some(summary);
+                    Ok(result) => {
+                        cache_account_session(&mut self.state, result.account_id, result.session);
+                        let gun_count = result.summary.gun_skins.len();
+
+                        self.status = format!("Loaded loadout with {} gun skin(s)", gun_count);
+                        if self.state.selected_account == Some(result.account_id) {
+                            self.loadout_summary = Some(result.summary);
+                        }
+
+                        return self.save_task();
                     }
                     Err(error) => {
                         self.status = format!("Loadout check failed: {error}");
@@ -727,9 +738,9 @@ enum Message {
     CaptureLauncherSession,
     LauncherSessionCaptured(Result<CapturedLauncherSession, String>),
     FetchStorefront,
-    StorefrontLoaded(Result<StoreSummary, String>),
+    StorefrontLoaded(Result<StorefrontResult, String>),
     FetchLoadout,
-    LoadoutLoaded(Result<LoadoutSummary, String>),
+    LoadoutLoaded(Result<LoadoutResult, String>),
     RiotClientPathChanged(String),
     SaveSettings,
     LaunchSelected,
@@ -781,6 +792,20 @@ struct RefreshedProfileIdentity {
     puuid: String,
     game_name: String,
     tag_line: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StorefrontResult {
+    account_id: AccountId,
+    summary: StoreSummary,
+    session: AuthSession,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LoadoutResult {
+    account_id: AccountId,
+    summary: LoadoutSummary,
+    session: AuthSession,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1025,29 +1050,43 @@ impl From<ResolvedSkin> for SkinDisplay {
 async fn fetch_storefront(
     account: AccountProfile,
     client_version: String,
-) -> Result<StoreSummary, String> {
+) -> Result<StorefrontResult, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
-    let credentials = resolve_credentials(&api, &account, client_version).await?;
+    let resolved = resolve_credentials(&api, &account, client_version).await?;
     let metadata = fetch_store_metadata().await;
-    api.storefront(&credentials)
+    let summary = api
+        .storefront(&resolved.credentials)
         .await
         .map(|response| {
             StoreSummary::from_response(response, &metadata.skins, &metadata.currencies)
         })
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+
+    Ok(StorefrontResult {
+        account_id: account.id,
+        summary,
+        session: resolved.session,
+    })
 }
 
 async fn fetch_loadout(
     account: AccountProfile,
     client_version: String,
-) -> Result<LoadoutSummary, String> {
+) -> Result<LoadoutResult, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
-    let credentials = resolve_credentials(&api, &account, client_version).await?;
+    let resolved = resolve_credentials(&api, &account, client_version).await?;
     let metadata = fetch_loadout_metadata().await;
-    api.player_loadout(&credentials)
+    let summary = api
+        .player_loadout(&resolved.credentials)
         .await
         .map(|response| LoadoutSummary::from_response(response, &metadata.skins, &metadata.weapons))
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+
+    Ok(LoadoutResult {
+        account_id: account.id,
+        summary,
+        session: resolved.session,
+    })
 }
 
 async fn fetch_profile_identity(
@@ -1133,10 +1172,18 @@ async fn resolve_credentials(
     api: &RiotApi,
     account: &AccountProfile,
     client_version: String,
-) -> Result<ApiCredentials, String> {
-    let session = active_api_session(api, account).await?;
+) -> Result<ResolvedApiCredentials, String> {
+    let mut session = active_api_session(api, account).await?;
 
     let entitlements_token = entitlement_token(api, &session).await?;
+    if session
+        .entitlements_token
+        .as_ref()
+        .is_none_or(|token| token.trim().is_empty())
+    {
+        session.entitlements_token = Some(entitlements_token.clone());
+    }
+
     let puuid = match &account.puuid {
         Some(puuid) if !puuid.trim().is_empty() => puuid.clone(),
         _ if account.launcher_session.is_some() => account
@@ -1153,13 +1200,22 @@ async fn resolve_credentials(
         }
     };
 
-    Ok(ApiCredentials {
-        access_token: session.access_token.clone(),
-        entitlements_token,
-        client_version,
-        shard: account.shard,
-        puuid,
+    Ok(ResolvedApiCredentials {
+        credentials: ApiCredentials {
+            access_token: session.access_token.clone(),
+            entitlements_token,
+            client_version,
+            shard: account.shard,
+            puuid,
+        },
+        session,
     })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ResolvedApiCredentials {
+    credentials: ApiCredentials,
+    session: AuthSession,
 }
 
 async fn active_api_session(
@@ -1212,6 +1268,23 @@ fn non_empty_path(input: &str) -> Option<PathBuf> {
     } else {
         Some(PathBuf::from(trimmed))
     }
+}
+
+fn cache_account_session(
+    state: &mut StoredState,
+    account_id: AccountId,
+    session: AuthSession,
+) -> bool {
+    let Some(account) = state
+        .accounts
+        .iter_mut()
+        .find(|account| account.id == account_id)
+    else {
+        return false;
+    };
+
+    account.session = Some(session);
+    true
 }
 
 #[cfg(test)]
@@ -1392,5 +1465,40 @@ mod tests {
         let accepted = require_launcher_session(Some(backup)).expect("ready backup");
 
         assert_eq!(accepted.puuid, "puuid");
+    }
+
+    #[test]
+    fn cache_account_session_updates_matching_account() {
+        let mut state = StoredState::default();
+        let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let account_id = account.id;
+        state.push_account(account);
+        let session = AuthSession::new(
+            "access",
+            None,
+            Some("entitlement".to_string()),
+            "Bearer",
+            Some(3600),
+            100,
+        );
+
+        assert!(cache_account_session(
+            &mut state,
+            account_id,
+            session.clone()
+        ));
+        assert_eq!(state.accounts[0].session, Some(session));
+    }
+
+    #[test]
+    fn cache_account_session_ignores_missing_account() {
+        let mut state = StoredState::default();
+        let session = AuthSession::new("access", None, None, "Bearer", Some(3600), 100);
+
+        assert!(!cache_account_session(
+            &mut state,
+            AccountId::new(),
+            session
+        ));
     }
 }
