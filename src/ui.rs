@@ -11,7 +11,8 @@ use crate::launch::{
 use crate::riot::auth::parse_redirect_tokens;
 use crate::riot::client::{ApiCredentials, RiotApi};
 use crate::riot::content::{
-    CurrencyCatalog, ResolvedCurrency, ResolvedSkin, SkinCatalog, ValorantContentApi,
+    CurrencyCatalog, ResolvedCurrency, ResolvedSkin, ResolvedWeapon, SkinCatalog,
+    ValorantContentApi, WeaponCatalog,
 };
 use crate::riot::launcher_session::{
     CapturedLauncherSession, apply_launcher_session_backup, capture_current_launcher_session,
@@ -650,7 +651,7 @@ impl PrimeApp {
                     summary
                         .gun_skins
                         .iter()
-                        .map(|skin| skin.display_name.as_str())
+                        .map(LoadoutGunDisplay::label)
                         .collect::<Vec<_>>()
                         .join(", ")
                 )));
@@ -927,23 +928,59 @@ fn offer_price(
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LoadoutSummary {
     account_level: i64,
-    gun_skins: Vec<SkinDisplay>,
+    gun_skins: Vec<LoadoutGunDisplay>,
 }
 
 impl LoadoutSummary {
-    fn from_response(response: PlayerLoadoutResponse, catalog: &SkinCatalog) -> Self {
+    fn from_response(
+        response: PlayerLoadoutResponse,
+        skins: &SkinCatalog,
+        weapons: &WeaponCatalog,
+    ) -> Self {
         Self {
             account_level: response.identity.account_level,
             gun_skins: response
                 .guns
                 .into_iter()
                 .map(|gun| {
-                    SkinDisplay::from(resolve_first(
-                        catalog,
+                    let weapon = WeaponDisplay::from(weapons.resolve(&gun.id));
+                    let skin = SkinDisplay::from(resolve_first(
+                        skins,
                         [&gun.skin_id, &gun.skin_level_id, &gun.chroma_id],
-                    ))
+                    ));
+
+                    LoadoutGunDisplay { weapon, skin }
                 })
                 .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LoadoutGunDisplay {
+    weapon: WeaponDisplay,
+    skin: SkinDisplay,
+}
+
+impl LoadoutGunDisplay {
+    fn label(&self) -> String {
+        format!("{}: {}", self.weapon.display_name, self.skin.display_name)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct WeaponDisplay {
+    uuid: String,
+    display_name: String,
+    display_icon: Option<String>,
+}
+
+impl From<ResolvedWeapon> for WeaponDisplay {
+    fn from(weapon: ResolvedWeapon) -> Self {
+        Self {
+            uuid: weapon.uuid,
+            display_name: weapon.display_name,
+            display_icon: weapon.display_icon,
         }
     }
 }
@@ -986,10 +1023,10 @@ async fn fetch_loadout(
 ) -> Result<LoadoutSummary, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
     let credentials = resolve_credentials(&api, &account, client_version).await?;
-    let catalog = fetch_skin_catalog().await;
+    let metadata = fetch_loadout_metadata().await;
     api.player_loadout(&credentials)
         .await
-        .map(|response| LoadoutSummary::from_response(response, &catalog))
+        .map(|response| LoadoutSummary::from_response(response, &metadata.skins, &metadata.weapons))
         .map_err(|error| error.to_string())
 }
 
@@ -1012,13 +1049,6 @@ async fn fetch_profile_identity(
     })
 }
 
-async fn fetch_skin_catalog() -> SkinCatalog {
-    match ValorantContentApi::new() {
-        Ok(api) => api.skin_catalog().await.unwrap_or_default(),
-        Err(_) => SkinCatalog::default(),
-    }
-}
-
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct StoreMetadata {
     skins: SkinCatalog,
@@ -1032,6 +1062,22 @@ async fn fetch_store_metadata() -> StoreMetadata {
             currencies: api.currency_catalog().await.unwrap_or_default(),
         },
         Err(_) => StoreMetadata::default(),
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct LoadoutMetadata {
+    skins: SkinCatalog,
+    weapons: WeaponCatalog,
+}
+
+async fn fetch_loadout_metadata() -> LoadoutMetadata {
+    match ValorantContentApi::new() {
+        Ok(api) => LoadoutMetadata {
+            skins: api.skin_catalog().await.unwrap_or_default(),
+            weapons: api.weapon_catalog().await.unwrap_or_default(),
+        },
+        Err(_) => LoadoutMetadata::default(),
     }
 }
 
@@ -1272,10 +1318,15 @@ mod tests {
             levels: vec![],
             chromas: vec![],
         }]);
+        let weapons = WeaponCatalog::from_weapons(vec![crate::riot::content::Weapon {
+            uuid: "weapon".to_string(),
+            display_name: "Vandal".to_string(),
+            display_icon: None,
+        }]);
 
-        let summary = LoadoutSummary::from_response(response, &catalog);
+        let summary = LoadoutSummary::from_response(response, &catalog, &weapons);
 
-        assert_eq!(summary.gun_skins[0].display_name, "Prime Vandal");
+        assert_eq!(summary.gun_skins[0].label(), "Vandal: Prime Vandal");
     }
 
     #[test]

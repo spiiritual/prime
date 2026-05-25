@@ -13,6 +13,7 @@ Current scope:
 - Re-authenticate API requests from a captured remembered launcher session when possible.
 - Query the unofficial player store and player loadout endpoints when a valid token, entitlement token, PUUID, shard, and client version are available.
 - Resolve store/loadout skin UUIDs and store currency IDs to display names through the public Valorant content API.
+- Resolve loadout weapon IDs so equipped skins are shown by weapon.
 - Fetch the current Riot client version automatically from the public Valorant version endpoint.
 
 Notes:

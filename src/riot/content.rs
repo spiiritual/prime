@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use thiserror::Error;
 
+pub const WEAPONS_URL: &str = "https://valorant-api.com/v1/weapons";
 pub const WEAPON_SKINS_URL: &str = "https://valorant-api.com/v1/weapons/skins";
 pub const CURRENCIES_URL: &str = "https://valorant-api.com/v1/currencies";
 pub const VERSION_URL: &str = "https://valorant-api.com/v1/version";
@@ -34,6 +35,19 @@ impl ValorantContentApi {
         Ok(SkinCatalog::from_skins(response.data))
     }
 
+    pub async fn weapon_catalog(&self) -> Result<WeaponCatalog, ContentError> {
+        let response: ApiResponse<Vec<Weapon>> = self
+            .client
+            .get(WEAPONS_URL)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        Ok(WeaponCatalog::from_weapons(response.data))
+    }
+
     pub async fn currency_catalog(&self) -> Result<CurrencyCatalog, ContentError> {
         let response: ApiResponse<Vec<Currency>> = self
             .client
@@ -58,6 +72,55 @@ impl ValorantContentApi {
             .await?;
 
         Ok(response.data.riot_client_version)
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WeaponCatalog {
+    by_uuid: HashMap<String, ResolvedWeapon>,
+}
+
+impl WeaponCatalog {
+    pub fn from_weapons(weapons: Vec<Weapon>) -> Self {
+        let by_uuid = weapons
+            .into_iter()
+            .map(|weapon| {
+                (
+                    normalize_uuid(&weapon.uuid),
+                    ResolvedWeapon {
+                        uuid: weapon.uuid,
+                        display_name: weapon.display_name,
+                        display_icon: weapon.display_icon,
+                    },
+                )
+            })
+            .collect();
+
+        Self { by_uuid }
+    }
+
+    pub fn resolve(&self, uuid: &str) -> ResolvedWeapon {
+        self.by_uuid
+            .get(&normalize_uuid(uuid))
+            .cloned()
+            .unwrap_or_else(|| ResolvedWeapon::unknown(uuid))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedWeapon {
+    pub uuid: String,
+    pub display_name: String,
+    pub display_icon: Option<String>,
+}
+
+impl ResolvedWeapon {
+    pub fn unknown(uuid: &str) -> Self {
+        Self {
+            uuid: uuid.to_string(),
+            display_name: uuid.to_string(),
+            display_icon: None,
+        }
     }
 }
 
@@ -193,6 +256,15 @@ struct ApiResponse<T> {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct Weapon {
+    pub uuid: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    #[serde(rename = "displayIcon")]
+    pub display_icon: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct WeaponSkin {
     pub uuid: String,
     #[serde(rename = "displayName")]
@@ -296,6 +368,22 @@ mod tests {
             catalog.resolve("chroma-uuid").display_icon.as_deref(),
             Some("render")
         );
+    }
+
+    #[test]
+    fn resolves_weapon_ids_to_display_names() {
+        let catalog = WeaponCatalog::from_weapons(vec![Weapon {
+            uuid: "weapon-uuid".to_string(),
+            display_name: "Vandal".to_string(),
+            display_icon: Some("weapon-icon".to_string()),
+        }]);
+
+        assert_eq!(catalog.resolve("WEAPON-UUID").display_name, "Vandal");
+        assert_eq!(
+            catalog.resolve("weapon-uuid").display_icon.as_deref(),
+            Some("weapon-icon")
+        );
+        assert_eq!(catalog.resolve("missing").display_name, "missing");
     }
 
     #[test]
