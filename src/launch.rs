@@ -56,6 +56,20 @@ pub fn launch_valorant(config: &LaunchConfig) -> Result<(), LaunchError> {
     Ok(())
 }
 
+pub fn close_riot_processes() -> Result<(), LaunchError> {
+    #[cfg(windows)]
+    {
+        for image in ["VALORANT-Win64-Shipping.exe", "RiotClientServices.exe"] {
+            let _ = Command::new("taskkill")
+                .args(["/F", "/IM", image])
+                .output()
+                .map_err(LaunchError::CloseProcess)?;
+        }
+    }
+
+    Ok(())
+}
+
 pub fn default_riot_client_candidates() -> Vec<PathBuf> {
     let mut candidates = vec![PathBuf::from(
         r"C:\Riot Games\Riot Client\RiotClientServices.exe",
@@ -120,6 +134,8 @@ pub enum LaunchError {
     RiotClientNotFound,
     #[error("failed to launch Riot Client: {0}")]
     Spawn(std::io::Error),
+    #[error("failed to close Riot process before switching accounts: {0}")]
+    CloseProcess(std::io::Error),
 }
 
 #[cfg(test)]

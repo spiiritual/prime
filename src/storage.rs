@@ -80,6 +80,13 @@ impl AccountRepository {
         &self.path
     }
 
+    pub fn launcher_backups_dir(&self) -> PathBuf {
+        self.path
+            .parent()
+            .map(|parent| parent.join("launcher-backups"))
+            .unwrap_or_else(|| PathBuf::from("launcher-backups"))
+    }
+
     pub fn load(&self) -> Result<StoredState, StorageError> {
         if !self.path.exists() {
             return Ok(StoredState::default());

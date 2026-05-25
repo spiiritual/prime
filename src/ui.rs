@@ -3,10 +3,14 @@ use std::path::PathBuf;
 use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
 use iced::{Element, Length, Task, Theme};
 
+use crate::account::LauncherSessionBackup;
 use crate::account::{AccountId, AccountProfile, AuthSession, Shard};
-use crate::launch::{LaunchConfig, launch_valorant};
+use crate::launch::{LaunchConfig, close_riot_processes, launch_valorant};
 use crate::riot::auth::parse_redirect_tokens;
 use crate::riot::client::{ApiCredentials, RiotApi};
+use crate::riot::launcher_session::{
+    CapturedLauncherSession, apply_launcher_session_backup, capture_current_launcher_session,
+};
 use crate::riot::models::{PlayerLoadoutResponse, StorefrontResponse};
 use crate::storage::{AccountRepository, StoredState};
 
@@ -185,6 +189,54 @@ impl PrimeApp {
                     }
                 }
             }
+            Message::CaptureLauncherSession => {
+                let Some(account_id) = self.state.selected_account else {
+                    self.status =
+                        "Select an account before capturing a launcher session".to_string();
+                    return Task::none();
+                };
+
+                let backup_root = self.repo.launcher_backups_dir();
+                self.status = "Capturing current Riot Client launcher session".to_string();
+
+                Task::perform(
+                    async move {
+                        capture_current_launcher_session(account_id, backup_root)
+                            .map_err(|error| error.to_string())
+                    },
+                    Message::LauncherSessionCaptured,
+                )
+            }
+            Message::LauncherSessionCaptured(result) => {
+                match result {
+                    Ok(captured) => {
+                        if let Some(account) = self
+                            .state
+                            .accounts
+                            .iter_mut()
+                            .find(|account| account.id == captured.account_id)
+                        {
+                            if account.puuid.as_deref().is_none_or(str::is_empty) {
+                                account.puuid = Some(captured.backup.puuid.clone());
+                            }
+
+                            account.launcher_session = Some(captured.backup);
+                            self.status =
+                                "Captured launcher session for selected account".to_string();
+                            return self.save_task();
+                        }
+
+                        self.status =
+                            "Captured launcher session, but the selected profile no longer exists"
+                                .to_string();
+                    }
+                    Err(error) => {
+                        self.status = format!("Launcher session capture failed: {error}");
+                    }
+                }
+
+                Task::none()
+            }
             Message::FetchStorefront => {
                 let Some(account) = self.state.selected_account().cloned() else {
                     self.status = "Select an account before checking the shop".to_string();
@@ -252,26 +304,25 @@ impl PrimeApp {
                 self.save_task()
             }
             Message::LaunchSelected => {
-                if self.state.selected_account().is_none() {
+                let Some(account) = self.state.selected_account() else {
                     self.status = "Select an account before launching".to_string();
                     return Task::none();
-                }
+                };
 
                 let config = LaunchConfig {
                     riot_client_path: self.state.riot_client_path.clone(),
                     ..LaunchConfig::default()
                 };
+                let backup = account.launcher_session.clone();
 
                 Task::perform(
-                    async move { launch_valorant(&config).map_err(|error| error.to_string()) },
+                    async move { launch_account(config, backup).await },
                     Message::LaunchFinished,
                 )
             }
             Message::LaunchFinished(result) => {
                 self.status = match result {
-                    Ok(()) => {
-                        "Sent VALORANT launch request to Riot Client. Account handoff still depends on Riot Client's signed-in user.".to_string()
-                    }
+                    Ok(()) => "Prepared selected launcher session and sent VALORANT launch request to Riot Client".to_string(),
                     Err(error) => format!("Launch failed: {error}"),
                 };
 
@@ -309,10 +360,11 @@ impl PrimeApp {
             } else {
                 " "
             };
-            let session = if account.has_api_session() {
-                "token"
-            } else {
-                "no token"
+            let session = match (account.has_api_session(), account.has_launcher_session()) {
+                (true, true) => "api + launcher",
+                (true, false) => "api",
+                (false, true) => "launcher",
+                (false, false) => "no session",
             };
             let label = format!("{prefix} {} [{session}]", account.summary());
             accounts = accounts.push(
@@ -375,9 +427,21 @@ impl PrimeApp {
             .selected_account()
             .map(|account| account.summary())
             .unwrap_or_else(|| "No account selected".to_string());
+        let launcher_session = self
+            .state
+            .selected_account()
+            .and_then(|account| account.launcher_session.as_ref())
+            .map(|backup| {
+                format!(
+                    "Launcher session: captured for {} at {}",
+                    backup.puuid, backup.captured_at_unix
+                )
+            })
+            .unwrap_or_else(|| "Launcher session: not captured".to_string());
 
         column![
             text(format!("Selected: {selected}")),
+            text(launcher_session),
             row![
                 text_input("Display name", &self.new_display_name)
                     .on_input(Message::NewDisplayNameChanged)
@@ -394,9 +458,11 @@ impl PrimeApp {
             .spacing(10),
             row![
                 button("Add account").on_press(Message::AddAccount),
-                button("Remove selected").on_press(Message::DeleteSelected)
+                button("Remove selected").on_press(Message::DeleteSelected),
+                button("Capture launcher session").on_press(Message::CaptureLauncherSession)
             ]
             .spacing(10),
+            text("Capture after logging into Riot Client with Remember Me enabled. Launching a captured account restores that Riot Client session before starting VALORANT."),
             text(""),
             text("Riot web redirect token"),
             text_input(
@@ -526,6 +592,8 @@ enum Message {
     RedirectChanged(String),
     ClientVersionChanged(String),
     ImportRedirect,
+    CaptureLauncherSession,
+    LauncherSessionCaptured(Result<CapturedLauncherSession, String>),
     FetchStorefront,
     StorefrontLoaded(Result<StoreSummary, String>),
     FetchLoadout,
@@ -534,6 +602,18 @@ enum Message {
     SaveSettings,
     LaunchSelected,
     LaunchFinished(Result<(), String>),
+}
+
+async fn launch_account(
+    config: LaunchConfig,
+    backup: Option<LauncherSessionBackup>,
+) -> Result<(), String> {
+    if let Some(backup) = backup {
+        close_riot_processes().map_err(|error| error.to_string())?;
+        apply_launcher_session_backup(&backup).map_err(|error| error.to_string())?;
+    }
+
+    launch_valorant(&config).map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

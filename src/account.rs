@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
@@ -152,6 +153,19 @@ impl AuthSession {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LauncherSessionBackup {
+    pub data_dir: PathBuf,
+    pub captured_at_unix: i64,
+    pub puuid: String,
+}
+
+impl LauncherSessionBackup {
+    pub fn is_ready(&self) -> bool {
+        !self.puuid.trim().is_empty() && self.data_dir.exists()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AccountProfile {
     pub id: AccountId,
     pub display_name: String,
@@ -162,6 +176,8 @@ pub struct AccountProfile {
     pub region: Region,
     pub shard: Shard,
     pub session: Option<AuthSession>,
+    #[serde(default)]
+    pub launcher_session: Option<LauncherSessionBackup>,
     #[serde(default)]
     pub notes: String,
 }
@@ -188,6 +204,7 @@ impl AccountProfile {
             region: Region::default(),
             shard,
             session: None,
+            launcher_session: None,
             notes: String::new(),
         })
     }
@@ -215,6 +232,12 @@ impl AccountProfile {
         self.session
             .as_ref()
             .is_some_and(|session| !session.access_token.is_empty() && !session.is_expired())
+    }
+
+    pub fn has_launcher_session(&self) -> bool {
+        self.launcher_session
+            .as_ref()
+            .is_some_and(LauncherSessionBackup::is_ready)
     }
 }
 
