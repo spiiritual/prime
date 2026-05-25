@@ -4,6 +4,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 pub const WEAPON_SKINS_URL: &str = "https://valorant-api.com/v1/weapons/skins";
+pub const VERSION_URL: &str = "https://valorant-api.com/v1/version";
 
 #[derive(Clone)]
 pub struct ValorantContentApi {
@@ -30,6 +31,19 @@ impl ValorantContentApi {
             .await?;
 
         Ok(SkinCatalog::from_skins(response.data))
+    }
+
+    pub async fn client_version(&self) -> Result<String, ContentError> {
+        let response: ApiResponse<ValorantVersion> = self
+            .client
+            .get(VERSION_URL)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        Ok(response.data.riot_client_version)
     }
 }
 
@@ -148,6 +162,12 @@ pub struct WeaponSkinChroma {
     pub full_render: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct ValorantVersion {
+    #[serde(rename = "riotClientVersion")]
+    pub riot_client_version: String,
+}
+
 fn normalize_uuid(uuid: &str) -> String {
     uuid.trim().to_ascii_lowercase()
 }
@@ -211,5 +231,21 @@ mod tests {
         let catalog = SkinCatalog::default();
 
         assert_eq!(catalog.resolve("missing").display_name, "missing");
+    }
+
+    #[test]
+    fn deserializes_riot_client_version() {
+        let response: ApiResponse<ValorantVersion> = serde_json::from_value(serde_json::json!({
+            "status": 200,
+            "data": {
+                "riotClientVersion": "release-12.09-shipping-25-4697179"
+            }
+        }))
+        .expect("version response");
+
+        assert_eq!(
+            response.data.riot_client_version,
+            "release-12.09-shipping-25-4697179"
+        );
     }
 }

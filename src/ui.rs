@@ -68,10 +68,13 @@ impl PrimeApp {
                 store_summary: None,
                 loadout_summary: None,
             },
-            Task::perform(
-                async move { load_repo.load().map_err(|error| error.to_string()) },
-                Message::Loaded,
-            ),
+            Task::batch([
+                Task::perform(
+                    async move { load_repo.load().map_err(|error| error.to_string()) },
+                    Message::Loaded,
+                ),
+                Task::perform(fetch_current_client_version(), Message::ClientVersionLoaded),
+            ]),
         )
     }
 
@@ -169,6 +172,27 @@ impl PrimeApp {
             }
             Message::ClientVersionChanged(value) => {
                 self.client_version_input = value;
+                Task::none()
+            }
+            Message::RefreshClientVersion => {
+                self.status = "Refreshing Riot client version".to_string();
+                Task::perform(fetch_current_client_version(), Message::ClientVersionLoaded)
+            }
+            Message::ClientVersionLoaded(result) => {
+                match result {
+                    Ok(version) => {
+                        if self.client_version_input.trim().is_empty() {
+                            self.client_version_input = version.clone();
+                        }
+                        self.status = format!("Current Riot client version: {version}");
+                    }
+                    Err(error) => {
+                        if self.status == "Loading accounts" {
+                            self.status = format!("Could not fetch Riot client version: {error}");
+                        }
+                    }
+                }
+
                 Task::none()
             }
             Message::ImportRedirect => {
@@ -479,6 +503,7 @@ impl PrimeApp {
                 )
                 .on_input(Message::ClientVersionChanged)
                 .width(Length::Fill),
+                button("Refresh version").on_press(Message::RefreshClientVersion),
                 button("Import token").on_press(Message::ImportRedirect)
             ]
             .spacing(10)
@@ -603,6 +628,8 @@ enum Message {
     DeleteSelected,
     RedirectChanged(String),
     ClientVersionChanged(String),
+    RefreshClientVersion,
+    ClientVersionLoaded(Result<String, String>),
     ImportRedirect,
     CaptureLauncherSession,
     LauncherSessionCaptured(Result<CapturedLauncherSession, String>),
@@ -748,6 +775,14 @@ async fn fetch_skin_catalog() -> SkinCatalog {
         Ok(api) => api.skin_catalog().await.unwrap_or_default(),
         Err(_) => SkinCatalog::default(),
     }
+}
+
+async fn fetch_current_client_version() -> Result<String, String> {
+    ValorantContentApi::new()
+        .map_err(|error| error.to_string())?
+        .client_version()
+        .await
+        .map_err(|error| error.to_string())
 }
 
 fn resolve_first<'a>(
