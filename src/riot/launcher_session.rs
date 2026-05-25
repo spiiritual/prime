@@ -103,6 +103,23 @@ pub fn read_backup_cookies(
     Ok(parse_private_settings_cookies(&settings))
 }
 
+pub fn clear_existing_launcher_data_dirs() -> Result<usize, LauncherSessionError> {
+    let mut cleared = 0;
+
+    for data_dir in default_data_dirs() {
+        if data_dir.exists() {
+            clear_launcher_data_dir(&data_dir)?;
+            cleared += 1;
+        }
+    }
+
+    Ok(cleared)
+}
+
+pub fn clear_launcher_data_dir(data_dir: impl AsRef<Path>) -> Result<(), LauncherSessionError> {
+    clear_dir(data_dir.as_ref())
+}
+
 pub fn launcher_cookie_header(cookies: &[LauncherCookie]) -> Result<String, LauncherSessionError> {
     let usable = cookies
         .iter()
@@ -335,6 +352,19 @@ rso-authenticator:
 
         assert!(header.contains("ssid=ssid-value"));
         assert!(header.contains("sub=puuid-value"));
+    }
+
+    #[test]
+    fn clears_launcher_data_dir_without_removing_directory() {
+        let data_dir = tempdir().expect("data dir");
+        fs::write(data_dir.path().join("old.txt"), "old").expect("old file");
+        fs::create_dir(data_dir.path().join("nested")).expect("nested dir");
+        fs::write(data_dir.path().join("nested").join("old.txt"), "old").expect("nested file");
+
+        clear_launcher_data_dir(data_dir.path()).expect("clear");
+
+        assert!(data_dir.path().exists());
+        assert_eq!(fs::read_dir(data_dir.path()).expect("read dir").count(), 0);
     }
 
     #[test]

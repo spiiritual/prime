@@ -28,13 +28,7 @@ pub struct LaunchPlan {
 }
 
 pub fn build_launch_plan(config: &LaunchConfig) -> Result<LaunchPlan, LaunchError> {
-    let executable = match &config.riot_client_path {
-        Some(path) => path.clone(),
-        None => default_riot_client_candidates()
-            .into_iter()
-            .find(|path| path.exists())
-            .ok_or(LaunchError::RiotClientNotFound)?,
-    };
+    let executable = resolve_riot_client_executable(config)?;
 
     Ok(LaunchPlan {
         executable,
@@ -45,15 +39,47 @@ pub fn build_launch_plan(config: &LaunchConfig) -> Result<LaunchPlan, LaunchErro
     })
 }
 
+pub fn build_launcher_login_capture_plan(config: &LaunchConfig) -> Result<LaunchPlan, LaunchError> {
+    let executable = resolve_riot_client_executable(config)?;
+
+    Ok(LaunchPlan {
+        executable,
+        args: vec![
+            format!("--launch-product={}", config.product),
+            "--allow-multiple-clients".to_string(),
+        ],
+    })
+}
+
 pub fn launch_valorant(config: &LaunchConfig) -> Result<(), LaunchError> {
     let plan = build_launch_plan(config)?;
 
+    spawn_launch_plan(&plan)
+}
+
+pub fn launch_riot_login_capture(config: &LaunchConfig) -> Result<(), LaunchError> {
+    let plan = build_launcher_login_capture_plan(config)?;
+
+    spawn_launch_plan(&plan)
+}
+
+fn spawn_launch_plan(plan: &LaunchPlan) -> Result<(), LaunchError> {
     Command::new(&plan.executable)
         .args(&plan.args)
         .spawn()
         .map_err(LaunchError::Spawn)?;
 
     Ok(())
+}
+
+fn resolve_riot_client_executable(config: &LaunchConfig) -> Result<PathBuf, LaunchError> {
+    match &config.riot_client_path {
+        Some(path) => Ok(path.clone()),
+        None => default_riot_client_candidates()
+            .into_iter()
+            .find(|path| path.exists())
+            .ok_or(LaunchError::RiotClientNotFound),
+    }
 }
 
 pub fn close_riot_processes() -> Result<(), LaunchError> {
@@ -158,6 +184,26 @@ mod tests {
             vec![
                 "--launch-product=valorant".to_string(),
                 "--launch-patchline=live".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn explicit_path_builds_login_capture_arguments() {
+        let config = LaunchConfig {
+            riot_client_path: Some(PathBuf::from(
+                r"C:\Riot Games\Riot Client\RiotClientServices.exe",
+            )),
+            ..LaunchConfig::default()
+        };
+
+        let plan = build_launcher_login_capture_plan(&config).expect("launch plan");
+
+        assert_eq!(
+            plan.args,
+            vec![
+                "--launch-product=valorant".to_string(),
+                "--allow-multiple-clients".to_string()
             ]
         );
     }

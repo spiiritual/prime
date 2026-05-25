@@ -239,6 +239,31 @@ impl AccountProfile {
             .as_ref()
             .is_some_and(LauncherSessionBackup::is_ready)
     }
+
+    pub fn attach_launcher_session(
+        &mut self,
+        backup: LauncherSessionBackup,
+    ) -> Result<(), AccountSessionError> {
+        let captured_puuid = backup.puuid.trim();
+
+        if captured_puuid.is_empty() {
+            return Err(AccountSessionError::MissingCapturedPuuid);
+        }
+
+        if let Some(existing_puuid) = self.puuid.as_ref().filter(|puuid| !puuid.trim().is_empty())
+            && !existing_puuid.eq_ignore_ascii_case(captured_puuid)
+        {
+            return Err(AccountSessionError::PuuidMismatch {
+                expected: existing_puuid.clone(),
+                actual: captured_puuid.to_string(),
+            });
+        }
+
+        self.puuid = Some(captured_puuid.to_string());
+        self.launcher_session = Some(backup);
+
+        Ok(())
+    }
 }
 
 fn non_empty_string(value: String) -> Option<String> {
@@ -257,6 +282,16 @@ pub enum AccountValidationError {
     EmptyDisplayName,
     #[error("unknown Valorant shard `{0}`")]
     UnknownShard(String),
+}
+
+#[derive(Debug, Error, Eq, PartialEq)]
+pub enum AccountSessionError {
+    #[error("captured launcher session did not include a PUUID")]
+    MissingCapturedPuuid,
+    #[error(
+        "captured launcher session belongs to PUUID `{actual}`, but this profile is `{expected}`"
+    )]
+    PuuidMismatch { expected: String, actual: String },
 }
 
 #[cfg(test)]
@@ -304,5 +339,46 @@ mod tests {
         assert!(!debug.contains("secret-access-token"));
         assert!(!debug.contains("secret-id-token"));
         assert!(!debug.contains("secret-entitlement-token"));
+    }
+
+    #[test]
+    fn attach_launcher_session_sets_missing_puuid() {
+        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let backup = LauncherSessionBackup {
+            data_dir: PathBuf::from("backup"),
+            captured_at_unix: 100,
+            puuid: "puuid-a".to_string(),
+        };
+
+        account
+            .attach_launcher_session(backup)
+            .expect("attach launcher session");
+
+        assert_eq!(account.puuid.as_deref(), Some("puuid-a"));
+        assert!(account.launcher_session.is_some());
+    }
+
+    #[test]
+    fn attach_launcher_session_rejects_wrong_puuid() {
+        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        account.puuid = Some("puuid-a".to_string());
+        let backup = LauncherSessionBackup {
+            data_dir: PathBuf::from("backup"),
+            captured_at_unix: 100,
+            puuid: "puuid-b".to_string(),
+        };
+
+        let err = account
+            .attach_launcher_session(backup)
+            .expect_err("mismatched puuid");
+
+        assert_eq!(
+            err,
+            AccountSessionError::PuuidMismatch {
+                expected: "puuid-a".to_string(),
+                actual: "puuid-b".to_string()
+            }
+        );
+        assert!(account.launcher_session.is_none());
     }
 }

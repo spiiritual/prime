@@ -5,13 +5,15 @@ use iced::{Element, Length, Task, Theme};
 
 use crate::account::LauncherSessionBackup;
 use crate::account::{AccountId, AccountProfile, AuthSession, Shard};
-use crate::launch::{LaunchConfig, close_riot_processes, launch_valorant};
+use crate::launch::{
+    LaunchConfig, close_riot_processes, launch_riot_login_capture, launch_valorant,
+};
 use crate::riot::auth::parse_redirect_tokens;
 use crate::riot::client::{ApiCredentials, RiotApi};
 use crate::riot::content::{ResolvedSkin, SkinCatalog, ValorantContentApi};
 use crate::riot::launcher_session::{
     CapturedLauncherSession, apply_launcher_session_backup, capture_current_launcher_session,
-    launcher_cookie_header, read_backup_cookies,
+    clear_existing_launcher_data_dirs, launcher_cookie_header, read_backup_cookies,
 };
 use crate::riot::models::{PlayerLoadoutResponse, StorefrontResponse};
 use crate::storage::{AccountRepository, StoredState};
@@ -215,6 +217,33 @@ impl PrimeApp {
                     }
                 }
             }
+            Message::StartLauncherSessionLogin => {
+                if self.state.selected_account().is_none() {
+                    self.status =
+                        "Select an account before starting launcher session capture".to_string();
+                    return Task::none();
+                }
+
+                let config = LaunchConfig {
+                    riot_client_path: self.state.riot_client_path.clone(),
+                    ..LaunchConfig::default()
+                };
+                self.status =
+                    "Opening Riot Client for a fresh remembered login capture".to_string();
+
+                Task::perform(
+                    async move { start_launcher_session_login(config).await },
+                    Message::LauncherSessionLoginStarted,
+                )
+            }
+            Message::LauncherSessionLoginStarted(result) => {
+                self.status = match result {
+                    Ok(()) => "Riot Client opened. Log into the selected account with Remember Me enabled, then press Capture launcher session.".to_string(),
+                    Err(error) => format!("Could not start launcher session login: {error}"),
+                };
+
+                Task::none()
+            }
             Message::CaptureLauncherSession => {
                 let Some(account_id) = self.state.selected_account else {
                     self.status =
@@ -242,13 +271,16 @@ impl PrimeApp {
                             .iter_mut()
                             .find(|account| account.id == captured.account_id)
                         {
-                            if account.puuid.as_deref().is_none_or(str::is_empty) {
-                                account.puuid = Some(captured.backup.puuid.clone());
+                            let captured_puuid = captured.backup.puuid.clone();
+
+                            if let Err(error) = account.attach_launcher_session(captured.backup) {
+                                self.status = format!("Launcher session rejected: {error}");
+                                return Task::none();
                             }
 
-                            account.launcher_session = Some(captured.backup);
-                            self.status =
-                                "Captured launcher session for selected account".to_string();
+                            self.status = format!(
+                                "Captured launcher session for selected account ({captured_puuid})"
+                            );
                             return self.save_task();
                         }
 
@@ -485,10 +517,11 @@ impl PrimeApp {
             row![
                 button("Add account").on_press(Message::AddAccount),
                 button("Remove selected").on_press(Message::DeleteSelected),
+                button("Start login capture").on_press(Message::StartLauncherSessionLogin),
                 button("Capture launcher session").on_press(Message::CaptureLauncherSession)
             ]
             .spacing(10),
-            text("Capture after logging into Riot Client with Remember Me enabled. Launching a captured account restores that Riot Client session before starting VALORANT."),
+            text("Start login capture clears stale Riot Client login data and opens Riot Client. Log in with Remember Me enabled, then capture the launcher session for this profile."),
             text(""),
             text("Riot web redirect token"),
             text_input(
@@ -631,6 +664,8 @@ enum Message {
     RefreshClientVersion,
     ClientVersionLoaded(Result<String, String>),
     ImportRedirect,
+    StartLauncherSessionLogin,
+    LauncherSessionLoginStarted(Result<(), String>),
     CaptureLauncherSession,
     LauncherSessionCaptured(Result<CapturedLauncherSession, String>),
     FetchStorefront,
@@ -653,6 +688,12 @@ async fn launch_account(
     }
 
     launch_valorant(&config).map_err(|error| error.to_string())
+}
+
+async fn start_launcher_session_login(config: LaunchConfig) -> Result<(), String> {
+    close_riot_processes().map_err(|error| error.to_string())?;
+    clear_existing_launcher_data_dirs().map_err(|error| error.to_string())?;
+    launch_riot_login_capture(&config).map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
