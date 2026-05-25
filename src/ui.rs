@@ -10,12 +10,14 @@ use crate::launch::{
 };
 use crate::riot::auth::parse_redirect_tokens;
 use crate::riot::client::{ApiCredentials, RiotApi};
-use crate::riot::content::{ResolvedSkin, SkinCatalog, ValorantContentApi};
+use crate::riot::content::{
+    CurrencyCatalog, ResolvedCurrency, ResolvedSkin, SkinCatalog, ValorantContentApi,
+};
 use crate::riot::launcher_session::{
     CapturedLauncherSession, apply_launcher_session_backup, capture_current_launcher_session,
     clear_existing_launcher_data_dirs, launcher_cookie_header, read_backup_cookies,
 };
-use crate::riot::models::{PlayerLoadoutResponse, StorefrontResponse};
+use crate::riot::models::{BonusStoreOffer, PlayerLoadoutResponse, StoreOffer, StorefrontResponse};
 use crate::storage::{AccountRepository, StoredState};
 
 pub fn run() -> iced::Result {
@@ -360,7 +362,7 @@ impl PrimeApp {
                         self.status = format!(
                             "Loaded {} daily offer(s) and {} night market offer(s)",
                             summary.daily_offers.len(),
-                            summary.night_market_offer_count
+                            summary.night_market_offers.len()
                         );
                         self.store_summary = Some(summary);
                     }
@@ -615,13 +617,18 @@ impl PrimeApp {
                     summary
                         .daily_offers
                         .iter()
-                        .map(|skin| skin.display_name.as_str())
+                        .map(StoreOfferDisplay::label)
                         .collect::<Vec<_>>()
                         .join(", ")
                 )))
                 .push(text(format!(
                     "Night market offers: {}",
-                    summary.night_market_offer_count
+                    summary
+                        .night_market_offers
+                        .iter()
+                        .map(StoreOfferDisplay::label)
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 )));
         }
 
@@ -757,35 +764,42 @@ struct RefreshedProfileIdentity {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StoreSummary {
-    daily_offers: Vec<SkinDisplay>,
+    daily_offers: Vec<StoreOfferDisplay>,
     daily_remaining_seconds: i64,
     bundle_remaining_seconds: i64,
-    night_market_offer_count: usize,
+    night_market_offers: Vec<StoreOfferDisplay>,
 }
 
 impl StoreSummary {
-    fn from_response(response: StorefrontResponse, catalog: &SkinCatalog) -> Self {
+    fn from_response(
+        response: StorefrontResponse,
+        skins: &SkinCatalog,
+        currencies: &CurrencyCatalog,
+    ) -> Self {
         let daily_offers = response
             .skins_panel_layout
             .single_item_offers
             .iter()
             .map(|offer_id| {
-                let direct = catalog.resolve(offer_id);
-
-                if direct.display_name != *offer_id {
-                    return SkinDisplay::from(direct);
-                }
-
-                response
+                let matching_offer = response
                     .skins_panel_layout
                     .single_item_store_offers
                     .iter()
-                    .find(|offer| offer.offer_id == *offer_id)
-                    .and_then(|offer| offer.rewards.first())
-                    .map(|reward| SkinDisplay::from(catalog.resolve(&reward.item_id)))
-                    .unwrap_or_else(|| SkinDisplay::from(direct))
+                    .find(|offer| offer.offer_id == *offer_id);
+
+                store_offer_display(offer_id, matching_offer, 0, skins, currencies)
             })
             .collect();
+        let night_market_offers = response
+            .bonus_store
+            .map(|store| {
+                store
+                    .bonus_store_offers
+                    .iter()
+                    .map(|offer| bonus_store_offer_display(offer, skins, currencies))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         Self {
             daily_offers,
@@ -795,12 +809,119 @@ impl StoreSummary {
             bundle_remaining_seconds: response
                 .featured_bundle
                 .bundle_remaining_duration_in_seconds,
-            night_market_offer_count: response
-                .bonus_store
-                .map(|store| store.bonus_store_offers.len())
-                .unwrap_or_default(),
+            night_market_offers,
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StoreOfferDisplay {
+    skin: SkinDisplay,
+    price: Option<OfferPrice>,
+    discount_percent: i64,
+}
+
+impl StoreOfferDisplay {
+    fn label(&self) -> String {
+        let mut label = self.skin.display_name.clone();
+
+        if let Some(price) = &self.price {
+            label.push_str(&format!(" ({})", price.label()));
+        }
+
+        if self.discount_percent > 0 {
+            label.push_str(&format!(", {}% off", self.discount_percent));
+        }
+
+        label
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct OfferPrice {
+    amount: i64,
+    currency: CurrencyDisplay,
+}
+
+impl OfferPrice {
+    fn label(&self) -> String {
+        format!("{} {}", self.amount, self.currency.display_name)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CurrencyDisplay {
+    uuid: String,
+    display_name: String,
+    display_icon: Option<String>,
+}
+
+impl From<ResolvedCurrency> for CurrencyDisplay {
+    fn from(currency: ResolvedCurrency) -> Self {
+        Self {
+            uuid: currency.uuid,
+            display_name: currency.display_name,
+            display_icon: currency.display_icon,
+        }
+    }
+}
+
+fn store_offer_display(
+    offer_id: &str,
+    offer: Option<&StoreOffer>,
+    discount_percent: i64,
+    skins: &SkinCatalog,
+    currencies: &CurrencyCatalog,
+) -> StoreOfferDisplay {
+    let direct = skins.resolve(offer_id);
+    let skin = if direct.display_name != offer_id {
+        SkinDisplay::from(direct)
+    } else {
+        offer
+            .and_then(|offer| offer.rewards.first())
+            .map(|reward| SkinDisplay::from(skins.resolve(&reward.item_id)))
+            .unwrap_or_else(|| SkinDisplay::from(direct))
+    };
+    let price = offer.and_then(|offer| offer_price(&offer.cost, currencies));
+
+    StoreOfferDisplay {
+        skin,
+        price,
+        discount_percent,
+    }
+}
+
+fn bonus_store_offer_display(
+    offer: &BonusStoreOffer,
+    skins: &SkinCatalog,
+    currencies: &CurrencyCatalog,
+) -> StoreOfferDisplay {
+    let skin = offer
+        .offer
+        .rewards
+        .first()
+        .map(|reward| SkinDisplay::from(skins.resolve(&reward.item_id)))
+        .unwrap_or_else(|| SkinDisplay::from(skins.resolve(&offer.offer.offer_id)));
+    let price = offer_price(&offer.discount_costs, currencies)
+        .or_else(|| offer_price(&offer.offer.cost, currencies));
+
+    StoreOfferDisplay {
+        skin,
+        price,
+        discount_percent: offer.discount_percent,
+    }
+}
+
+fn offer_price(
+    costs: &std::collections::HashMap<String, i64>,
+    currencies: &CurrencyCatalog,
+) -> Option<OfferPrice> {
+    let (currency_id, amount) = costs.iter().min_by(|left, right| left.0.cmp(right.0))?;
+
+    Some(OfferPrice {
+        amount: *amount,
+        currency: CurrencyDisplay::from(currencies.resolve(currency_id)),
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -850,10 +971,12 @@ async fn fetch_storefront(
 ) -> Result<StoreSummary, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
     let credentials = resolve_credentials(&api, &account, client_version).await?;
-    let catalog = fetch_skin_catalog().await;
+    let metadata = fetch_store_metadata().await;
     api.storefront(&credentials)
         .await
-        .map(|response| StoreSummary::from_response(response, &catalog))
+        .map(|response| {
+            StoreSummary::from_response(response, &metadata.skins, &metadata.currencies)
+        })
         .map_err(|error| error.to_string())
 }
 
@@ -893,6 +1016,22 @@ async fn fetch_skin_catalog() -> SkinCatalog {
     match ValorantContentApi::new() {
         Ok(api) => api.skin_catalog().await.unwrap_or_default(),
         Err(_) => SkinCatalog::default(),
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct StoreMetadata {
+    skins: SkinCatalog,
+    currencies: CurrencyCatalog,
+}
+
+async fn fetch_store_metadata() -> StoreMetadata {
+    match ValorantContentApi::new() {
+        Ok(api) => StoreMetadata {
+            skins: api.skin_catalog().await.unwrap_or_default(),
+            currencies: api.currency_catalog().await.unwrap_or_default(),
+        },
+        Err(_) => StoreMetadata::default(),
     }
 }
 
@@ -1029,7 +1168,17 @@ mod tests {
             },
             "SkinsPanelLayout": {
                 "SingleItemOffers": ["a", "b"],
-                "SingleItemStoreOffers": [],
+                "SingleItemStoreOffers": [{
+                    "OfferID": "a",
+                    "IsDirectPurchase": true,
+                    "StartDate": "2026-05-25T00:00:00Z",
+                    "Cost": {"vp": 1775},
+                    "Rewards": [{
+                        "ItemTypeID": "skin-type",
+                        "ItemID": "a",
+                        "Quantity": 1
+                    }]
+                }],
                 "SingleItemOffersRemainingDurationInSeconds": 30
             },
             "BonusStore": {
@@ -1040,10 +1189,14 @@ mod tests {
                         "IsDirectPurchase": true,
                         "StartDate": "2026-05-25T00:00:00Z",
                         "Cost": {},
-                        "Rewards": []
+                        "Rewards": [{
+                            "ItemTypeID": "skin-type",
+                            "ItemID": "a",
+                            "Quantity": 1
+                        }]
                     },
                     "DiscountPercent": 10,
-                    "DiscountCosts": {},
+                    "DiscountCosts": {"vp": 1200},
                     "IsSeen": false
                 }],
                 "BonusStoreRemainingDurationInSeconds": 40
@@ -1062,19 +1215,31 @@ mod tests {
             }],
             chromas: vec![],
         }]);
-        let summary = StoreSummary::from_response(response, &catalog);
+        let currencies = CurrencyCatalog::from_currencies(vec![crate::riot::content::Currency {
+            uuid: "vp".to_string(),
+            display_name: "VP".to_string(),
+            display_icon: None,
+        }]);
+        let summary = StoreSummary::from_response(response, &catalog, &currencies);
 
         assert_eq!(
             summary
                 .daily_offers
                 .iter()
-                .map(|skin| skin.display_name.as_str())
+                .map(StoreOfferDisplay::label)
                 .collect::<Vec<_>>(),
-            ["Prime Vandal Level 1", "b"]
+            ["Prime Vandal Level 1 (1775 VP)", "b"]
         );
         assert_eq!(summary.daily_remaining_seconds, 30);
         assert_eq!(summary.bundle_remaining_seconds, 20);
-        assert_eq!(summary.night_market_offer_count, 1);
+        assert_eq!(
+            summary
+                .night_market_offers
+                .iter()
+                .map(StoreOfferDisplay::label)
+                .collect::<Vec<_>>(),
+            ["Prime Vandal Level 1 (1200 VP), 10% off"]
+        );
     }
 
     #[test]

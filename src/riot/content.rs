@@ -4,6 +4,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 pub const WEAPON_SKINS_URL: &str = "https://valorant-api.com/v1/weapons/skins";
+pub const CURRENCIES_URL: &str = "https://valorant-api.com/v1/currencies";
 pub const VERSION_URL: &str = "https://valorant-api.com/v1/version";
 
 #[derive(Clone)]
@@ -31,6 +32,19 @@ impl ValorantContentApi {
             .await?;
 
         Ok(SkinCatalog::from_skins(response.data))
+    }
+
+    pub async fn currency_catalog(&self) -> Result<CurrencyCatalog, ContentError> {
+        let response: ApiResponse<Vec<Currency>> = self
+            .client
+            .get(CURRENCIES_URL)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        Ok(CurrencyCatalog::from_currencies(response.data))
     }
 
     pub async fn client_version(&self) -> Result<String, ContentError> {
@@ -124,6 +138,55 @@ impl ResolvedSkin {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CurrencyCatalog {
+    by_uuid: HashMap<String, ResolvedCurrency>,
+}
+
+impl CurrencyCatalog {
+    pub fn from_currencies(currencies: Vec<Currency>) -> Self {
+        let by_uuid = currencies
+            .into_iter()
+            .map(|currency| {
+                (
+                    normalize_uuid(&currency.uuid),
+                    ResolvedCurrency {
+                        uuid: currency.uuid,
+                        display_name: currency.display_name,
+                        display_icon: currency.display_icon,
+                    },
+                )
+            })
+            .collect();
+
+        Self { by_uuid }
+    }
+
+    pub fn resolve(&self, uuid: &str) -> ResolvedCurrency {
+        self.by_uuid
+            .get(&normalize_uuid(uuid))
+            .cloned()
+            .unwrap_or_else(|| ResolvedCurrency::unknown(uuid))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedCurrency {
+    pub uuid: String,
+    pub display_name: String,
+    pub display_icon: Option<String>,
+}
+
+impl ResolvedCurrency {
+    pub fn unknown(uuid: &str) -> Self {
+        Self {
+            uuid: uuid.to_string(),
+            display_name: uuid.to_string(),
+            display_icon: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 struct ApiResponse<T> {
     data: T,
@@ -166,6 +229,15 @@ pub struct WeaponSkinChroma {
 pub struct ValorantVersion {
     #[serde(rename = "riotClientVersion")]
     pub riot_client_version: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct Currency {
+    pub uuid: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    #[serde(rename = "displayIcon")]
+    pub display_icon: Option<String>,
 }
 
 fn normalize_uuid(uuid: &str) -> String {
@@ -230,6 +302,22 @@ mod tests {
     fn unknown_skin_uses_uuid_as_display_name() {
         let catalog = SkinCatalog::default();
 
+        assert_eq!(catalog.resolve("missing").display_name, "missing");
+    }
+
+    #[test]
+    fn resolves_currency_ids_to_display_names() {
+        let catalog = CurrencyCatalog::from_currencies(vec![Currency {
+            uuid: "vp-uuid".to_string(),
+            display_name: "VALORANT Points".to_string(),
+            display_icon: Some("vp-icon".to_string()),
+        }]);
+
+        assert_eq!(catalog.resolve("VP-UUID").display_name, "VALORANT Points");
+        assert_eq!(
+            catalog.resolve("vp-uuid").display_icon.as_deref(),
+            Some("vp-icon")
+        );
         assert_eq!(catalog.resolve("missing").display_name, "missing");
     }
 
