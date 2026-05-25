@@ -8,6 +8,7 @@ use crate::account::{AccountId, AccountProfile, AuthSession, Shard};
 use crate::launch::{LaunchConfig, close_riot_processes, launch_valorant};
 use crate::riot::auth::parse_redirect_tokens;
 use crate::riot::client::{ApiCredentials, RiotApi};
+use crate::riot::content::{ResolvedSkin, SkinCatalog, ValorantContentApi};
 use crate::riot::launcher_session::{
     CapturedLauncherSession, apply_launcher_session_backup, capture_current_launcher_session,
 };
@@ -254,7 +255,7 @@ impl PrimeApp {
                     Ok(summary) => {
                         self.status = format!(
                             "Loaded {} daily offer(s) and {} night market offer(s)",
-                            summary.daily_offer_ids.len(),
+                            summary.daily_offers.len(),
                             summary.night_market_offer_count
                         );
                         self.store_summary = Some(summary);
@@ -283,7 +284,7 @@ impl PrimeApp {
                     Ok(summary) => {
                         self.status = format!(
                             "Loaded loadout with {} gun skin(s)",
-                            summary.gun_skin_ids.len()
+                            summary.gun_skins.len()
                         );
                         self.loadout_summary = Some(summary);
                     }
@@ -503,8 +504,13 @@ impl PrimeApp {
                     summary.daily_remaining_seconds
                 )))
                 .push(text(format!(
-                    "Daily offer ids: {}",
-                    summary.daily_offer_ids.join(", ")
+                    "Daily offers: {}",
+                    summary
+                        .daily_offers
+                        .iter()
+                        .map(|skin| skin.display_name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 )))
                 .push(text(format!(
                     "Night market offers: {}",
@@ -526,8 +532,13 @@ impl PrimeApp {
             content = content
                 .push(text(format!("Account level: {}", summary.account_level)))
                 .push(text(format!(
-                    "Equipped skin ids: {}",
-                    summary.gun_skin_ids.join(", ")
+                    "Equipped skins: {}",
+                    summary
+                        .gun_skins
+                        .iter()
+                        .map(|skin| skin.display_name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 )));
         }
 
@@ -618,16 +629,38 @@ async fn launch_account(
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StoreSummary {
-    daily_offer_ids: Vec<String>,
+    daily_offers: Vec<SkinDisplay>,
     daily_remaining_seconds: i64,
     bundle_remaining_seconds: i64,
     night_market_offer_count: usize,
 }
 
-impl From<StorefrontResponse> for StoreSummary {
-    fn from(response: StorefrontResponse) -> Self {
+impl StoreSummary {
+    fn from_response(response: StorefrontResponse, catalog: &SkinCatalog) -> Self {
+        let daily_offers = response
+            .skins_panel_layout
+            .single_item_offers
+            .iter()
+            .map(|offer_id| {
+                let direct = catalog.resolve(offer_id);
+
+                if direct.display_name != *offer_id {
+                    return SkinDisplay::from(direct);
+                }
+
+                response
+                    .skins_panel_layout
+                    .single_item_store_offers
+                    .iter()
+                    .find(|offer| offer.offer_id == *offer_id)
+                    .and_then(|offer| offer.rewards.first())
+                    .map(|reward| SkinDisplay::from(catalog.resolve(&reward.item_id)))
+                    .unwrap_or_else(|| SkinDisplay::from(direct))
+            })
+            .collect();
+
         Self {
-            daily_offer_ids: response.skins_panel_layout.single_item_offers,
+            daily_offers,
             daily_remaining_seconds: response
                 .skins_panel_layout
                 .single_item_offers_remaining_duration_in_seconds,
@@ -645,14 +678,40 @@ impl From<StorefrontResponse> for StoreSummary {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LoadoutSummary {
     account_level: i64,
-    gun_skin_ids: Vec<String>,
+    gun_skins: Vec<SkinDisplay>,
 }
 
-impl From<PlayerLoadoutResponse> for LoadoutSummary {
-    fn from(response: PlayerLoadoutResponse) -> Self {
+impl LoadoutSummary {
+    fn from_response(response: PlayerLoadoutResponse, catalog: &SkinCatalog) -> Self {
         Self {
             account_level: response.identity.account_level,
-            gun_skin_ids: response.guns.into_iter().map(|gun| gun.skin_id).collect(),
+            gun_skins: response
+                .guns
+                .into_iter()
+                .map(|gun| {
+                    SkinDisplay::from(resolve_first(
+                        catalog,
+                        [&gun.skin_id, &gun.skin_level_id, &gun.chroma_id],
+                    ))
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SkinDisplay {
+    uuid: String,
+    display_name: String,
+    display_icon: Option<String>,
+}
+
+impl From<ResolvedSkin> for SkinDisplay {
+    fn from(skin: ResolvedSkin) -> Self {
+        Self {
+            uuid: skin.uuid,
+            display_name: skin.display_name,
+            display_icon: skin.display_icon,
         }
     }
 }
@@ -663,9 +722,10 @@ async fn fetch_storefront(
 ) -> Result<StoreSummary, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
     let credentials = resolve_credentials(&api, &account, client_version).await?;
+    let catalog = fetch_skin_catalog().await;
     api.storefront(&credentials)
         .await
-        .map(StoreSummary::from)
+        .map(|response| StoreSummary::from_response(response, &catalog))
         .map_err(|error| error.to_string())
 }
 
@@ -675,10 +735,38 @@ async fn fetch_loadout(
 ) -> Result<LoadoutSummary, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
     let credentials = resolve_credentials(&api, &account, client_version).await?;
+    let catalog = fetch_skin_catalog().await;
     api.player_loadout(&credentials)
         .await
-        .map(LoadoutSummary::from)
+        .map(|response| LoadoutSummary::from_response(response, &catalog))
         .map_err(|error| error.to_string())
+}
+
+async fn fetch_skin_catalog() -> SkinCatalog {
+    match ValorantContentApi::new() {
+        Ok(api) => api.skin_catalog().await.unwrap_or_default(),
+        Err(_) => SkinCatalog::default(),
+    }
+}
+
+fn resolve_first<'a>(
+    catalog: &SkinCatalog,
+    ids: impl IntoIterator<Item = &'a String>,
+) -> ResolvedSkin {
+    let ids = ids.into_iter().collect::<Vec<_>>();
+
+    for id in &ids {
+        let raw = id.as_str();
+        let skin = catalog.resolve(raw);
+
+        if skin.display_name != raw {
+            return skin;
+        }
+    }
+
+    ids.first()
+        .map(|id| catalog.resolve(id.as_str()))
+        .unwrap_or_else(|| ResolvedSkin::unknown(""))
 }
 
 async fn resolve_credentials(
@@ -780,12 +868,66 @@ mod tests {
         }))
         .expect("response");
 
-        let summary = StoreSummary::from(response);
+        let catalog = SkinCatalog::from_skins(vec![crate::riot::content::WeaponSkin {
+            uuid: "skin-a".to_string(),
+            display_name: "Prime Vandal".to_string(),
+            display_icon: None,
+            levels: vec![crate::riot::content::WeaponSkinLevel {
+                uuid: "a".to_string(),
+                display_name: "Prime Vandal Level 1".to_string(),
+                display_icon: None,
+            }],
+            chromas: vec![],
+        }]);
+        let summary = StoreSummary::from_response(response, &catalog);
 
-        assert_eq!(summary.daily_offer_ids, ["a", "b"]);
+        assert_eq!(
+            summary
+                .daily_offers
+                .iter()
+                .map(|skin| skin.display_name.as_str())
+                .collect::<Vec<_>>(),
+            ["Prime Vandal Level 1", "b"]
+        );
         assert_eq!(summary.daily_remaining_seconds, 30);
         assert_eq!(summary.bundle_remaining_seconds, 20);
         assert_eq!(summary.night_market_offer_count, 1);
+    }
+
+    #[test]
+    fn loadout_summary_resolves_skin_names() {
+        let response: PlayerLoadoutResponse = serde_json::from_value(serde_json::json!({
+            "Subject": "puuid",
+            "Version": 1,
+            "Guns": [{
+                "ID": "weapon",
+                "SkinID": "skin-a",
+                "SkinLevelID": "level-a",
+                "ChromaID": "chroma-a",
+                "Attachments": []
+            }],
+            "Sprays": [],
+            "Identity": {
+                "PlayerCardID": "card",
+                "PlayerTitleID": "title",
+                "AccountLevel": 42,
+                "PreferredLevelBorderID": "border",
+                "HideAccountLevel": false
+            },
+            "Incognito": false
+        }))
+        .expect("loadout");
+        let catalog = SkinCatalog::from_skins(vec![crate::riot::content::WeaponSkin {
+            uuid: "skin-a".to_string(),
+            display_name: "Prime Vandal".to_string(),
+            display_icon: None,
+            levels: vec![],
+            chromas: vec![],
+        }]);
+
+        let summary = LoadoutSummary::from_response(response, &catalog);
+
+        assert_eq!(summary.gun_skins[0].display_name, "Prime Vandal");
     }
 
     #[test]

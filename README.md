@@ -9,6 +9,7 @@ Current scope:
 - Capture and restore per-account Riot Client launcher sessions from the local Riot Client `Data` folder after a remembered login.
 - Import Riot web redirect tokens for API access.
 - Query the unofficial player store and player loadout endpoints when a valid token, entitlement token, PUUID, shard, and client version are available.
+- Resolve store/loadout skin UUIDs to display names through the public Valorant content API.
 
 Notes:
 
