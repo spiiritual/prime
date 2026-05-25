@@ -740,12 +740,32 @@ async fn launch_account(
     config: LaunchConfig,
     backup: Option<LauncherSessionBackup>,
 ) -> Result<(), String> {
-    if let Some(backup) = backup {
-        close_riot_processes().map_err(|error| error.to_string())?;
-        apply_launcher_session_backup(&backup).map_err(|error| error.to_string())?;
-    }
+    let backup = require_launcher_session(backup)?;
+
+    close_riot_processes().map_err(|error| error.to_string())?;
+    apply_launcher_session_backup(&backup).map_err(|error| error.to_string())?;
 
     launch_valorant(&config).map_err(|error| error.to_string())
+}
+
+fn require_launcher_session(
+    backup: Option<LauncherSessionBackup>,
+) -> Result<LauncherSessionBackup, String> {
+    let Some(backup) = backup else {
+        return Err(
+            "selected account does not have a captured launcher session; start login capture first"
+                .to_string(),
+        );
+    };
+
+    if !backup.is_ready() {
+        return Err(
+            "selected account launcher session is incomplete or its backup folder is missing"
+                .to_string(),
+        );
+    }
+
+    Ok(backup)
 }
 
 async fn start_launcher_session_login(config: LaunchConfig) -> Result<(), String> {
@@ -1197,6 +1217,7 @@ fn non_empty_path(input: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn store_summary_counts_night_market() {
@@ -1338,5 +1359,38 @@ mod tests {
             ))
         );
         assert_eq!(non_empty_path("   "), None);
+    }
+
+    #[test]
+    fn require_launcher_session_rejects_missing_backup() {
+        let err = require_launcher_session(None).expect_err("missing backup");
+
+        assert!(err.contains("captured launcher session"));
+    }
+
+    #[test]
+    fn require_launcher_session_rejects_missing_backup_folder() {
+        let err = require_launcher_session(Some(LauncherSessionBackup {
+            data_dir: PathBuf::from("missing-launcher-backup"),
+            captured_at_unix: 100,
+            puuid: "puuid".to_string(),
+        }))
+        .expect_err("missing backup folder");
+
+        assert!(err.contains("backup folder is missing"));
+    }
+
+    #[test]
+    fn require_launcher_session_accepts_ready_backup() {
+        let dir = tempdir().expect("temp dir");
+        let backup = LauncherSessionBackup {
+            data_dir: dir.path().to_path_buf(),
+            captured_at_unix: 100,
+            puuid: "puuid".to_string(),
+        };
+
+        let accepted = require_launcher_session(Some(backup)).expect("ready backup");
+
+        assert_eq!(accepted.puuid, "puuid");
     }
 }

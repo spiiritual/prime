@@ -7,6 +7,7 @@ Current scope:
 - Manage local account profiles with region/shard metadata.
 - Launch VALORANT through `RiotClientServices.exe --launch-product=valorant --launch-patchline=live`.
 - Capture and restore per-account Riot Client launcher sessions from the local Riot Client `Data` folder after a remembered login.
+- Require a captured launcher session before launching a selected account, preventing accidental launches on Riot Client's previous session.
 - Start a guarded login-capture flow that clears stale Riot Client session data before capturing a remembered account.
 - Refresh a profile's PUUID and Riot ID from a stored API token or captured launcher session.
 - Import Riot web redirect tokens for API access.
