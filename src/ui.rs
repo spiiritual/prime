@@ -244,6 +244,53 @@ impl PrimeApp {
 
                 Task::none()
             }
+            Message::RefreshProfileIdentity => {
+                let Some(account) = self.state.selected_account().cloned() else {
+                    self.status =
+                        "Select an account before refreshing profile identity".to_string();
+                    return Task::none();
+                };
+
+                self.status = "Refreshing Riot profile identity".to_string();
+                Task::perform(
+                    fetch_profile_identity(account),
+                    Message::ProfileIdentityLoaded,
+                )
+            }
+            Message::ProfileIdentityLoaded(result) => {
+                match result {
+                    Ok(identity) => {
+                        if let Some(account) = self
+                            .state
+                            .accounts
+                            .iter_mut()
+                            .find(|account| account.id == identity.account_id)
+                        {
+                            if let Err(error) = account.apply_riot_identity(
+                                identity.puuid,
+                                identity.game_name,
+                                identity.tag_line,
+                            ) {
+                                self.status = format!("Profile identity rejected: {error}");
+                                return Task::none();
+                            }
+
+                            account.session = Some(identity.session);
+                            self.status = format!("Refreshed {}", account.summary());
+                            return self.save_task();
+                        }
+
+                        self.status =
+                            "Refreshed profile identity, but the selected profile no longer exists"
+                                .to_string();
+                    }
+                    Err(error) => {
+                        self.status = format!("Profile refresh failed: {error}");
+                    }
+                }
+
+                Task::none()
+            }
             Message::CaptureLauncherSession => {
                 let Some(account_id) = self.state.selected_account else {
                     self.status =
@@ -518,7 +565,8 @@ impl PrimeApp {
                 button("Add account").on_press(Message::AddAccount),
                 button("Remove selected").on_press(Message::DeleteSelected),
                 button("Start login capture").on_press(Message::StartLauncherSessionLogin),
-                button("Capture launcher session").on_press(Message::CaptureLauncherSession)
+                button("Capture launcher session").on_press(Message::CaptureLauncherSession),
+                button("Refresh profile").on_press(Message::RefreshProfileIdentity)
             ]
             .spacing(10),
             text("Start login capture clears stale Riot Client login data and opens Riot Client. Log in with Remember Me enabled, then capture the launcher session for this profile."),
@@ -666,6 +714,8 @@ enum Message {
     ImportRedirect,
     StartLauncherSessionLogin,
     LauncherSessionLoginStarted(Result<(), String>),
+    RefreshProfileIdentity,
+    ProfileIdentityLoaded(Result<RefreshedProfileIdentity, String>),
     CaptureLauncherSession,
     LauncherSessionCaptured(Result<CapturedLauncherSession, String>),
     FetchStorefront,
@@ -694,6 +744,15 @@ async fn start_launcher_session_login(config: LaunchConfig) -> Result<(), String
     close_riot_processes().map_err(|error| error.to_string())?;
     clear_existing_launcher_data_dirs().map_err(|error| error.to_string())?;
     launch_riot_login_capture(&config).map_err(|error| error.to_string())
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RefreshedProfileIdentity {
+    account_id: AccountId,
+    session: AuthSession,
+    puuid: String,
+    game_name: String,
+    tag_line: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -809,6 +868,25 @@ async fn fetch_loadout(
         .await
         .map(|response| LoadoutSummary::from_response(response, &catalog))
         .map_err(|error| error.to_string())
+}
+
+async fn fetch_profile_identity(
+    account: AccountProfile,
+) -> Result<RefreshedProfileIdentity, String> {
+    let api = RiotApi::new().map_err(|error| error.to_string())?;
+    let session = active_api_session(&api, &account).await?;
+    let player_info = api
+        .player_info(&session.access_token)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    Ok(RefreshedProfileIdentity {
+        account_id: account.id,
+        session,
+        puuid: player_info.sub,
+        game_name: player_info.acct.game_name,
+        tag_line: player_info.acct.tag_line,
+    })
 }
 
 async fn fetch_skin_catalog() -> SkinCatalog {

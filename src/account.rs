@@ -264,6 +264,35 @@ impl AccountProfile {
 
         Ok(())
     }
+
+    pub fn apply_riot_identity(
+        &mut self,
+        puuid: impl Into<String>,
+        game_name: impl Into<String>,
+        tag_line: impl Into<String>,
+    ) -> Result<(), AccountSessionError> {
+        let puuid = puuid.into();
+        let normalized_puuid = puuid.trim();
+
+        if normalized_puuid.is_empty() {
+            return Err(AccountSessionError::MissingCapturedPuuid);
+        }
+
+        if let Some(existing_puuid) = self.puuid.as_ref().filter(|puuid| !puuid.trim().is_empty())
+            && !existing_puuid.eq_ignore_ascii_case(normalized_puuid)
+        {
+            return Err(AccountSessionError::PuuidMismatch {
+                expected: existing_puuid.clone(),
+                actual: normalized_puuid.to_string(),
+            });
+        }
+
+        self.puuid = Some(normalized_puuid.to_string());
+        self.game_name = non_empty_string(game_name.into());
+        self.tag_line = non_empty_string(tag_line.into());
+
+        Ok(())
+    }
 }
 
 fn non_empty_string(value: String) -> Option<String> {
@@ -380,5 +409,31 @@ mod tests {
             }
         );
         assert!(account.launcher_session.is_none());
+    }
+
+    #[test]
+    fn apply_riot_identity_sets_riot_id() {
+        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+
+        account
+            .apply_riot_identity("puuid-a", "Player", "NA1")
+            .expect("identity");
+
+        assert_eq!(account.puuid.as_deref(), Some("puuid-a"));
+        assert_eq!(account.riot_id().as_deref(), Some("Player#NA1"));
+    }
+
+    #[test]
+    fn apply_riot_identity_rejects_wrong_puuid() {
+        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        account.puuid = Some("puuid-a".to_string());
+
+        let err = account
+            .apply_riot_identity("puuid-b", "Player", "NA1")
+            .expect_err("mismatch");
+
+        assert!(matches!(err, AccountSessionError::PuuidMismatch { .. }));
+        assert_eq!(account.game_name, None);
+        assert_eq!(account.tag_line, None);
     }
 }
