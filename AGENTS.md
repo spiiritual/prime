@@ -1,0 +1,42 @@
+# Prime Valorant Manager
+
+Rust + Iced desktop account manager for VALORANT.
+
+Current scope:
+
+- Manage local account profiles with region/shard metadata.
+- Launch VALORANT through `RiotClientServices.exe --launch-product=valorant --launch-patchline=live`.
+- Capture and restore per-account Riot Client launcher sessions from the local Riot Client `Data` folder after a remembered login.
+- Require a captured launcher session before launching a selected account, preventing accidental launches on Riot Client's previous session.
+- Add accounts through a guarded login-capture flow that clears stale Riot Client session data, waits for the remembered login, and then asks for the display name.
+- Refresh a profile's PUUID, Riot ID, and shard from a stored API token or captured launcher session.
+- Import Riot web redirect tokens for API access from Settings as an advanced fallback.
+- Re-authenticate API requests from a captured remembered launcher session when possible.
+- Cache refreshed Riot API sessions and entitlement tokens after successful shop/loadout checks.
+- Resolve the active shard through Riot Geo when an ID token is available, reducing storefront 404s from stale manual shard choices.
+- Query the unofficial player store and player loadout endpoints when a valid token, entitlement token, PUUID, shard, and client version are available.
+- Use the account XP endpoint for account level when loadout identity reports zero.
+- Resolve store/loadout skin UUIDs and store currency IDs to display names through the public Valorant content API.
+- Display featured bundles, daily offers, and Night Market offers with resolved art, rarity tinting, and prices where available.
+- Cache downloaded skin and weapon images locally, show the cache size in Settings, and allow clearing the cache.
+- Resolve and order loadout weapon IDs so equipped skins are shown by weapon category like the in-game collection.
+- Fetch the current Riot client version automatically from the public Valorant version endpoint.
+
+Notes:
+
+- Riot's direct username/password auth is intentionally isolated because the currently documented flow is prone to captcha and anti-bot breakage.
+- Store and loadout requests use the undocumented client endpoints described by <https://valapidocs.techchrism.me/>.
+- Launcher switching follows the same broad approach as Assist: preserve Riot Client remembered-login data per account, restore the selected account's data, then launch VALORANT through Riot Client.
+- This app should not store Riot passwords. The current token import flow stores only session tokens in the local profile JSON and redacts them from debug output.
+
+Run:
+
+```powershell
+cargo run
+```
+
+Test:
+
+```powershell
+cargo test
+```
