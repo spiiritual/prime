@@ -57,6 +57,8 @@ struct PrimeApp {
     pending_account: Option<CapturedAccountDraft>,
     store_summary: Option<StoreSummary>,
     loadout_summary: Option<LoadoutSummary>,
+    store_loading: bool,
+    loadout_loading: bool,
 }
 
 impl PrimeApp {
@@ -79,6 +81,8 @@ impl PrimeApp {
                 pending_account: None,
                 store_summary: None,
                 loadout_summary: None,
+                store_loading: false,
+                loadout_loading: false,
             },
             Task::batch([
                 Task::perform(
@@ -123,7 +127,7 @@ impl PrimeApp {
             }
             Message::TabSelected(tab) => {
                 self.active_tab = tab;
-                Task::none()
+                self.load_active_tab()
             }
             Message::SelectAccount(id) => {
                 self.state.selected_account = Some(id);
@@ -134,7 +138,7 @@ impl PrimeApp {
                     .selected_account()
                     .map(|account| format!("Selected {}", account.summary()))
                     .unwrap_or_else(|| "No account selected".to_string());
-                self.save_task()
+                Task::batch([self.save_task(), self.load_active_tab()])
             }
             Message::NewDisplayNameChanged(value) => {
                 self.new_display_name = value;
@@ -379,19 +383,10 @@ impl PrimeApp {
 
                 Task::none()
             }
-            Message::FetchStorefront => {
-                let Some(account) = self.state.selected_account().cloned() else {
-                    self.status = "Select an account before checking the shop".to_string();
-                    return Task::none();
-                };
-
-                self.status = "Checking store".to_string();
-                Task::perform(
-                    fetch_storefront(account, self.client_version_input.clone()),
-                    Message::StorefrontLoaded,
-                )
-            }
+            Message::FetchStorefront => self.fetch_storefront_task(),
             Message::StorefrontLoaded(result) => {
+                self.store_loading = false;
+
                 match result {
                     Ok(result) => {
                         if let Err(error) = cache_account_api_context(
@@ -425,19 +420,10 @@ impl PrimeApp {
 
                 Task::none()
             }
-            Message::FetchLoadout => {
-                let Some(account) = self.state.selected_account().cloned() else {
-                    self.status = "Select an account before checking loadout".to_string();
-                    return Task::none();
-                };
-
-                self.status = "Checking loadout".to_string();
-                Task::perform(
-                    fetch_loadout(account, self.client_version_input.clone()),
-                    Message::LoadoutLoaded,
-                )
-            }
+            Message::FetchLoadout => self.fetch_loadout_task(),
             Message::LoadoutLoaded(result) => {
+                self.loadout_loading = false;
+
                 match result {
                     Ok(result) => {
                         if let Err(error) = cache_account_api_context(
@@ -686,9 +672,14 @@ impl PrimeApp {
     }
 
     fn shop_tab(&self) -> Element<'_, Message> {
+        let loading_label = if self.store_loading {
+            "Loading shop..."
+        } else {
+            "Shop loads automatically for the selected account."
+        };
         let mut content = column![
-            text("Daily store offers require a selected profile with an imported Riot token, PUUID, shard, entitlement token, and current client version."),
-            button("Check shop").on_press(Message::FetchStorefront)
+            text(loading_label),
+            button("Refresh shop").on_press(Message::FetchStorefront)
         ]
         .spacing(12);
 
@@ -720,9 +711,14 @@ impl PrimeApp {
     }
 
     fn loadout_tab(&self) -> Element<'_, Message> {
+        let loading_label = if self.loadout_loading {
+            "Loading loadout..."
+        } else {
+            "Loadout loads automatically for the selected account."
+        };
         let mut content = column![
-            text("Loadout reads the selected account's equipped skins from the personalization endpoint."),
-            button("Check loadout").on_press(Message::FetchLoadout)
+            text(loading_label),
+            button("Refresh loadout").on_press(Message::FetchLoadout)
         ]
         .spacing(12);
 
@@ -756,6 +752,46 @@ impl PrimeApp {
         ]
         .spacing(12)
         .into()
+    }
+
+    fn load_active_tab(&mut self) -> Task<Message> {
+        match self.active_tab {
+            Tab::Shop if self.store_summary.is_none() && !self.store_loading => {
+                self.fetch_storefront_task()
+            }
+            Tab::Loadout if self.loadout_summary.is_none() && !self.loadout_loading => {
+                self.fetch_loadout_task()
+            }
+            _ => Task::none(),
+        }
+    }
+
+    fn fetch_storefront_task(&mut self) -> Task<Message> {
+        let Some(account) = self.state.selected_account().cloned() else {
+            self.status = "Select an account before opening the shop".to_string();
+            return Task::none();
+        };
+
+        self.store_loading = true;
+        self.status = "Loading shop".to_string();
+        Task::perform(
+            fetch_storefront(account, self.client_version_input.clone()),
+            Message::StorefrontLoaded,
+        )
+    }
+
+    fn fetch_loadout_task(&mut self) -> Task<Message> {
+        let Some(account) = self.state.selected_account().cloned() else {
+            self.status = "Select an account before opening loadout".to_string();
+            return Task::none();
+        };
+
+        self.loadout_loading = true;
+        self.status = "Loading loadout".to_string();
+        Task::perform(
+            fetch_loadout(account, self.client_version_input.clone()),
+            Message::LoadoutLoaded,
+        )
     }
 
     fn save_task(&self) -> Task<Message> {
