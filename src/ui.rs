@@ -36,7 +36,7 @@ pub fn run() -> iced::Result {
         .title(app_title)
         .theme(app_theme)
         .subscription(app_subscription)
-        .window_size((1100.0, 720.0))
+        .window_size((1280.0, 840.0))
         .run()
 }
 
@@ -1051,9 +1051,9 @@ fn loadout_section<'a>(
     guns: impl IntoIterator<Item = &'a LoadoutGunDisplay>,
 ) -> Option<Element<'a, Message>> {
     let mut cards = grid::Grid::new()
-        .spacing(10)
-        .fluid(152)
-        .height(grid::aspect_ratio(152, 176));
+        .spacing(12)
+        .fluid(220)
+        .height(grid::aspect_ratio(220, 252));
     let mut count = 0;
 
     for gun in guns {
@@ -1067,7 +1067,7 @@ fn loadout_section<'a>(
 fn loadout_card(gun: &LoadoutGunDisplay) -> Element<'_, Message> {
     container(
         column![
-            asset_image(gun.skin.cached_icon.as_ref(), 108.0),
+            asset_image(gun.skin.cached_icon.as_ref(), 164.0),
             text(&gun.weapon.display_name).size(15).width(Length::Fill),
             text(&gun.skin.display_name).size(14).width(Length::Fill)
         ]
