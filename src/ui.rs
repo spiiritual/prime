@@ -232,13 +232,11 @@ impl PrimeApp {
                         }
 
                         if let (Some(game_name), Some(tag_line)) = (draft.game_name, draft.tag_line)
-                        {
-                            if let Err(error) =
+                            && let Err(error) =
                                 account.apply_riot_identity(draft.puuid, game_name, tag_line)
-                            {
-                                self.status = format!("Captured identity rejected: {error}");
-                                return Task::none();
-                            }
+                        {
+                            self.status = format!("Captured identity rejected: {error}");
+                            return Task::none();
                         }
 
                         self.status = format!("Added {}", account.summary());
