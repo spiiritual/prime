@@ -3,9 +3,12 @@ use std::time::Duration;
 
 use iced::widget::image::Handle;
 use iced::widget::{
-    button, column, container, grid, image, pick_list, row, scrollable, stack, text, text_input,
+    button, column, container, grid, image, pick_list, rich_text, row, scrollable, span, stack,
+    text, text_input,
 };
-use iced::{Color, ContentFit, Element, Length, Padding, Subscription, Task, Theme, alignment};
+use iced::{
+    Color, ContentFit, Element, Length, Padding, Size, Subscription, Task, Theme, alignment, window,
+};
 
 use crate::account::LauncherSessionBackup;
 use crate::account::{AccountId, AccountProfile, AuthSession, Shard};
@@ -35,7 +38,13 @@ pub fn run() -> iced::Result {
         .title(app_title)
         .theme(app_theme)
         .subscription(app_subscription)
-        .window_size((1280.0, 840.0))
+        .window(window::Settings {
+            size: Size::new(1280.0, 840.0),
+            min_size: Some(Size::new(1280.0, 840.0)),
+            max_size: Some(Size::new(1280.0, 840.0)),
+            resizable: false,
+            ..window::Settings::default()
+        })
         .run()
 }
 
@@ -1022,17 +1031,12 @@ fn store_bundle_card(bundle: &StoreBundleDisplay) -> Element<'_, Message> {
 }
 
 fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {
-    let price = offer
-        .price
-        .as_ref()
-        .map(OfferPrice::label)
-        .unwrap_or_else(|| "Price unavailable".to_string());
     let rarity_for_style = offer.skin.rarity.clone();
     let mut details = iced::widget::Column::new()
         .spacing(6)
         .push(asset_image(offer.skin.cached_icon.as_ref(), 118.0))
         .push(text(&offer.skin.display_name).size(16))
-        .push(text(price).size(14));
+        .push(offer_price_line(offer));
 
     if offer.discount_percent > 0 {
         details = details.push(text(format!("{}% off", offer.discount_percent)).size(13));
@@ -1043,6 +1047,28 @@ fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {
         .width(Length::Fill)
         .style(move |theme| rarity_card_style(theme, rarity_for_style.as_deref()))
         .into()
+}
+
+fn offer_price_line(offer: &StoreOfferDisplay) -> Element<'_, Message> {
+    let Some(price) = &offer.price else {
+        return text("Price unavailable").size(14).into();
+    };
+
+    if let Some(original_price) = &offer.original_price {
+        if original_price != price {
+            return rich_text::<(), Message, Theme, iced::Renderer>([
+                span(original_price.label())
+                    .strikethrough(true)
+                    .color(Color::from_rgb8(158, 164, 176)),
+                span(" "),
+                span(price.label()).color(Color::WHITE),
+            ])
+            .size(14)
+            .into();
+        }
+    }
+
+    text(price.label()).size(14).into()
 }
 
 fn loadout_section<'a>(
@@ -1259,7 +1285,7 @@ fn require_launcher_session(
 
     if !backup.is_ready() {
         return Err(
-            "selected account launcher session is incomplete or its backup folder is missing"
+            "selected account launcher session is incomplete, missing Riot private settings, or its backup folder is missing; re-capture selected login"
                 .to_string(),
         );
     }
@@ -1601,6 +1627,7 @@ fn remaining_seconds_at(
 struct StoreOfferDisplay {
     skin: SkinDisplay,
     price: Option<OfferPrice>,
+    original_price: Option<OfferPrice>,
     discount_percent: i64,
 }
 
@@ -1610,7 +1637,15 @@ impl StoreOfferDisplay {
         let mut label = self.skin.display_name.clone();
 
         if let Some(price) = &self.price {
-            label.push_str(&format!(" ({})", price.label()));
+            if let Some(original_price) = &self.original_price {
+                label.push_str(&format!(
+                    " ({} -> {})",
+                    original_price.label(),
+                    price.label()
+                ));
+            } else {
+                label.push_str(&format!(" ({})", price.label()));
+            }
         }
 
         if self.discount_percent > 0 {
@@ -1673,9 +1708,17 @@ impl From<ResolvedCurrency> for CurrencyDisplay {
     fn from(currency: ResolvedCurrency) -> Self {
         Self {
             uuid: currency.uuid,
-            display_name: currency.display_name,
+            display_name: shop_currency_name(&currency.display_name),
             display_icon: currency.display_icon,
         }
+    }
+}
+
+fn shop_currency_name(display_name: &str) -> String {
+    if display_name.eq_ignore_ascii_case("VALORANT Points") {
+        "VP".to_string()
+    } else {
+        display_name.to_string()
     }
 }
 
@@ -1719,6 +1762,7 @@ fn store_offer_display(
     StoreOfferDisplay {
         skin,
         price,
+        original_price: None,
         discount_percent,
     }
 }
@@ -1734,12 +1778,19 @@ fn bonus_store_offer_display(
         .first()
         .map(|reward| SkinDisplay::from(skins.resolve(&reward.item_id)))
         .unwrap_or_else(|| SkinDisplay::from(skins.resolve(&offer.offer.offer_id)));
-    let price = offer_price(&offer.discount_costs, currencies)
-        .or_else(|| offer_price(&offer.offer.cost, currencies));
+    let discounted_price = offer_price(&offer.discount_costs, currencies);
+    let base_price = offer_price(&offer.offer.cost, currencies);
+    let price = discounted_price.clone().or_else(|| base_price.clone());
+    let original_price = base_price.filter(|base_price| {
+        discounted_price
+            .as_ref()
+            .is_some_and(|discounted_price| discounted_price != base_price)
+    });
 
     StoreOfferDisplay {
         skin,
         price,
+        original_price,
         discount_percent: offer.discount_percent,
     }
 }
@@ -1757,11 +1808,7 @@ fn store_bundle_display(
         bundles.resolve(&bundle.id)
     };
     let rarity = strongest_bundle_rarity(bundle, skins);
-    let item_count = bundle
-        .items
-        .iter()
-        .map(|item| item.item.amount.max(1))
-        .sum::<i64>();
+    let item_count = bundle.items.len() as i64;
 
     StoreBundleDisplay {
         bundle: BundleDisplay::from(resolved),
@@ -2278,6 +2325,13 @@ async fn active_api_session(
         );
     };
 
+    if !backup.is_ready() {
+        return Err(
+            "selected account launcher session is incomplete, missing Riot private settings, or its backup folder is missing; re-capture selected login"
+                .to_string(),
+        );
+    }
+
     let cookies = read_backup_cookies(backup).map_err(|error| error.to_string())?;
     let cookie_header = launcher_cookie_header(&cookies).map_err(|error| error.to_string())?;
     api.cookie_reauth(&cookie_header)
@@ -2360,6 +2414,8 @@ fn cache_account_api_context(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
     use tempfile::tempdir;
 
@@ -2410,7 +2466,7 @@ mod tests {
                         "OfferID": "offer",
                         "IsDirectPurchase": true,
                         "StartDate": "2026-05-25T00:00:00Z",
-                        "Cost": {},
+                        "Cost": {"vp": 1775},
                         "Rewards": [{
                             "ItemTypeID": "skin-type",
                             "ItemID": "a",
@@ -2440,7 +2496,7 @@ mod tests {
         }]);
         let currencies = CurrencyCatalog::from_currencies(vec![crate::riot::content::Currency {
             uuid: "vp".to_string(),
-            display_name: "VP".to_string(),
+            display_name: "VALORANT Points".to_string(),
             display_icon: None,
         }]);
         let bundles = BundleCatalog::from_bundles(vec![crate::riot::content::Bundle {
@@ -2477,7 +2533,7 @@ mod tests {
                 .iter()
                 .map(StoreOfferDisplay::label)
                 .collect::<Vec<_>>(),
-            ["Prime Vandal Level 1 (1200 VP), 10% off"]
+            ["Prime Vandal Level 1 (1775 VP -> 1200 VP), 10% off"]
         );
     }
 
@@ -2531,6 +2587,17 @@ mod tests {
                                 "ItemTypeID": "skin-type",
                                 "ItemID": "skin-b",
                                 "Amount": 2
+                            },
+                            "BasePrice": 0,
+                            "CurrencyID": "vp",
+                            "DiscountPercent": 0,
+                            "DiscountedPrice": 0,
+                            "IsPromoItem": false
+                        }, {
+                            "Item": {
+                                "ItemTypeID": "buddy-type",
+                                "ItemID": "buddy-b",
+                                "Amount": 1
                             },
                             "BasePrice": 0,
                             "CurrencyID": "vp",
@@ -2692,7 +2759,7 @@ mod tests {
             chromas: vec![crate::riot::content::WeaponSkinChroma {
                 uuid: "chroma-a".to_string(),
                 display_name: "Prime Vandal Blue".to_string(),
-                display_icon: None,
+                display_icon: Some("chroma-display-icon".to_string()),
                 full_render: Some("chroma-render".to_string()),
             }],
         }]);
@@ -2770,8 +2837,23 @@ mod tests {
     }
 
     #[test]
+    fn require_launcher_session_rejects_missing_private_settings_file() {
+        let dir = tempdir().expect("temp dir");
+        let err = require_launcher_session(Some(LauncherSessionBackup {
+            data_dir: dir.path().to_path_buf(),
+            captured_at_unix: 100,
+            puuid: "puuid".to_string(),
+        }))
+        .expect_err("missing private settings");
+
+        assert!(err.contains("missing Riot private settings"));
+    }
+
+    #[test]
     fn require_launcher_session_accepts_ready_backup() {
         let dir = tempdir().expect("temp dir");
+        fs::write(dir.path().join("RiotGamesPrivateSettings.yaml"), "settings")
+            .expect("private settings");
         let backup = LauncherSessionBackup {
             data_dir: dir.path().to_path_buf(),
             captured_at_unix: 100,

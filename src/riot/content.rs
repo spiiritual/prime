@@ -202,8 +202,8 @@ impl SkinCatalog {
                             &skin.display_name,
                         ),
                         display_icon: chroma
-                            .display_icon
-                            .or(chroma.full_render)
+                            .full_render
+                            .or(chroma.display_icon)
                             .or_else(|| skin_info.display_icon.clone()),
                         rarity: rarity.clone(),
                     },
@@ -504,6 +504,28 @@ mod tests {
             Some("render")
         );
         assert_eq!(catalog.resolve("skin-uuid").rarity.as_deref(), None);
+    }
+
+    #[test]
+    fn prefers_chroma_full_render_over_display_icon() {
+        let catalog = SkinCatalog::from_skins(vec![WeaponSkin {
+            uuid: "skin-uuid".to_string(),
+            display_name: "Standard Vandal".to_string(),
+            display_icon: Some("skin-icon".to_string()),
+            content_tier_uuid: None,
+            levels: vec![],
+            chromas: vec![WeaponSkinChroma {
+                uuid: "chroma-uuid".to_string(),
+                display_name: "Standard Vandal".to_string(),
+                display_icon: Some("display-icon".to_string()),
+                full_render: Some("full-render".to_string()),
+            }],
+        }]);
+
+        assert_eq!(
+            catalog.resolve("chroma-uuid").display_icon.as_deref(),
+            Some("full-render")
+        );
     }
 
     #[test]

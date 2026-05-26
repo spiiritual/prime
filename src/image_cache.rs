@@ -17,7 +17,7 @@ impl ImageCache {
     }
 
     pub fn default_path() -> PathBuf {
-        ProjectDirs::from("dev", "prime", "prime")
+        ProjectDirs::from("dev", "spiiritual", "prime")
             .map(|dirs| dirs.cache_dir().join("images"))
             .unwrap_or_else(|| PathBuf::from("image-cache"))
     }
@@ -70,8 +70,9 @@ impl ImageCache {
         self.root
             .join(sanitize_path_component(namespace))
             .join(format!(
-                "{}.{}",
+                "{}-{:016x}.{}",
                 sanitize_path_component(id),
+                url_fingerprint(url),
                 image_extension(url)
             ))
     }
@@ -127,6 +128,18 @@ fn image_extension(raw_url: &str) -> String {
         .unwrap_or_else(|| "png".to_string())
 }
 
+fn url_fingerprint(value: &str) -> u64 {
+    const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    value
+        .as_bytes()
+        .iter()
+        .fold(FNV_OFFSET_BASIS, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(FNV_PRIME)
+        })
+}
+
 #[derive(Debug, Error)]
 pub enum ImageCacheError {
     #[error("image cache I/O error: {0}")]
@@ -157,10 +170,30 @@ mod tests {
     #[test]
     fn asset_path_uses_stable_safe_names() {
         let cache = ImageCache::new("cache");
+        let path = cache.asset_path("skins", "abc/123", "https://example.com/render.PNG?x=1");
 
         assert_eq!(
-            cache.asset_path("skins", "abc/123", "https://example.com/render.PNG?x=1"),
-            PathBuf::from("cache").join("skins").join("abc_123.png")
+            path.parent(),
+            Some(PathBuf::from("cache").join("skins").as_path())
+        );
+        assert_eq!(
+            path.extension().and_then(|extension| extension.to_str()),
+            Some("png")
+        );
+        assert!(
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("abc_123-"))
+        );
+    }
+
+    #[test]
+    fn asset_path_changes_when_url_changes() {
+        let cache = ImageCache::new("cache");
+
+        assert_ne!(
+            cache.asset_path("skins", "skin-id", "https://example.com/displayicon.png"),
+            cache.asset_path("skins", "skin-id", "https://example.com/fullrender.png")
         );
     }
 }
