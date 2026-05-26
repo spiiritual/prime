@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct EntitlementResponse {
@@ -89,6 +89,7 @@ pub struct BundleItem {
     pub base_price: i64,
     #[serde(rename = "CurrencyID")]
     pub currency_id: String,
+    #[serde(deserialize_with = "deserialize_discount_percent")]
     pub discount_percent: i64,
     pub discounted_price: i64,
     pub is_promo_item: bool,
@@ -151,10 +152,43 @@ pub struct BonusStoreOffer {
     #[serde(rename = "BonusOfferID")]
     pub bonus_offer_id: String,
     pub offer: StoreOffer,
+    #[serde(deserialize_with = "deserialize_discount_percent")]
     pub discount_percent: i64,
     #[serde(default)]
     pub discount_costs: HashMap<String, i64>,
     pub is_seen: bool,
+}
+
+fn deserialize_discount_percent<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Number::deserialize(deserializer)?;
+
+    if let Some(percent) = value.as_i64() {
+        return Ok(percent);
+    }
+
+    if let Some(percent) = value.as_u64() {
+        return i64::try_from(percent)
+            .map_err(|_| serde::de::Error::custom("discount percent is too large"));
+    }
+
+    let Some(percent) = value.as_f64() else {
+        return Err(serde::de::Error::custom("discount percent is not a number"));
+    };
+
+    if !percent.is_finite() {
+        return Err(serde::de::Error::custom("discount percent is not finite"));
+    }
+
+    let normalized = if percent.abs() <= 1.0 {
+        percent * 100.0
+    } else {
+        percent
+    };
+
+    Ok(normalized.round() as i64)
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -257,6 +291,64 @@ mod tests {
         assert_eq!(
             storefront.skins_panel_layout.single_item_store_offers[0].cost["vp"],
             1775
+        );
+    }
+
+    #[test]
+    fn deserializes_fractional_storefront_discounts() {
+        let json = serde_json::json!({
+            "FeaturedBundle": {
+                "Bundle": {
+                    "ID": "bundle",
+                    "DataAssetID": "asset",
+                    "CurrencyID": "vp",
+                    "Items": [{
+                        "Item": {
+                            "ItemTypeID": "skin-type",
+                            "ItemID": "skin",
+                            "Amount": 1
+                        },
+                        "BasePrice": 2175,
+                        "CurrencyID": "vp",
+                        "DiscountPercent": 0.4,
+                        "DiscountedPrice": 870,
+                        "IsPromoItem": false
+                    }],
+                    "DurationRemainingInSeconds": 10
+                },
+                "Bundles": [],
+                "BundleRemainingDurationInSeconds": 20
+            },
+            "SkinsPanelLayout": {
+                "SingleItemOffers": [],
+                "SingleItemStoreOffers": [],
+                "SingleItemOffersRemainingDurationInSeconds": 86400
+            },
+            "BonusStore": {
+                "BonusStoreOffers": [{
+                    "BonusOfferID": "bonus",
+                    "Offer": {
+                        "OfferID": "offer",
+                        "IsDirectPurchase": true,
+                        "StartDate": "2026-05-25T00:00:00Z",
+                        "Cost": {"vp": 1775},
+                        "Rewards": []
+                    },
+                    "DiscountPercent": 0.348,
+                    "DiscountCosts": {"vp": 1158},
+                    "IsSeen": false
+                }],
+                "BonusStoreRemainingDurationInSeconds": 40
+            }
+        });
+
+        let storefront: StorefrontResponse =
+            serde_json::from_value(json).expect("storefront response");
+
+        assert_eq!(storefront.featured_bundle.bundle.items[0].discount_percent, 40);
+        assert_eq!(
+            storefront.bonus_store.unwrap().bonus_store_offers[0].discount_percent,
+            35
         );
     }
 

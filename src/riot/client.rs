@@ -142,8 +142,9 @@ impl RiotApi {
         credentials.validate()?;
 
         self.client
-            .get(storefront_url(credentials.shard, &credentials.puuid))
+            .post(storefront_url(credentials.shard, &credentials.puuid))
             .headers(valorant_headers(credentials)?)
+            .json(&serde_json::json!({}))
             .send()
             .await?
             .error_for_status()?

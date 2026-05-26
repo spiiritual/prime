@@ -15,7 +15,7 @@ pub fn pd_base_url(shard: Shard) -> String {
 }
 
 pub fn storefront_url(shard: Shard, puuid: &str) -> String {
-    format!("{}/store/v2/storefront/{puuid}", pd_base_url(shard))
+    format!("{}/store/v3/storefront/{puuid}", pd_base_url(shard))
 }
 
 pub fn player_loadout_url(shard: Shard, puuid: &str) -> String {
@@ -34,10 +34,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn builds_documented_storefront_url() {
+    fn builds_current_storefront_url() {
         assert_eq!(
             storefront_url(Shard::Na, "puuid"),
-            "https://pd.na.a.pvp.net/store/v2/storefront/puuid"
+            "https://pd.na.a.pvp.net/store/v3/storefront/puuid"
         );
     }
 
