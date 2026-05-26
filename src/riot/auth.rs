@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use time::OffsetDateTime;
 use url::Url;
@@ -8,89 +7,6 @@ use url::Url;
 use crate::account::AuthSession;
 
 pub const COOKIE_REAUTH_URL: &str = "https://auth.riotgames.com/authorize?redirect_uri=https%3A%2F%2Fplayvalorant.com%2Fopt_in&client_id=play-valorant-web-prod&response_type=token%20id_token&nonce=1&scope=account%20openid";
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct AuthCookiesBody {
-    pub client_id: &'static str,
-    pub nonce: &'static str,
-    pub redirect_uri: &'static str,
-    pub response_type: &'static str,
-    pub scope: &'static str,
-}
-
-impl Default for AuthCookiesBody {
-    fn default() -> Self {
-        Self {
-            client_id: "play-valorant-web-prod",
-            nonce: "1",
-            redirect_uri: "https://playvalorant.com/opt_in",
-            response_type: "token id_token",
-            scope: "account openid",
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct AuthRequestBody {
-    #[serde(rename = "type")]
-    pub kind: &'static str,
-    pub language: &'static str,
-    pub remember: bool,
-    pub riot_identity: RiotIdentity,
-}
-
-impl AuthRequestBody {
-    pub fn password(
-        username: impl Into<String>,
-        password: impl Into<String>,
-        captcha: impl Into<String>,
-        remember: bool,
-    ) -> Self {
-        Self {
-            kind: "auth",
-            language: "en_US",
-            remember,
-            riot_identity: RiotIdentity {
-                captcha: captcha.into(),
-                username: username.into(),
-                password: password.into(),
-            },
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct RiotIdentity {
-    pub captcha: String,
-    pub username: String,
-    pub password: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct MfaBody {
-    #[serde(rename = "type")]
-    pub kind: &'static str,
-    pub multifactor: MfaCode,
-}
-
-impl MfaBody {
-    pub fn new(otp: impl Into<String>, remember_device: bool) -> Self {
-        Self {
-            kind: "multifactor",
-            multifactor: MfaCode {
-                otp: otp.into(),
-                remember_device,
-            },
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct MfaCode {
-    pub otp: String,
-    #[serde(rename = "rememberDevice")]
-    pub remember_device: bool,
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RedirectTokens {
@@ -112,43 +28,6 @@ impl RedirectTokens {
             OffsetDateTime::now_utc().unix_timestamp(),
         )
     }
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-pub struct AuthSuccess {
-    pub login_token: String,
-    pub redirect_url: String,
-    pub is_console_link_session: bool,
-    pub auth_method: String,
-    pub puuid: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(tag = "type")]
-pub enum AuthRequestResponse {
-    #[serde(rename = "success")]
-    Success {
-        success: AuthSuccess,
-        country: String,
-        platform: String,
-    },
-    #[serde(rename = "multifactor")]
-    Multifactor {
-        multifactor: MultifactorChallenge,
-        country: String,
-        platform: String,
-        error: Option<String>,
-    },
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-pub struct MultifactorChallenge {
-    pub method: String,
-    #[serde(default)]
-    pub methods: Vec<String>,
-    pub email: Option<String>,
-    pub mode: String,
-    pub auth_method: String,
 }
 
 pub fn parse_redirect_tokens(redirect_url: &str) -> Result<RedirectTokens, AuthParseError> {
@@ -228,23 +107,5 @@ mod tests {
             .expect_err("missing token");
 
         assert!(matches!(err, AuthParseError::MissingAccessToken));
-    }
-
-    #[test]
-    fn builds_documented_auth_cookie_body() {
-        let body = serde_json::to_value(AuthCookiesBody::default()).expect("json");
-
-        assert_eq!(body["client_id"], "play-valorant-web-prod");
-        assert_eq!(body["redirect_uri"], "https://playvalorant.com/opt_in");
-        assert_eq!(body["response_type"], "token id_token");
-    }
-
-    #[test]
-    fn serializes_mfa_body_with_expected_field_names() {
-        let body = serde_json::to_value(MfaBody::new("123456", true)).expect("json");
-
-        assert_eq!(body["type"], "multifactor");
-        assert_eq!(body["multifactor"]["otp"], "123456");
-        assert_eq!(body["multifactor"]["rememberDevice"], true);
     }
 }

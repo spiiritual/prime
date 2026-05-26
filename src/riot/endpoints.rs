@@ -1,11 +1,8 @@
 use crate::account::Shard;
 
-pub const AUTHORIZATION_URL: &str = "https://auth.riotgames.com/api/v1/authorization";
 pub const ENTITLEMENTS_URL: &str = "https://entitlements.auth.riotgames.com/api/token/v1";
 pub const PLAYER_INFO_URL: &str = "https://auth.riotgames.com/userinfo";
 pub const RIOT_GEO_URL: &str = "https://riot-geo.pas.si.riotgames.com/pas/v1/product/valorant";
-pub const RIOT_CLIENT_CONFIG_URL: &str =
-    "https://clientconfig.rpg.riotgames.com/api/v1/config/player?app=Riot%20Client";
 
 pub const HEADER_CLIENT_PLATFORM: &str = "X-Riot-ClientPlatform";
 pub const HEADER_CLIENT_VERSION: &str = "X-Riot-ClientVersion";
