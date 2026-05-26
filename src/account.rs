@@ -75,6 +75,17 @@ impl Shard {
             Region::Pbe => Shard::Pbe,
         }
     }
+
+    pub fn from_live_affinity(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "na" | "latam" | "br" => Some(Shard::Na),
+            "eu" => Some(Shard::Eu),
+            "ap" => Some(Shard::Ap),
+            "kr" => Some(Shard::Kr),
+            "pbe" => Some(Shard::Pbe),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for Shard {
@@ -349,6 +360,14 @@ mod tests {
         assert_eq!(Shard::from_live_region(Region::Eu), Shard::Eu);
         assert_eq!(Shard::from_live_region(Region::Ap), Shard::Ap);
         assert_eq!(Shard::from_live_region(Region::Kr), Shard::Kr);
+    }
+
+    #[test]
+    fn maps_live_affinity_to_shard() {
+        assert_eq!(Shard::from_live_affinity("latam"), Some(Shard::Na));
+        assert_eq!(Shard::from_live_affinity("BR"), Some(Shard::Na));
+        assert_eq!(Shard::from_live_affinity("eu"), Some(Shard::Eu));
+        assert_eq!(Shard::from_live_affinity("unknown"), None);
     }
 
     #[test]

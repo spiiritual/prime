@@ -36,6 +36,22 @@ pub struct RiotGeoAffinities {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
+pub struct AccountXpResponse {
+    pub version: i64,
+    pub subject: String,
+    pub progress: AccountXpProgress,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct AccountXpProgress {
+    pub level: i64,
+    #[serde(rename = "XP")]
+    pub xp: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 pub struct StorefrontResponse {
     pub featured_bundle: FeaturedBundle,
     pub skins_panel_layout: SkinsPanelLayout,
@@ -272,5 +288,24 @@ mod tests {
         assert_eq!(loadout.subject, "puuid");
         assert_eq!(loadout.guns[0].skin_id, "skin");
         assert_eq!(loadout.identity.account_level, 42);
+    }
+
+    #[test]
+    fn deserializes_account_xp_progress() {
+        let json = serde_json::json!({
+            "Version": 1,
+            "Subject": "puuid",
+            "Progress": {
+                "Level": 123,
+                "XP": 456
+            },
+            "History": []
+        });
+
+        let xp: AccountXpResponse = serde_json::from_value(json).expect("account xp");
+
+        assert_eq!(xp.subject, "puuid");
+        assert_eq!(xp.progress.level, 123);
+        assert_eq!(xp.progress.xp, 456);
     }
 }

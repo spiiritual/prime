@@ -28,6 +28,10 @@ pub fn player_loadout_url(shard: Shard, puuid: &str) -> String {
     )
 }
 
+pub fn account_xp_url(shard: Shard, puuid: &str) -> String {
+    format!("{}/account-xp/v1/players/{puuid}", pd_base_url(shard))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -45,6 +49,14 @@ mod tests {
         assert_eq!(
             player_loadout_url(Shard::Eu, "puuid"),
             "https://pd.eu.a.pvp.net/personalization/v2/players/puuid/playerloadout"
+        );
+    }
+
+    #[test]
+    fn builds_documented_account_xp_url() {
+        assert_eq!(
+            account_xp_url(Shard::Ap, "puuid"),
+            "https://pd.ap.a.pvp.net/account-xp/v1/players/puuid"
         );
     }
 }

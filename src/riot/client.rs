@@ -6,10 +6,12 @@ use crate::account::Shard;
 use super::auth::{AuthParseError, COOKIE_REAUTH_URL, RedirectTokens, parse_redirect_tokens};
 use super::endpoints::{
     CLIENT_PLATFORM, ENTITLEMENTS_URL, HEADER_CLIENT_PLATFORM, HEADER_CLIENT_VERSION,
-    HEADER_ENTITLEMENTS, PLAYER_INFO_URL, player_loadout_url, storefront_url,
+    HEADER_ENTITLEMENTS, PLAYER_INFO_URL, RIOT_GEO_URL, account_xp_url, player_loadout_url,
+    storefront_url,
 };
 use super::models::{
-    EntitlementResponse, PlayerInfoResponse, PlayerLoadoutResponse, StorefrontResponse,
+    AccountXpResponse, EntitlementResponse, PlayerInfoResponse, PlayerLoadoutResponse,
+    RiotGeoResponse, StorefrontResponse,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -116,6 +118,23 @@ impl RiotApi {
             .map_err(RiotApiError::Http)
     }
 
+    pub async fn riot_geo(
+        &self,
+        access_token: &str,
+        id_token: &str,
+    ) -> Result<RiotGeoResponse, RiotApiError> {
+        self.client
+            .put(RIOT_GEO_URL)
+            .bearer_auth(access_token)
+            .json(&serde_json::json!({ "id_token": id_token }))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await
+            .map_err(RiotApiError::Http)
+    }
+
     pub async fn storefront(
         &self,
         credentials: &ApiCredentials,
@@ -141,6 +160,23 @@ impl RiotApi {
 
         self.client
             .get(player_loadout_url(credentials.shard, &credentials.puuid))
+            .headers(valorant_headers(credentials)?)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await
+            .map_err(RiotApiError::Http)
+    }
+
+    pub async fn account_xp(
+        &self,
+        credentials: &ApiCredentials,
+    ) -> Result<AccountXpResponse, RiotApiError> {
+        credentials.validate()?;
+
+        self.client
+            .get(account_xp_url(credentials.shard, &credentials.puuid))
             .headers(valorant_headers(credentials)?)
             .send()
             .await?

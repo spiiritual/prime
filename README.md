@@ -8,12 +8,14 @@ Current scope:
 - Launch VALORANT through `RiotClientServices.exe --launch-product=valorant --launch-patchline=live`.
 - Capture and restore per-account Riot Client launcher sessions from the local Riot Client `Data` folder after a remembered login.
 - Require a captured launcher session before launching a selected account, preventing accidental launches on Riot Client's previous session.
-- Start a guarded login-capture flow that clears stale Riot Client session data before capturing a remembered account.
-- Refresh a profile's PUUID and Riot ID from a stored API token or captured launcher session.
-- Import Riot web redirect tokens for API access.
+- Add accounts through a guarded login-capture flow that clears stale Riot Client session data, waits for the remembered login, and then asks for the display name.
+- Refresh a profile's PUUID, Riot ID, and shard from a stored API token or captured launcher session.
+- Import Riot web redirect tokens for API access from Settings as an advanced fallback.
 - Re-authenticate API requests from a captured remembered launcher session when possible.
 - Cache refreshed Riot API sessions and entitlement tokens after successful shop/loadout checks.
+- Resolve the active shard through Riot Geo when an ID token is available, reducing storefront 404s from stale manual shard choices.
 - Query the unofficial player store and player loadout endpoints when a valid token, entitlement token, PUUID, shard, and client version are available.
+- Use the account XP endpoint for account level when loadout identity reports zero.
 - Resolve store/loadout skin UUIDs and store currency IDs to display names through the public Valorant content API.
 - Display featured bundle items, daily offers, and Night Market offers with resolved prices where available.
 - Resolve loadout weapon IDs so equipped skins are shown by weapon.

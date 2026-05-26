@@ -25,12 +25,22 @@ pub fn capture_current_launcher_session(
     account_id: AccountId,
     backup_root: impl AsRef<Path>,
 ) -> Result<CapturedLauncherSession, LauncherSessionError> {
-    let source_data_dir = default_data_dirs()
-        .into_iter()
-        .find(|dir| dir.join(PRIVATE_SETTINGS_FILE).exists())
+    let source_data_dir = ready_launcher_data_dir(default_data_dirs())
         .ok_or(LauncherSessionError::PrivateSettingsNotFound)?;
 
     capture_launcher_session_from_data_dir(account_id, source_data_dir, backup_root)
+}
+
+pub fn ready_launcher_data_dir(data_dirs: impl IntoIterator<Item = PathBuf>) -> Option<PathBuf> {
+    data_dirs.into_iter().find(|dir| {
+        let settings_path = dir.join(PRIVATE_SETTINGS_FILE);
+        let Ok(settings) = fs::read_to_string(settings_path) else {
+            return false;
+        };
+        let cookies = parse_private_settings_cookies(&settings);
+
+        cookie_value(&cookies, "ssid").is_some() && cookie_value(&cookies, "sub").is_some()
+    })
 }
 
 pub fn capture_launcher_session_from_data_dir(
@@ -401,6 +411,37 @@ rso-authenticator:
                 .join("state.bin")
                 .exists()
         );
+    }
+
+    #[test]
+    fn ready_launcher_data_dir_requires_ssid_and_sub() {
+        let first = tempdir().expect("first");
+        let second = tempdir().expect("second");
+        fs::write(
+            first.path().join(PRIVATE_SETTINGS_FILE),
+            r#"
+riot-login:
+  persist:
+    session:
+      cookies:
+        - name: "ssid"
+          value: "ssid-value"
+"#,
+        )
+        .expect("first settings");
+        fs::write(
+            second.path().join(PRIVATE_SETTINGS_FILE),
+            sample_private_settings(),
+        )
+        .expect("second settings");
+
+        let ready = ready_launcher_data_dir(vec![
+            first.path().to_path_buf(),
+            second.path().to_path_buf(),
+        ])
+        .expect("ready data dir");
+
+        assert_eq!(ready, second.path());
     }
 
     #[test]

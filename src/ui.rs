@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
 use iced::{Element, Length, Task, Theme};
@@ -15,11 +16,13 @@ use crate::riot::content::{
     ValorantContentApi, WeaponCatalog,
 };
 use crate::riot::launcher_session::{
-    CapturedLauncherSession, apply_launcher_session_backup, capture_current_launcher_session,
-    clear_existing_launcher_data_dirs, launcher_cookie_header, read_backup_cookies,
+    CapturedLauncherSession, LauncherSessionError, apply_launcher_session_backup,
+    capture_current_launcher_session, clear_existing_launcher_data_dirs, launcher_cookie_header,
+    read_backup_cookies,
 };
 use crate::riot::models::{
-    BonusStoreOffer, BundleItem, PlayerLoadoutResponse, StoreOffer, StorefrontResponse,
+    BonusStoreOffer, BundleItem, PlayerInfoResponse, PlayerLoadoutResponse, StoreOffer,
+    StorefrontResponse,
 };
 use crate::storage::{AccountRepository, StoredState};
 
@@ -51,6 +54,7 @@ struct PrimeApp {
     client_version_input: String,
     riot_client_path_input: String,
     status: String,
+    pending_account: Option<CapturedAccountDraft>,
     store_summary: Option<StoreSummary>,
     loadout_summary: Option<LoadoutSummary>,
 }
@@ -72,6 +76,7 @@ impl PrimeApp {
                 client_version_input: String::new(),
                 riot_client_path_input: String::new(),
                 status: "Loading accounts".to_string(),
+                pending_account: None,
                 store_summary: None,
                 loadout_summary: None,
             },
@@ -144,14 +149,80 @@ impl PrimeApp {
                 Task::none()
             }
             Message::AddAccount => {
+                let account_id = AccountId::new();
+                let config = LaunchConfig {
+                    riot_client_path: self.state.riot_client_path.clone(),
+                    ..LaunchConfig::default()
+                };
+                let backup_root = self.repo.launcher_backups_dir();
+                self.pending_account = None;
+                self.new_display_name.clear();
+                self.new_username.clear();
+                self.status =
+                    "Opening Riot Client. Log in with Remember Me enabled to add the account."
+                        .to_string();
+
+                Task::perform(
+                    async move { start_account_capture(account_id, backup_root, config).await },
+                    Message::AccountCaptureFinished,
+                )
+            }
+            Message::AccountCaptureFinished(result) => {
+                match result {
+                    Ok(draft) => {
+                        self.new_display_name = draft
+                            .game_name
+                            .clone()
+                            .unwrap_or_else(|| "New account".to_string());
+                        self.new_username = draft.riot_id().unwrap_or_else(|| draft.puuid.clone());
+                        self.new_shard = draft.shard;
+                        self.status = draft.identity_warning.clone().unwrap_or_else(|| {
+                            "Captured login. Confirm the account details to save it.".to_string()
+                        });
+                        self.pending_account = Some(draft);
+                    }
+                    Err(error) => {
+                        self.status = format!("Could not add account: {error}");
+                    }
+                }
+
+                Task::none()
+            }
+            Message::ConfirmCapturedAccount => {
+                let Some(draft) = self.pending_account.clone() else {
+                    self.status = "No captured account is waiting to be saved".to_string();
+                    return Task::none();
+                };
+
                 match AccountProfile::new(
                     self.new_display_name.clone(),
                     Some(self.new_username.clone()),
                     self.new_shard,
                 ) {
-                    Ok(account) => {
+                    Ok(mut account) => {
+                        account.id = draft.account_id;
+                        account.shard = self.new_shard;
+                        account.session = draft.session;
+
+                        if let Err(error) = account.attach_launcher_session(draft.backup) {
+                            self.status = format!("Captured account rejected: {error}");
+                            return Task::none();
+                        }
+
+                        if let (Some(game_name), Some(tag_line)) = (draft.game_name, draft.tag_line)
+                        {
+                            if let Err(error) =
+                                account.apply_riot_identity(draft.puuid, game_name, tag_line)
+                            {
+                                self.status = format!("Captured identity rejected: {error}");
+                                return Task::none();
+                            }
+                        }
+
                         self.status = format!("Added {}", account.summary());
                         self.state.push_account(account);
+                        self.state.selected_account = Some(draft.account_id);
+                        self.pending_account = None;
                         self.new_display_name.clear();
                         self.new_username.clear();
                         return self.save_task();
@@ -161,6 +232,13 @@ impl PrimeApp {
                     }
                 }
 
+                Task::none()
+            }
+            Message::CancelCapturedAccount => {
+                self.pending_account = None;
+                self.new_display_name.clear();
+                self.new_username.clear();
+                self.status = "Discarded captured account draft".to_string();
                 Task::none()
             }
             Message::DeleteSelected => {
@@ -223,29 +301,34 @@ impl PrimeApp {
                 }
             }
             Message::StartLauncherSessionLogin => {
-                if self.state.selected_account().is_none() {
+                let Some(account_id) = self.state.selected_account else {
                     self.status =
                         "Select an account before starting launcher session capture".to_string();
                     return Task::none();
-                }
+                };
 
                 let config = LaunchConfig {
                     riot_client_path: self.state.riot_client_path.clone(),
                     ..LaunchConfig::default()
                 };
+                let backup_root = self.repo.launcher_backups_dir();
                 self.status =
-                    "Opening Riot Client for a fresh remembered login capture".to_string();
+                    "Opening Riot Client and waiting for remembered login capture".to_string();
 
                 Task::perform(
-                    async move { start_launcher_session_login(config).await },
+                    async move { start_launcher_session_login(account_id, backup_root, config).await },
                     Message::LauncherSessionLoginStarted,
                 )
             }
             Message::LauncherSessionLoginStarted(result) => {
-                self.status = match result {
-                    Ok(()) => "Riot Client opened. Log into the selected account with Remember Me enabled, then press Capture launcher session.".to_string(),
-                    Err(error) => format!("Could not start launcher session login: {error}"),
-                };
+                match result {
+                    Ok(captured) => {
+                        return self.store_captured_launcher_session(captured);
+                    }
+                    Err(error) => {
+                        self.status = format!("Could not complete launcher session login: {error}");
+                    }
+                }
 
                 Task::none()
             }
@@ -296,57 +379,6 @@ impl PrimeApp {
 
                 Task::none()
             }
-            Message::CaptureLauncherSession => {
-                let Some(account_id) = self.state.selected_account else {
-                    self.status =
-                        "Select an account before capturing a launcher session".to_string();
-                    return Task::none();
-                };
-
-                let backup_root = self.repo.launcher_backups_dir();
-                self.status = "Capturing current Riot Client launcher session".to_string();
-
-                Task::perform(
-                    async move {
-                        capture_current_launcher_session(account_id, backup_root)
-                            .map_err(|error| error.to_string())
-                    },
-                    Message::LauncherSessionCaptured,
-                )
-            }
-            Message::LauncherSessionCaptured(result) => {
-                match result {
-                    Ok(captured) => {
-                        if let Some(account) = self
-                            .state
-                            .accounts
-                            .iter_mut()
-                            .find(|account| account.id == captured.account_id)
-                        {
-                            let captured_puuid = captured.backup.puuid.clone();
-
-                            if let Err(error) = account.attach_launcher_session(captured.backup) {
-                                self.status = format!("Launcher session rejected: {error}");
-                                return Task::none();
-                            }
-
-                            self.status = format!(
-                                "Captured launcher session for selected account ({captured_puuid})"
-                            );
-                            return self.save_task();
-                        }
-
-                        self.status =
-                            "Captured launcher session, but the selected profile no longer exists"
-                                .to_string();
-                    }
-                    Err(error) => {
-                        self.status = format!("Launcher session capture failed: {error}");
-                    }
-                }
-
-                Task::none()
-            }
             Message::FetchStorefront => {
                 let Some(account) = self.state.selected_account().cloned() else {
                     self.status = "Select an account before checking the shop".to_string();
@@ -362,7 +394,17 @@ impl PrimeApp {
             Message::StorefrontLoaded(result) => {
                 match result {
                     Ok(result) => {
-                        cache_account_session(&mut self.state, result.account_id, result.session);
+                        if let Err(error) = cache_account_api_context(
+                            &mut self.state,
+                            result.account_id,
+                            result.session,
+                            result.identity,
+                        ) {
+                            self.status =
+                                format!("Store loaded, but profile update failed: {error}");
+                            return Task::none();
+                        }
+
                         let daily_count = result.summary.daily_offers.len();
                         let night_market_count = result.summary.night_market_offers.len();
 
@@ -398,7 +440,17 @@ impl PrimeApp {
             Message::LoadoutLoaded(result) => {
                 match result {
                     Ok(result) => {
-                        cache_account_session(&mut self.state, result.account_id, result.session);
+                        if let Err(error) = cache_account_api_context(
+                            &mut self.state,
+                            result.account_id,
+                            result.session,
+                            result.identity,
+                        ) {
+                            self.status =
+                                format!("Loadout loaded, but profile update failed: {error}");
+                            return Task::none();
+                        }
+
                         let gun_count = result.summary.gun_skins.len();
 
                         self.status = format!("Loaded loadout with {} gun skin(s)", gun_count);
@@ -560,34 +612,58 @@ impl PrimeApp {
             })
             .unwrap_or_else(|| "Launcher session: not captured".to_string());
 
-        column![
+        let mut content = column![
             text(format!("Selected: {selected}")),
             text(launcher_session),
             row![
-                text_input("Display name", &self.new_display_name)
-                    .on_input(Message::NewDisplayNameChanged)
-                    .width(Length::Fill),
-                text_input("Riot username (optional)", &self.new_username)
-                    .on_input(Message::NewUsernameChanged)
-                    .width(Length::Fill),
-                pick_list(
-                    Shard::ALL.as_slice(),
-                    Some(self.new_shard),
-                    Message::NewShardSelected
-                )
-            ]
-            .spacing(10),
-            row![
                 button("Add account").on_press(Message::AddAccount),
                 button("Remove selected").on_press(Message::DeleteSelected),
-                button("Start login capture").on_press(Message::StartLauncherSessionLogin),
-                button("Capture launcher session").on_press(Message::CaptureLauncherSession),
+                button("Re-capture selected login").on_press(Message::StartLauncherSessionLogin),
                 button("Refresh profile").on_press(Message::RefreshProfileIdentity)
             ]
             .spacing(10),
-            text("Start login capture clears stale Riot Client login data and opens Riot Client. Log in with Remember Me enabled, then capture the launcher session for this profile."),
-            text(""),
-            text("Riot web redirect token"),
+            text("Add account opens Riot Client, waits for a remembered login, then asks you to confirm the profile details.")
+        ]
+        .spacing(12);
+
+        if let Some(draft) = &self.pending_account {
+            content = content.push(
+                container(
+                    column![
+                        text("Confirm captured account").size(22),
+                        text(format!("PUUID: {}", draft.puuid)),
+                        row![
+                            text_input("Display name", &self.new_display_name)
+                                .on_input(Message::NewDisplayNameChanged)
+                                .width(Length::Fill),
+                            text_input("Riot username", &self.new_username)
+                                .on_input(Message::NewUsernameChanged)
+                                .width(Length::Fill),
+                            pick_list(
+                                Shard::ALL.as_slice(),
+                                Some(self.new_shard),
+                                Message::NewShardSelected
+                            )
+                        ]
+                        .spacing(10),
+                        row![
+                            button("Save account").on_press(Message::ConfirmCapturedAccount),
+                            button("Cancel").on_press(Message::CancelCapturedAccount)
+                        ]
+                        .spacing(10)
+                    ]
+                    .spacing(10),
+                )
+                .padding(16),
+            );
+        }
+
+        content.into()
+    }
+
+    fn token_import_controls(&self) -> Element<'_, Message> {
+        column![
+            text("Advanced API token import"),
             text_input(
                 "Paste https://playvalorant.com/opt_in#access_token=...",
                 &self.redirect_input
@@ -675,7 +751,8 @@ impl PrimeApp {
                 &self.riot_client_path_input
             )
             .on_input(Message::RiotClientPathChanged),
-            button("Save settings").on_press(Message::SaveSettings)
+            button("Save settings").on_press(Message::SaveSettings),
+            self.token_import_controls()
         ]
         .spacing(12)
         .into()
@@ -689,6 +766,33 @@ impl PrimeApp {
             async move { repo.save(&state).map_err(|error| error.to_string()) },
             Message::Saved,
         )
+    }
+
+    fn store_captured_launcher_session(
+        &mut self,
+        captured: CapturedLauncherSession,
+    ) -> Task<Message> {
+        if let Some(account) = self
+            .state
+            .accounts
+            .iter_mut()
+            .find(|account| account.id == captured.account_id)
+        {
+            let captured_puuid = captured.backup.puuid.clone();
+
+            if let Err(error) = account.attach_launcher_session(captured.backup) {
+                self.status = format!("Launcher session rejected: {error}");
+                return Task::none();
+            }
+
+            self.status =
+                format!("Captured launcher session for selected account ({captured_puuid})");
+            return self.save_task();
+        }
+
+        self.status =
+            "Captured launcher session, but the selected profile no longer exists".to_string();
+        Task::none()
     }
 }
 
@@ -721,6 +825,9 @@ enum Message {
     NewUsernameChanged(String),
     NewShardSelected(Shard),
     AddAccount,
+    AccountCaptureFinished(Result<CapturedAccountDraft, String>),
+    ConfirmCapturedAccount,
+    CancelCapturedAccount,
     DeleteSelected,
     RedirectChanged(String),
     ClientVersionChanged(String),
@@ -728,11 +835,9 @@ enum Message {
     ClientVersionLoaded(Result<String, String>),
     ImportRedirect,
     StartLauncherSessionLogin,
-    LauncherSessionLoginStarted(Result<(), String>),
+    LauncherSessionLoginStarted(Result<CapturedLauncherSession, String>),
     RefreshProfileIdentity,
     ProfileIdentityLoaded(Result<RefreshedProfileIdentity, String>),
-    CaptureLauncherSession,
-    LauncherSessionCaptured(Result<CapturedLauncherSession, String>),
     FetchStorefront,
     StorefrontLoaded(Result<StorefrontResult, String>),
     FetchLoadout,
@@ -775,10 +880,133 @@ fn require_launcher_session(
     Ok(backup)
 }
 
-async fn start_launcher_session_login(config: LaunchConfig) -> Result<(), String> {
+const LOGIN_CAPTURE_TIMEOUT: Duration = Duration::from_secs(600);
+const LOGIN_CAPTURE_POLL_INTERVAL: Duration = Duration::from_secs(2);
+
+async fn start_launcher_session_login(
+    account_id: AccountId,
+    backup_root: PathBuf,
+    config: LaunchConfig,
+) -> Result<CapturedLauncherSession, String> {
     close_riot_processes().map_err(|error| error.to_string())?;
     clear_existing_launcher_data_dirs().map_err(|error| error.to_string())?;
-    launch_riot_login_capture(&config).map_err(|error| error.to_string())
+    launch_riot_login_capture(&config).map_err(|error| error.to_string())?;
+    wait_for_launcher_session_capture(
+        account_id,
+        backup_root,
+        LOGIN_CAPTURE_TIMEOUT,
+        LOGIN_CAPTURE_POLL_INTERVAL,
+    )
+    .await
+}
+
+async fn wait_for_launcher_session_capture(
+    account_id: AccountId,
+    backup_root: PathBuf,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> Result<CapturedLauncherSession, String> {
+    let started = std::time::Instant::now();
+
+    while started.elapsed() < timeout {
+        match capture_current_launcher_session(account_id, &backup_root) {
+            Ok(captured) => return Ok(captured),
+            Err(error) if is_pending_launcher_capture_error(&error) => {
+                tokio::time::sleep(poll_interval).await;
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+
+    Err(
+        "timed out waiting for Riot Client remembered login; make sure Remember Me is enabled"
+            .to_string(),
+    )
+}
+
+fn is_pending_launcher_capture_error(error: &LauncherSessionError) -> bool {
+    matches!(error, LauncherSessionError::PrivateSettingsNotFound)
+}
+
+async fn resolve_session_shard(
+    api: &RiotApi,
+    session: &AuthSession,
+    player_info: Option<&PlayerInfoResponse>,
+    fallback: Shard,
+) -> Shard {
+    if let Some(shard) = player_info.and_then(shard_from_player_affinities) {
+        return shard;
+    }
+
+    let Some(id_token) = session.id_token.as_ref().filter(|token| !token.is_empty()) else {
+        return fallback;
+    };
+
+    api.riot_geo(&session.access_token, id_token)
+        .await
+        .ok()
+        .and_then(|geo| Shard::from_live_affinity(&geo.affinities.live))
+        .unwrap_or(fallback)
+}
+
+fn shard_from_player_affinities(player_info: &PlayerInfoResponse) -> Option<Shard> {
+    ["live", "pp", "pvp"]
+        .into_iter()
+        .filter_map(|key| player_info.affinity.get(key))
+        .find_map(|value| Shard::from_live_affinity(value))
+}
+
+async fn start_account_capture(
+    account_id: AccountId,
+    backup_root: PathBuf,
+    config: LaunchConfig,
+) -> Result<CapturedAccountDraft, String> {
+    let captured = start_launcher_session_login(account_id, backup_root, config).await?;
+    Ok(enrich_captured_account(captured).await)
+}
+
+async fn enrich_captured_account(captured: CapturedLauncherSession) -> CapturedAccountDraft {
+    let mut draft = CapturedAccountDraft::new(captured.account_id, captured.backup);
+    let Err(error) = enrich_captured_account_identity(&mut draft).await else {
+        return draft;
+    };
+
+    draft.identity_warning = Some(format!(
+        "Captured login, but Riot identity lookup failed: {error}. Confirm the account details manually."
+    ));
+    draft
+}
+
+async fn enrich_captured_account_identity(draft: &mut CapturedAccountDraft) -> Result<(), String> {
+    let api = RiotApi::new().map_err(|error| error.to_string())?;
+    let cookies = read_backup_cookies(&draft.backup).map_err(|error| error.to_string())?;
+    let cookie_header = launcher_cookie_header(&cookies).map_err(|error| error.to_string())?;
+    let mut session = api
+        .cookie_reauth(&cookie_header)
+        .await
+        .map(|tokens| tokens.into_session())
+        .map_err(|error| error.to_string())?;
+    let player_info = api
+        .player_info(&session.access_token)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    draft.puuid = player_info.sub.clone();
+    draft.game_name = Some(player_info.acct.game_name.clone());
+    draft.tag_line = Some(player_info.acct.tag_line.clone());
+    draft.shard = resolve_session_shard(&api, &session, Some(&player_info), draft.shard).await;
+
+    if session
+        .entitlements_token
+        .as_ref()
+        .is_none_or(|token| token.trim().is_empty())
+        && let Ok(entitlement) = api.entitlement(&session.access_token).await
+    {
+        session.entitlements_token = Some(entitlement.entitlements_token);
+    }
+
+    draft.session = Some(session);
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -795,6 +1023,7 @@ struct StorefrontResult {
     account_id: AccountId,
     summary: StoreSummary,
     session: AuthSession,
+    identity: ApiIdentity,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -802,6 +1031,53 @@ struct LoadoutResult {
     account_id: AccountId,
     summary: LoadoutSummary,
     session: AuthSession,
+    identity: ApiIdentity,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CapturedAccountDraft {
+    account_id: AccountId,
+    backup: LauncherSessionBackup,
+    puuid: String,
+    game_name: Option<String>,
+    tag_line: Option<String>,
+    shard: Shard,
+    session: Option<AuthSession>,
+    identity_warning: Option<String>,
+}
+
+impl CapturedAccountDraft {
+    fn new(account_id: AccountId, backup: LauncherSessionBackup) -> Self {
+        let puuid = backup.puuid.clone();
+
+        Self {
+            account_id,
+            backup,
+            puuid,
+            game_name: None,
+            tag_line: None,
+            shard: Shard::default(),
+            session: None,
+            identity_warning: None,
+        }
+    }
+
+    fn riot_id(&self) -> Option<String> {
+        match (&self.game_name, &self.tag_line) {
+            (Some(game_name), Some(tag_line)) if !game_name.is_empty() && !tag_line.is_empty() => {
+                Some(format!("{game_name}#{tag_line}"))
+            }
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ApiIdentity {
+    puuid: String,
+    game_name: Option<String>,
+    tag_line: Option<String>,
+    shard: Shard,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1017,9 +1293,10 @@ impl LoadoutSummary {
         response: PlayerLoadoutResponse,
         skins: &SkinCatalog,
         weapons: &WeaponCatalog,
+        account_level: Option<i64>,
     ) -> Self {
         Self {
-            account_level: response.identity.account_level,
+            account_level: account_level.unwrap_or(response.identity.account_level),
             gun_skins: response
                 .guns
                 .into_iter()
@@ -1102,6 +1379,7 @@ async fn fetch_storefront(
         account_id: account.id,
         summary,
         session: resolved.session,
+        identity: resolved.identity,
     })
 }
 
@@ -1112,16 +1390,29 @@ async fn fetch_loadout(
     let api = RiotApi::new().map_err(|error| error.to_string())?;
     let resolved = resolve_credentials(&api, &account, client_version).await?;
     let metadata = fetch_loadout_metadata().await;
+    let account_level = api
+        .account_xp(&resolved.credentials)
+        .await
+        .ok()
+        .map(|xp| xp.progress.level);
     let summary = api
         .player_loadout(&resolved.credentials)
         .await
-        .map(|response| LoadoutSummary::from_response(response, &metadata.skins, &metadata.weapons))
+        .map(|response| {
+            LoadoutSummary::from_response(
+                response,
+                &metadata.skins,
+                &metadata.weapons,
+                account_level,
+            )
+        })
         .map_err(|error| error.to_string())?;
 
     Ok(LoadoutResult {
         account_id: account.id,
         summary,
         session: resolved.session,
+        identity: resolved.identity,
     })
 }
 
@@ -1210,6 +1501,7 @@ async fn resolve_credentials(
     client_version: String,
 ) -> Result<ResolvedApiCredentials, String> {
     let mut session = active_api_session(api, account).await?;
+    let player_info = api.player_info(&session.access_token).await.ok();
 
     let entitlements_token = entitlement_token(api, &session).await?;
     if session
@@ -1220,20 +1512,37 @@ async fn resolve_credentials(
         session.entitlements_token = Some(entitlements_token.clone());
     }
 
-    let puuid = match &account.puuid {
-        Some(puuid) if !puuid.trim().is_empty() => puuid.clone(),
-        _ if account.launcher_session.is_some() => account
-            .launcher_session
-            .as_ref()
-            .map(|backup| backup.puuid.clone())
-            .filter(|puuid| !puuid.trim().is_empty())
-            .unwrap_or_default(),
-        _ => {
-            api.player_info(&session.access_token)
-                .await
-                .map_err(|error| error.to_string())?
-                .sub
-        }
+    let puuid = player_info
+        .as_ref()
+        .map(|info| info.sub.clone())
+        .or_else(|| {
+            account
+                .puuid
+                .clone()
+                .filter(|puuid| !puuid.trim().is_empty())
+        })
+        .or_else(|| {
+            account
+                .launcher_session
+                .as_ref()
+                .map(|backup| backup.puuid.clone())
+                .filter(|puuid| !puuid.trim().is_empty())
+        })
+        .ok_or_else(|| "selected account does not have a Riot PUUID".to_string())?;
+    let shard = resolve_session_shard(api, &session, player_info.as_ref(), account.shard).await;
+    let identity = match player_info {
+        Some(info) => ApiIdentity {
+            puuid: puuid.clone(),
+            game_name: Some(info.acct.game_name),
+            tag_line: Some(info.acct.tag_line),
+            shard,
+        },
+        None => ApiIdentity {
+            puuid: puuid.clone(),
+            game_name: None,
+            tag_line: None,
+            shard,
+        },
     };
 
     Ok(ResolvedApiCredentials {
@@ -1241,10 +1550,11 @@ async fn resolve_credentials(
             access_token: session.access_token.clone(),
             entitlements_token,
             client_version,
-            shard: account.shard,
+            shard,
             puuid,
         },
         session,
+        identity,
     })
 }
 
@@ -1252,6 +1562,7 @@ async fn resolve_credentials(
 struct ResolvedApiCredentials {
     credentials: ApiCredentials,
     session: AuthSession,
+    identity: ApiIdentity,
 }
 
 async fn active_api_session(
@@ -1306,21 +1617,32 @@ fn non_empty_path(input: &str) -> Option<PathBuf> {
     }
 }
 
-fn cache_account_session(
+fn cache_account_api_context(
     state: &mut StoredState,
     account_id: AccountId,
     session: AuthSession,
-) -> bool {
+    identity: ApiIdentity,
+) -> Result<(), String> {
     let Some(account) = state
         .accounts
         .iter_mut()
         .find(|account| account.id == account_id)
     else {
-        return false;
+        return Err("selected profile no longer exists".to_string());
     };
 
+    account.shard = identity.shard;
     account.session = Some(session);
-    true
+
+    match (identity.game_name, identity.tag_line) {
+        (Some(game_name), Some(tag_line)) => account
+            .apply_riot_identity(identity.puuid, game_name, tag_line)
+            .map_err(|error| error.to_string()),
+        _ => {
+            account.puuid = Some(identity.puuid);
+            Ok(())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1473,9 +1795,37 @@ mod tests {
             display_icon: None,
         }]);
 
-        let summary = LoadoutSummary::from_response(response, &catalog, &weapons);
+        let summary = LoadoutSummary::from_response(response, &catalog, &weapons, None);
 
         assert_eq!(summary.gun_skins[0].label(), "Vandal: Prime Vandal");
+    }
+
+    #[test]
+    fn loadout_summary_prefers_account_xp_level() {
+        let response: PlayerLoadoutResponse = serde_json::from_value(serde_json::json!({
+            "Subject": "puuid",
+            "Version": 1,
+            "Guns": [],
+            "Sprays": [],
+            "Identity": {
+                "PlayerCardID": "card",
+                "PlayerTitleID": "title",
+                "AccountLevel": 0,
+                "PreferredLevelBorderID": "border",
+                "HideAccountLevel": false
+            },
+            "Incognito": false
+        }))
+        .expect("loadout");
+
+        let summary = LoadoutSummary::from_response(
+            response,
+            &SkinCatalog::default(),
+            &WeaponCatalog::default(),
+            Some(88),
+        );
+
+        assert_eq!(summary.account_level, 88);
     }
 
     #[test]
@@ -1523,7 +1873,17 @@ mod tests {
     }
 
     #[test]
-    fn cache_account_session_updates_matching_account() {
+    fn only_missing_private_settings_is_pending_login_capture() {
+        assert!(is_pending_launcher_capture_error(
+            &LauncherSessionError::PrivateSettingsNotFound
+        ));
+        assert!(!is_pending_launcher_capture_error(
+            &LauncherSessionError::MissingSsid
+        ));
+    }
+
+    #[test]
+    fn cache_account_api_context_updates_matching_account() {
         let mut state = StoredState::default();
         let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
         let account_id = account.id;
@@ -1537,23 +1897,43 @@ mod tests {
             100,
         );
 
-        assert!(cache_account_session(
+        cache_account_api_context(
             &mut state,
             account_id,
-            session.clone()
-        ));
+            session.clone(),
+            ApiIdentity {
+                puuid: "puuid".to_string(),
+                game_name: Some("Player".to_string()),
+                tag_line: Some("NA1".to_string()),
+                shard: Shard::Eu,
+            },
+        )
+        .expect("cache api context");
+
         assert_eq!(state.accounts[0].session, Some(session));
+        assert_eq!(state.accounts[0].puuid.as_deref(), Some("puuid"));
+        assert_eq!(state.accounts[0].riot_id().as_deref(), Some("Player#NA1"));
+        assert_eq!(state.accounts[0].shard, Shard::Eu);
     }
 
     #[test]
-    fn cache_account_session_ignores_missing_account() {
+    fn cache_account_api_context_rejects_missing_account() {
         let mut state = StoredState::default();
         let session = AuthSession::new("access", None, None, "Bearer", Some(3600), 100);
 
-        assert!(!cache_account_session(
+        let err = cache_account_api_context(
             &mut state,
             AccountId::new(),
-            session
-        ));
+            session,
+            ApiIdentity {
+                puuid: "puuid".to_string(),
+                game_name: None,
+                tag_line: None,
+                shard: Shard::Na,
+            },
+        )
+        .expect_err("missing account");
+
+        assert!(err.contains("profile no longer exists"));
     }
 }
