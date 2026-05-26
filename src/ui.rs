@@ -545,7 +545,7 @@ impl PrimeApp {
         let content = row![
             self.sidebar(),
             container(self.main_panel())
-                .padding(18)
+                .padding(22)
                 .width(Length::Fill)
                 .height(Length::Fill)
         ]
@@ -558,7 +558,7 @@ impl PrimeApp {
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
-        let mut accounts = column![text("Accounts").size(24)].spacing(8);
+        let mut accounts = column![text("Prime").size(26), text("Profiles").size(16)].spacing(8);
 
         if self.state.accounts.is_empty() {
             accounts = accounts.push(text("No profiles yet"));
@@ -585,19 +585,11 @@ impl PrimeApp {
         }
 
         let tabs = column![
-            text(""),
-            button("Accounts")
-                .width(Length::Fill)
-                .on_press(Message::TabSelected(Tab::Accounts)),
-            button("Shop")
-                .width(Length::Fill)
-                .on_press(Message::TabSelected(Tab::Shop)),
-            button("Loadout")
-                .width(Length::Fill)
-                .on_press(Message::TabSelected(Tab::Loadout)),
-            button("Settings")
-                .width(Length::Fill)
-                .on_press(Message::TabSelected(Tab::Settings)),
+            text("Navigate").size(16),
+            self.tab_button(Tab::Accounts),
+            self.tab_button(Tab::Shop),
+            self.tab_button(Tab::Loadout),
+            self.tab_button(Tab::Settings),
         ]
         .spacing(8);
 
@@ -605,6 +597,7 @@ impl PrimeApp {
             .padding(16)
             .width(280)
             .height(Length::Fill)
+            .style(iced::widget::container::dark)
             .into()
     }
 
@@ -617,18 +610,41 @@ impl PrimeApp {
         };
 
         column![
-            row![
-                text(self.active_tab.to_string()).size(28),
-                button("Launch VALORANT").on_press(Message::LaunchSelected)
-            ]
-            .spacing(16),
-            text(""),
-            body,
-            text(""),
-            text(&self.status)
+            container(
+                row![
+                    text(self.active_tab.to_string()).size(30),
+                    button("Launch VALORANT").on_press(Message::LaunchSelected)
+                ]
+                .spacing(16)
+            )
+            .padding(14)
+            .width(Length::Fill)
+            .style(iced::widget::container::bordered_box),
+            container(scrollable(body))
+                .padding(16)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(iced::widget::container::rounded_box),
+            container(text(&self.status))
+                .padding(10)
+                .width(Length::Fill)
+                .style(iced::widget::container::bordered_box)
         ]
-        .spacing(14)
+        .spacing(12)
         .into()
+    }
+
+    fn tab_button(&self, tab: Tab) -> Element<'_, Message> {
+        let label = if self.active_tab == tab {
+            format!("[{}]", tab)
+        } else {
+            tab.to_string()
+        };
+
+        button(text(label))
+            .width(Length::Fill)
+            .on_press(Message::TabSelected(tab))
+            .into()
     }
 
     fn accounts_tab(&self) -> Element<'_, Message> {
@@ -691,7 +707,8 @@ impl PrimeApp {
                     ]
                     .spacing(10),
                 )
-                .padding(16),
+                .padding(16)
+                .style(iced::widget::container::bordered_box),
             );
         }
 
