@@ -171,8 +171,12 @@ pub struct LauncherSessionBackup {
 }
 
 impl LauncherSessionBackup {
+    pub fn private_settings_path(&self) -> PathBuf {
+        self.data_dir.join("RiotGamesPrivateSettings.yaml")
+    }
+
     pub fn is_ready(&self) -> bool {
-        !self.puuid.trim().is_empty() && self.data_dir.exists()
+        !self.puuid.trim().is_empty() && self.private_settings_path().is_file()
     }
 }
 
@@ -336,7 +340,10 @@ pub enum AccountSessionError {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn rejects_empty_display_name() {
@@ -387,6 +394,22 @@ mod tests {
         assert!(!debug.contains("secret-access-token"));
         assert!(!debug.contains("secret-id-token"));
         assert!(!debug.contains("secret-entitlement-token"));
+    }
+
+    #[test]
+    fn launcher_session_backup_requires_private_settings_file() {
+        let dir = tempdir().expect("backup dir");
+        let backup = LauncherSessionBackup {
+            data_dir: dir.path().to_path_buf(),
+            captured_at_unix: 100,
+            puuid: "puuid-a".to_string(),
+        };
+
+        assert!(!backup.is_ready());
+
+        fs::write(backup.private_settings_path(), "settings").expect("private settings");
+
+        assert!(backup.is_ready());
     }
 
     #[test]

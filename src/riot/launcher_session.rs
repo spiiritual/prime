@@ -102,7 +102,17 @@ pub fn apply_launcher_session_backup_to_dir(
 pub fn read_backup_cookies(
     backup: &LauncherSessionBackup,
 ) -> Result<Vec<LauncherCookie>, LauncherSessionError> {
+    if !backup.data_dir.exists() {
+        return Err(LauncherSessionError::BackupMissing(backup.data_dir.clone()));
+    }
+
     let settings_path = backup.data_dir.join(PRIVATE_SETTINGS_FILE);
+    if !settings_path.is_file() {
+        return Err(LauncherSessionError::BackupPrivateSettingsMissing(
+            settings_path,
+        ));
+    }
+
     let settings = fs::read_to_string(&settings_path).map_err(|source| {
         LauncherSessionError::ReadPrivateSettings {
             path: settings_path,
@@ -307,8 +317,14 @@ pub enum LauncherSessionError {
     MissingSsid,
     #[error("the Riot Client login did not include a sub cookie")]
     MissingSub,
-    #[error("launcher session backup does not exist at {0}")]
+    #[error(
+        "captured launcher session backup does not exist at {0}; re-capture this account's login"
+    )]
     BackupMissing(PathBuf),
+    #[error(
+        "captured launcher session backup is missing Riot private settings at {0}; re-capture this account's login"
+    )]
+    BackupPrivateSettingsMissing(PathBuf),
     #[error("source Riot Client data folder does not exist at {0}")]
     SourceDataMissing(PathBuf),
     #[error("launcher session filesystem error: {0}")]
@@ -362,6 +378,37 @@ rso-authenticator:
 
         assert!(header.contains("ssid=ssid-value"));
         assert!(header.contains("sub=puuid-value"));
+    }
+
+    #[test]
+    fn read_backup_cookies_rejects_missing_backup_folder() {
+        let backup = LauncherSessionBackup {
+            data_dir: PathBuf::from("missing-launcher-backup"),
+            captured_at_unix: 100,
+            puuid: "puuid-value".to_string(),
+        };
+
+        let err = read_backup_cookies(&backup).expect_err("missing backup");
+
+        assert!(
+            matches!(err, LauncherSessionError::BackupMissing(path) if path == backup.data_dir)
+        );
+    }
+
+    #[test]
+    fn read_backup_cookies_rejects_missing_private_settings_file() {
+        let dir = tempdir().expect("backup dir");
+        let backup = LauncherSessionBackup {
+            data_dir: dir.path().to_path_buf(),
+            captured_at_unix: 100,
+            puuid: "puuid-value".to_string(),
+        };
+
+        let err = read_backup_cookies(&backup).expect_err("missing private settings");
+
+        assert!(
+            matches!(err, LauncherSessionError::BackupPrivateSettingsMissing(path) if path == backup.data_dir.join(PRIVATE_SETTINGS_FILE))
+        );
     }
 
     #[test]

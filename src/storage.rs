@@ -71,7 +71,7 @@ impl AccountRepository {
     }
 
     pub fn default_path() -> PathBuf {
-        ProjectDirs::from("dev", "prime", "prime")
+        ProjectDirs::from("dev", "spiiritual", "prime")
             .map(|dirs| dirs.config_dir().join("accounts.json"))
             .unwrap_or_else(|| PathBuf::from("accounts.json"))
     }
@@ -93,7 +93,8 @@ impl AccountRepository {
         }
 
         let contents = fs::read_to_string(&self.path)?;
-        let mut state: StoredState = serde_json::from_str(&contents)?;
+        let contents = contents.strip_prefix('\u{feff}').unwrap_or(&contents);
+        let mut state: StoredState = serde_json::from_str(contents)?;
         state.version = STORAGE_VERSION;
 
         if state
@@ -167,6 +168,23 @@ mod tests {
 
         assert_eq!(loaded.accounts.len(), 1);
         assert_eq!(loaded.selected_account, Some(id));
+        assert_eq!(loaded.accounts[0].display_name, "Main");
+    }
+
+    #[test]
+    fn load_accepts_utf8_bom() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("accounts.json");
+        let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let mut state = StoredState::default();
+        state.push_account(account);
+        let json = serde_json::to_string_pretty(&state).expect("state json");
+        fs::write(&path, format!("\u{feff}{json}")).expect("write bom json");
+        let repo = AccountRepository::new(path);
+
+        let loaded = repo.load().expect("load");
+
+        assert_eq!(loaded.accounts.len(), 1);
         assert_eq!(loaded.accounts[0].display_name, "Main");
     }
 
