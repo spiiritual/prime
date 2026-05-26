@@ -1,11 +1,15 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use iced::widget::{button, column, container, pick_list, row, scrollable, text, text_input};
-use iced::{Element, Length, Task, Theme};
+use iced::widget::image::Handle;
+use iced::widget::{
+    button, column, container, image, pick_list, row, scrollable, text, text_input,
+};
+use iced::{ContentFit, Element, Length, Task, Theme};
 
 use crate::account::LauncherSessionBackup;
 use crate::account::{AccountId, AccountProfile, AuthSession, Shard};
+use crate::image_cache::ImageCache;
 use crate::launch::{
     LaunchConfig, close_riot_processes, launch_riot_login_capture, launch_valorant,
 };
@@ -45,6 +49,7 @@ fn app_theme(_: &PrimeApp) -> Theme {
 #[derive(Clone, Debug)]
 struct PrimeApp {
     repo: AccountRepository,
+    image_cache: ImageCache,
     state: StoredState,
     active_tab: Tab,
     new_display_name: String,
@@ -59,16 +64,20 @@ struct PrimeApp {
     loadout_summary: Option<LoadoutSummary>,
     store_loading: bool,
     loadout_loading: bool,
+    image_cache_size_bytes: u64,
 }
 
 impl PrimeApp {
     fn boot() -> (Self, Task<Message>) {
         let repo = AccountRepository::new(AccountRepository::default_path());
+        let image_cache = ImageCache::new(ImageCache::default_path());
         let load_repo = repo.clone();
+        let cache_for_size = image_cache.clone();
 
         (
             Self {
                 repo,
+                image_cache,
                 state: StoredState::default(),
                 active_tab: Tab::Accounts,
                 new_display_name: String::new(),
@@ -83,6 +92,7 @@ impl PrimeApp {
                 loadout_summary: None,
                 store_loading: false,
                 loadout_loading: false,
+                image_cache_size_bytes: 0,
             },
             Task::batch([
                 Task::perform(
@@ -90,6 +100,14 @@ impl PrimeApp {
                     Message::Loaded,
                 ),
                 Task::perform(fetch_current_client_version(), Message::ClientVersionLoaded),
+                Task::perform(
+                    async move {
+                        cache_for_size
+                            .size_bytes()
+                            .map_err(|error| error.to_string())
+                    },
+                    Message::ImageCacheSizeLoaded,
+                ),
             ]),
         )
     }
@@ -411,7 +429,7 @@ impl PrimeApp {
                             self.store_summary = Some(result.summary);
                         }
 
-                        return self.save_task();
+                        return Task::batch([self.save_task(), self.image_cache_size_task()]);
                     }
                     Err(error) => {
                         self.status = format!("Store check failed: {error}");
@@ -444,7 +462,7 @@ impl PrimeApp {
                             self.loadout_summary = Some(result.summary);
                         }
 
-                        return self.save_task();
+                        return Task::batch([self.save_task(), self.image_cache_size_task()]);
                     }
                     Err(error) => {
                         self.status = format!("Loadout check failed: {error}");
@@ -461,6 +479,39 @@ impl PrimeApp {
                 self.state.riot_client_path = non_empty_path(&self.riot_client_path_input);
                 self.status = "Saved settings".to_string();
                 self.save_task()
+            }
+            Message::ImageCacheSizeLoaded(result) => {
+                match result {
+                    Ok(size) => {
+                        self.image_cache_size_bytes = size;
+                    }
+                    Err(error) => {
+                        self.status = format!("Could not read image cache size: {error}");
+                    }
+                }
+
+                Task::none()
+            }
+            Message::ClearImageCache => {
+                let cache = self.image_cache.clone();
+                self.status = "Clearing image cache".to_string();
+                Task::perform(
+                    async move { cache.clear().map_err(|error| error.to_string()) },
+                    Message::ImageCacheCleared,
+                )
+            }
+            Message::ImageCacheCleared(result) => {
+                match result {
+                    Ok(()) => {
+                        self.image_cache_size_bytes = 0;
+                        self.status = "Cleared image cache".to_string();
+                    }
+                    Err(error) => {
+                        self.status = format!("Could not clear image cache: {error}");
+                    }
+                }
+
+                Task::none()
             }
             Message::LaunchSelected => {
                 let Some(account) = self.state.selected_account() else {
@@ -686,25 +737,21 @@ impl PrimeApp {
         if let Some(summary) = &self.store_summary {
             content = content
                 .push(text(format!(
-                    "Bundle expires in {} seconds",
-                    summary.bundle_remaining_seconds
+                    "Featured bundle expires in {}",
+                    format_duration(summary.bundle_remaining_seconds)
                 )))
+                .push(offer_row(&summary.featured_bundle_items))
                 .push(text(format!(
-                    "Bundle items: {}",
-                    offer_labels(&summary.featured_bundle_items)
+                    "Daily offers expire in {}",
+                    format_duration(summary.daily_remaining_seconds)
                 )))
-                .push(text(format!(
-                    "Daily offers expire in {} seconds",
-                    summary.daily_remaining_seconds
-                )))
-                .push(text(format!(
-                    "Daily offers: {}",
-                    offer_labels(&summary.daily_offers)
-                )))
-                .push(text(format!(
-                    "Night market offers: {}",
-                    offer_labels(&summary.night_market_offers)
-                )));
+                .push(offer_row(&summary.daily_offers));
+
+            if !summary.night_market_offers.is_empty() {
+                content = content
+                    .push(text("Night Market"))
+                    .push(offer_row(&summary.night_market_offers));
+            }
         }
 
         content.into()
@@ -723,17 +770,28 @@ impl PrimeApp {
         .spacing(12);
 
         if let Some(summary) = &self.loadout_summary {
-            content = content
-                .push(text(format!("Account level: {}", summary.account_level)))
-                .push(text(format!(
-                    "Equipped skins: {}",
+            content = content.push(text(format!("Account level {}", summary.account_level)));
+
+            for category in [
+                "Sidearms",
+                "SMGs",
+                "Shotguns",
+                "Rifles",
+                "Sniper Rifles",
+                "Heavy",
+                "Melee",
+                "Other",
+            ] {
+                if let Some(section) = loadout_section(
+                    category,
                     summary
                         .gun_skins
                         .iter()
-                        .map(LoadoutGunDisplay::label)
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )));
+                        .filter(|gun| weapon_category(&gun.weapon.display_name) == category),
+                ) {
+                    content = content.push(section);
+                }
+            }
         }
 
         content.into()
@@ -748,6 +806,15 @@ impl PrimeApp {
             )
             .on_input(Message::RiotClientPathChanged),
             button("Save settings").on_press(Message::SaveSettings),
+            text(format!(
+                "Image cache: {}",
+                format_bytes(self.image_cache_size_bytes)
+            )),
+            text(format!(
+                "Image cache folder: {}",
+                self.image_cache.path().display()
+            )),
+            button("Delete image cache").on_press(Message::ClearImageCache),
             self.token_import_controls()
         ]
         .spacing(12)
@@ -774,8 +841,9 @@ impl PrimeApp {
 
         self.store_loading = true;
         self.status = "Loading shop".to_string();
+        let image_cache = self.image_cache.clone();
         Task::perform(
-            fetch_storefront(account, self.client_version_input.clone()),
+            fetch_storefront(account, self.client_version_input.clone(), image_cache),
             Message::StorefrontLoaded,
         )
     }
@@ -788,8 +856,9 @@ impl PrimeApp {
 
         self.loadout_loading = true;
         self.status = "Loading loadout".to_string();
+        let image_cache = self.image_cache.clone();
         Task::perform(
-            fetch_loadout(account, self.client_version_input.clone()),
+            fetch_loadout(account, self.client_version_input.clone(), image_cache),
             Message::LoadoutLoaded,
         )
     }
@@ -801,6 +870,15 @@ impl PrimeApp {
         Task::perform(
             async move { repo.save(&state).map_err(|error| error.to_string()) },
             Message::Saved,
+        )
+    }
+
+    fn image_cache_size_task(&self) -> Task<Message> {
+        let cache = self.image_cache.clone();
+
+        Task::perform(
+            async move { cache.size_bytes().map_err(|error| error.to_string()) },
+            Message::ImageCacheSizeLoaded,
         )
     }
 
@@ -829,6 +907,117 @@ impl PrimeApp {
         self.status =
             "Captured launcher session, but the selected profile no longer exists".to_string();
         Task::none()
+    }
+}
+
+fn offer_row<'a>(offers: &'a [StoreOfferDisplay]) -> Element<'a, Message> {
+    if offers.is_empty() {
+        return text("No offers available").into();
+    }
+
+    let mut cards = iced::widget::Row::new().spacing(10);
+
+    for offer in offers {
+        cards = cards.push(store_offer_card(offer));
+    }
+
+    cards.into()
+}
+
+fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {
+    let price = offer
+        .price
+        .as_ref()
+        .map(OfferPrice::label)
+        .unwrap_or_else(|| "Price unavailable".to_string());
+    let rarity = offer
+        .skin
+        .rarity
+        .as_deref()
+        .unwrap_or("Unknown rarity")
+        .to_string();
+    let discount = if offer.discount_percent > 0 {
+        format!("{}% off", offer.discount_percent)
+    } else {
+        String::new()
+    };
+
+    container(
+        column![
+            asset_image(offer.skin.cached_icon.as_ref(), 118.0),
+            text(&offer.skin.display_name).size(16),
+            text(rarity).size(13),
+            text(price).size(14),
+            text(discount).size(13)
+        ]
+        .spacing(6),
+    )
+    .padding(10)
+    .width(160)
+    .style(iced::widget::container::bordered_box)
+    .into()
+}
+
+fn loadout_section<'a>(
+    category: &'static str,
+    guns: impl IntoIterator<Item = &'a LoadoutGunDisplay>,
+) -> Option<Element<'a, Message>> {
+    let mut cards = iced::widget::Row::new().spacing(10);
+    let mut count = 0;
+
+    for gun in guns {
+        cards = cards.push(loadout_card(gun));
+        count += 1;
+    }
+
+    (count > 0).then(|| column![text(category).size(20), cards].spacing(8).into())
+}
+
+fn loadout_card(gun: &LoadoutGunDisplay) -> Element<'_, Message> {
+    container(
+        column![
+            asset_image(gun.weapon.cached_icon.as_ref(), 56.0),
+            text(&gun.weapon.display_name).size(15),
+            asset_image(gun.skin.cached_icon.as_ref(), 86.0),
+            text(&gun.skin.display_name).size(14)
+        ]
+        .spacing(6),
+    )
+    .padding(10)
+    .width(150)
+    .style(iced::widget::container::bordered_box)
+    .into()
+}
+
+fn asset_image(path: Option<&PathBuf>, height: f32) -> Element<'_, Message> {
+    match path {
+        Some(path) => image(Handle::from_path(path.clone()))
+            .width(Length::Fill)
+            .height(height)
+            .content_fit(ContentFit::Contain)
+            .into(),
+        None => container(text("No image").size(13))
+            .width(Length::Fill)
+            .height(height)
+            .style(iced::widget::container::rounded_box)
+            .into(),
+    }
+}
+
+fn format_duration(seconds: i64) -> String {
+    if seconds <= 0 {
+        return "soon".to_string();
+    }
+
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+
+    if hours >= 24 {
+        format!("{}d {}h", hours / 24, hours % 24)
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m")
+    } else {
+        format!("{minutes}m")
     }
 }
 
@@ -880,6 +1069,9 @@ enum Message {
     LoadoutLoaded(Result<LoadoutResult, String>),
     RiotClientPathChanged(String),
     SaveSettings,
+    ImageCacheSizeLoaded(Result<u64, String>),
+    ClearImageCache,
+    ImageCacheCleared(Result<(), String>),
     LaunchSelected,
     LaunchFinished(Result<(), String>),
 }
@@ -1185,6 +1377,7 @@ struct StoreOfferDisplay {
 }
 
 impl StoreOfferDisplay {
+    #[cfg(test)]
     fn label(&self) -> String {
         let mut label = self.skin.display_name.clone();
 
@@ -1306,18 +1499,6 @@ fn offer_price(
     })
 }
 
-fn offer_labels(offers: &[StoreOfferDisplay]) -> String {
-    if offers.is_empty() {
-        "none".to_string()
-    } else {
-        offers
-            .iter()
-            .map(StoreOfferDisplay::label)
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct LoadoutSummary {
     account_level: i64,
@@ -1331,21 +1512,24 @@ impl LoadoutSummary {
         weapons: &WeaponCatalog,
         account_level: Option<i64>,
     ) -> Self {
+        let mut gun_skins = response
+            .guns
+            .into_iter()
+            .map(|gun| {
+                let weapon = WeaponDisplay::from(weapons.resolve(&gun.id));
+                let skin = SkinDisplay::from(resolve_first(
+                    skins,
+                    [&gun.skin_id, &gun.skin_level_id, &gun.chroma_id],
+                ));
+
+                LoadoutGunDisplay { weapon, skin }
+            })
+            .collect::<Vec<_>>();
+        gun_skins.sort_by_key(|gun| weapon_order(&gun.weapon.display_name));
+
         Self {
             account_level: account_level.unwrap_or(response.identity.account_level),
-            gun_skins: response
-                .guns
-                .into_iter()
-                .map(|gun| {
-                    let weapon = WeaponDisplay::from(weapons.resolve(&gun.id));
-                    let skin = SkinDisplay::from(resolve_first(
-                        skins,
-                        [&gun.skin_id, &gun.skin_level_id, &gun.chroma_id],
-                    ));
-
-                    LoadoutGunDisplay { weapon, skin }
-                })
-                .collect(),
+            gun_skins,
         }
     }
 }
@@ -1357,8 +1541,48 @@ struct LoadoutGunDisplay {
 }
 
 impl LoadoutGunDisplay {
+    #[cfg(test)]
     fn label(&self) -> String {
         format!("{}: {}", self.weapon.display_name, self.skin.display_name)
+    }
+}
+
+fn weapon_order(name: &str) -> (usize, String) {
+    let index = match name {
+        "Classic" => 0,
+        "Shorty" => 1,
+        "Frenzy" => 2,
+        "Ghost" => 3,
+        "Sheriff" => 4,
+        "Stinger" => 5,
+        "Spectre" => 6,
+        "Bucky" => 7,
+        "Judge" => 8,
+        "Bulldog" => 9,
+        "Guardian" => 10,
+        "Phantom" => 11,
+        "Vandal" => 12,
+        "Marshal" => 13,
+        "Operator" => 14,
+        "Ares" => 15,
+        "Odin" => 16,
+        "Melee" => 17,
+        _ => 99,
+    };
+
+    (index, name.to_string())
+}
+
+fn weapon_category(name: &str) -> &'static str {
+    match name {
+        "Classic" | "Shorty" | "Frenzy" | "Ghost" | "Sheriff" => "Sidearms",
+        "Stinger" | "Spectre" => "SMGs",
+        "Bucky" | "Judge" => "Shotguns",
+        "Bulldog" | "Guardian" | "Phantom" | "Vandal" => "Rifles",
+        "Marshal" | "Operator" => "Sniper Rifles",
+        "Ares" | "Odin" => "Heavy",
+        "Melee" => "Melee",
+        _ => "Other",
     }
 }
 
@@ -1367,6 +1591,7 @@ struct WeaponDisplay {
     uuid: String,
     display_name: String,
     display_icon: Option<String>,
+    cached_icon: Option<PathBuf>,
 }
 
 impl From<ResolvedWeapon> for WeaponDisplay {
@@ -1375,6 +1600,7 @@ impl From<ResolvedWeapon> for WeaponDisplay {
             uuid: weapon.uuid,
             display_name: weapon.display_name,
             display_icon: weapon.display_icon,
+            cached_icon: None,
         }
     }
 }
@@ -1384,6 +1610,8 @@ struct SkinDisplay {
     uuid: String,
     display_name: String,
     display_icon: Option<String>,
+    rarity: Option<String>,
+    cached_icon: Option<PathBuf>,
 }
 
 impl From<ResolvedSkin> for SkinDisplay {
@@ -1392,6 +1620,8 @@ impl From<ResolvedSkin> for SkinDisplay {
             uuid: skin.uuid,
             display_name: skin.display_name,
             display_icon: skin.display_icon,
+            rarity: skin.rarity,
+            cached_icon: None,
         }
     }
 }
@@ -1399,17 +1629,19 @@ impl From<ResolvedSkin> for SkinDisplay {
 async fn fetch_storefront(
     account: AccountProfile,
     client_version: String,
+    image_cache: ImageCache,
 ) -> Result<StorefrontResult, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
     let resolved = resolve_credentials(&api, &account, client_version).await?;
     let metadata = fetch_store_metadata().await;
-    let summary = api
+    let mut summary = api
         .storefront(&resolved.credentials)
         .await
         .map(|response| {
             StoreSummary::from_response(response, &metadata.skins, &metadata.currencies)
         })
         .map_err(|error| error.to_string())?;
+    cache_store_images(&mut summary, &image_cache).await;
 
     Ok(StorefrontResult {
         account_id: account.id,
@@ -1422,6 +1654,7 @@ async fn fetch_storefront(
 async fn fetch_loadout(
     account: AccountProfile,
     client_version: String,
+    image_cache: ImageCache,
 ) -> Result<LoadoutResult, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
     let resolved = resolve_credentials(&api, &account, client_version).await?;
@@ -1431,7 +1664,7 @@ async fn fetch_loadout(
         .await
         .ok()
         .map(|xp| xp.progress.level);
-    let summary = api
+    let mut summary = api
         .player_loadout(&resolved.credentials)
         .await
         .map(|response| {
@@ -1443,6 +1676,7 @@ async fn fetch_loadout(
             )
         })
         .map_err(|error| error.to_string())?;
+    cache_loadout_images(&mut summary, &image_cache).await;
 
     Ok(LoadoutResult {
         account_id: account.id,
@@ -1485,6 +1719,43 @@ async fn fetch_store_metadata() -> StoreMetadata {
         },
         Err(_) => StoreMetadata::default(),
     }
+}
+
+async fn cache_store_images(summary: &mut StoreSummary, image_cache: &ImageCache) {
+    for offer in summary
+        .featured_bundle_items
+        .iter_mut()
+        .chain(summary.daily_offers.iter_mut())
+        .chain(summary.night_market_offers.iter_mut())
+    {
+        cache_skin_icon(&mut offer.skin, image_cache).await;
+    }
+}
+
+async fn cache_loadout_images(summary: &mut LoadoutSummary, image_cache: &ImageCache) {
+    for gun in &mut summary.gun_skins {
+        cache_weapon_icon(&mut gun.weapon, image_cache).await;
+        cache_skin_icon(&mut gun.skin, image_cache).await;
+    }
+}
+
+async fn cache_skin_icon(skin: &mut SkinDisplay, image_cache: &ImageCache) {
+    let Some(url) = skin.display_icon.as_ref() else {
+        return;
+    };
+
+    skin.cached_icon = image_cache.cache_url("skins", &skin.uuid, url).await.ok();
+}
+
+async fn cache_weapon_icon(weapon: &mut WeaponDisplay, image_cache: &ImageCache) {
+    let Some(url) = weapon.display_icon.as_ref() else {
+        return;
+    };
+
+    weapon.cached_icon = image_cache
+        .cache_url("weapons", &weapon.uuid, url)
+        .await
+        .ok();
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1653,6 +1924,23 @@ fn non_empty_path(input: &str) -> Option<PathBuf> {
     }
 }
 
+fn format_bytes(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    let bytes_f = bytes as f64;
+
+    if bytes_f >= GB {
+        format!("{:.1} GB", bytes_f / GB)
+    } else if bytes_f >= MB {
+        format!("{:.1} MB", bytes_f / MB)
+    } else if bytes_f >= KB {
+        format!("{:.1} KB", bytes_f / KB)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
 fn cache_account_api_context(
     state: &mut StoredState,
     account_id: AccountId,
@@ -1753,6 +2041,7 @@ mod tests {
             uuid: "skin-a".to_string(),
             display_name: "Prime Vandal".to_string(),
             display_icon: None,
+            content_tier_uuid: None,
             levels: vec![crate::riot::content::WeaponSkinLevel {
                 uuid: "a".to_string(),
                 display_name: "Prime Vandal Level 1".to_string(),
@@ -1822,6 +2111,7 @@ mod tests {
             uuid: "skin-a".to_string(),
             display_name: "Prime Vandal".to_string(),
             display_icon: None,
+            content_tier_uuid: None,
             levels: vec![],
             chromas: vec![],
         }]);

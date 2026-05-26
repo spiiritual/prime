@@ -5,6 +5,7 @@ use thiserror::Error;
 
 pub const WEAPONS_URL: &str = "https://valorant-api.com/v1/weapons";
 pub const WEAPON_SKINS_URL: &str = "https://valorant-api.com/v1/weapons/skins";
+pub const CONTENT_TIERS_URL: &str = "https://valorant-api.com/v1/contenttiers";
 pub const CURRENCIES_URL: &str = "https://valorant-api.com/v1/currencies";
 pub const VERSION_URL: &str = "https://valorant-api.com/v1/version";
 
@@ -31,8 +32,9 @@ impl ValorantContentApi {
             .error_for_status()?
             .json()
             .await?;
+        let tiers = self.content_tier_catalog().await.unwrap_or_default();
 
-        Ok(SkinCatalog::from_skins(response.data))
+        Ok(SkinCatalog::from_skins_and_tiers(response.data, &tiers))
     }
 
     pub async fn weapon_catalog(&self) -> Result<WeaponCatalog, ContentError> {
@@ -59,6 +61,19 @@ impl ValorantContentApi {
             .await?;
 
         Ok(CurrencyCatalog::from_currencies(response.data))
+    }
+
+    pub async fn content_tier_catalog(&self) -> Result<ContentTierCatalog, ContentError> {
+        let response: ApiResponse<Vec<ContentTier>> = self
+            .client
+            .get(CONTENT_TIERS_URL)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        Ok(ContentTierCatalog::from_tiers(response.data))
     }
 
     pub async fn client_version(&self) -> Result<String, ContentError> {
@@ -131,13 +146,22 @@ pub struct SkinCatalog {
 
 impl SkinCatalog {
     pub fn from_skins(skins: Vec<WeaponSkin>) -> Self {
+        Self::from_skins_and_tiers(skins, &ContentTierCatalog::default())
+    }
+
+    pub fn from_skins_and_tiers(skins: Vec<WeaponSkin>, tiers: &ContentTierCatalog) -> Self {
         let mut by_uuid = HashMap::new();
 
         for skin in skins {
+            let rarity = skin
+                .content_tier_uuid
+                .as_ref()
+                .and_then(|uuid| tiers.resolve_name(uuid));
             let skin_info = ResolvedSkin {
                 uuid: skin.uuid.clone(),
                 display_name: skin.display_name.clone(),
                 display_icon: skin.display_icon.clone(),
+                rarity: rarity.clone(),
             };
             by_uuid.insert(normalize_uuid(&skin.uuid), skin_info.clone());
 
@@ -151,6 +175,7 @@ impl SkinCatalog {
                             &skin.display_name,
                         ),
                         display_icon: level.display_icon.or_else(|| skin.display_icon.clone()),
+                        rarity: rarity.clone(),
                     },
                 );
             }
@@ -168,6 +193,7 @@ impl SkinCatalog {
                             .display_icon
                             .or(chroma.full_render)
                             .or_else(|| skin_info.display_icon.clone()),
+                        rarity: rarity.clone(),
                     },
                 );
             }
@@ -189,6 +215,7 @@ pub struct ResolvedSkin {
     pub uuid: String,
     pub display_name: String,
     pub display_icon: Option<String>,
+    pub rarity: Option<String>,
 }
 
 impl ResolvedSkin {
@@ -197,7 +224,28 @@ impl ResolvedSkin {
             uuid: uuid.to_string(),
             display_name: uuid.to_string(),
             display_icon: None,
+            rarity: None,
         }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ContentTierCatalog {
+    by_uuid: HashMap<String, String>,
+}
+
+impl ContentTierCatalog {
+    pub fn from_tiers(tiers: Vec<ContentTier>) -> Self {
+        let by_uuid = tiers
+            .into_iter()
+            .map(|tier| (normalize_uuid(&tier.uuid), tier.display_name))
+            .collect();
+
+        Self { by_uuid }
+    }
+
+    pub fn resolve_name(&self, uuid: &str) -> Option<String> {
+        self.by_uuid.get(&normalize_uuid(uuid)).cloned()
     }
 }
 
@@ -271,6 +319,8 @@ pub struct WeaponSkin {
     pub display_name: String,
     #[serde(rename = "displayIcon")]
     pub display_icon: Option<String>,
+    #[serde(rename = "contentTierUuid")]
+    pub content_tier_uuid: Option<String>,
     #[serde(default)]
     pub levels: Vec<WeaponSkinLevel>,
     #[serde(default)]
@@ -312,6 +362,13 @@ pub struct Currency {
     pub display_icon: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct ContentTier {
+    pub uuid: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+}
+
 fn normalize_uuid(uuid: &str) -> String {
     uuid.trim().to_ascii_lowercase()
 }
@@ -342,6 +399,7 @@ mod tests {
             uuid: "skin-uuid".to_string(),
             display_name: "Prime Vandal".to_string(),
             display_icon: Some("skin-icon".to_string()),
+            content_tier_uuid: Some("premium".to_string()),
             levels: vec![WeaponSkinLevel {
                 uuid: "level-uuid".to_string(),
                 display_name: "Prime Vandal Level 4".to_string(),
@@ -367,6 +425,31 @@ mod tests {
         assert_eq!(
             catalog.resolve("chroma-uuid").display_icon.as_deref(),
             Some("render")
+        );
+        assert_eq!(catalog.resolve("skin-uuid").rarity.as_deref(), None);
+    }
+
+    #[test]
+    fn resolves_skin_rarity_names() {
+        let tiers = ContentTierCatalog::from_tiers(vec![ContentTier {
+            uuid: "premium".to_string(),
+            display_name: "Premium Edition".to_string(),
+        }]);
+        let catalog = SkinCatalog::from_skins_and_tiers(
+            vec![WeaponSkin {
+                uuid: "skin-uuid".to_string(),
+                display_name: "Prime Vandal".to_string(),
+                display_icon: None,
+                content_tier_uuid: Some("premium".to_string()),
+                levels: vec![],
+                chromas: vec![],
+            }],
+            &tiers,
+        );
+
+        assert_eq!(
+            catalog.resolve("skin-uuid").rarity.as_deref(),
+            Some("Premium Edition")
         );
     }
 
