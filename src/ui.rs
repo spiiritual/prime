@@ -1,13 +1,17 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use iced::advanced::{
+    Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget::Tree,
+};
 use iced::widget::image::Handle;
 use iced::widget::{
-    button, column, container, grid, image, pick_list, rich_text, row, scrollable, span, stack,
-    text, text_input,
+    button, column, container, grid, image, opaque, pick_list, rich_text, row, scrollable, space,
+    span, stack, text, text_input,
 };
 use iced::{
-    Color, ContentFit, Element, Length, Padding, Size, Subscription, Task, Theme, alignment, window,
+    Color, ContentFit, Element, Event, Length, Padding, Point, Rectangle, Renderer, Size,
+    Subscription, Task, Theme, Vector, alignment, window,
 };
 
 use crate::account::LauncherSessionBackup;
@@ -77,6 +81,8 @@ struct PrimeApp {
     client_version_input: String,
     riot_client_path_input: String,
     status: String,
+    open_account_menu: Option<AccountId>,
+    confirm_delete_account: Option<AccountId>,
     pending_account: Option<CapturedAccountDraft>,
     store_summary: Option<StoreSummary>,
     loadout_summary: Option<LoadoutSummary>,
@@ -106,6 +112,8 @@ impl PrimeApp {
                 client_version_input: String::new(),
                 riot_client_path_input: String::new(),
                 status: "Loading accounts".to_string(),
+                open_account_menu: None,
+                confirm_delete_account: None,
                 pending_account: None,
                 store_summary: None,
                 loadout_summary: None,
@@ -165,10 +173,14 @@ impl PrimeApp {
             }
             Message::TabSelected(tab) => {
                 self.active_tab = tab;
+                self.open_account_menu = None;
+                self.confirm_delete_account = None;
                 self.load_active_tab()
             }
             Message::SelectAccount(id) => {
                 self.state.selected_account = Some(id);
+                self.open_account_menu = None;
+                self.confirm_delete_account = None;
                 self.store_summary = None;
                 self.loadout_summary = None;
                 self.status = self
@@ -198,6 +210,8 @@ impl PrimeApp {
                 };
                 let backup_root = self.repo.launcher_backups_dir();
                 self.pending_account = None;
+                self.open_account_menu = None;
+                self.confirm_delete_account = None;
                 self.new_display_name.clear();
                 self.new_username.clear();
                 self.status =
@@ -276,20 +290,69 @@ impl PrimeApp {
             }
             Message::CancelCapturedAccount => {
                 self.pending_account = None;
+                self.open_account_menu = None;
+                self.confirm_delete_account = None;
                 self.new_display_name.clear();
                 self.new_username.clear();
                 self.status = "Discarded captured account draft".to_string();
                 Task::none()
             }
-            Message::DeleteSelected => {
-                if let Some(id) = self.state.selected_account {
-                    self.state.remove_account(id);
-                    self.status = "Removed selected account profile".to_string();
-                    return self.save_task();
+            Message::ToggleAccountMenu(id) => {
+                self.confirm_delete_account = None;
+
+                if self.state.accounts.iter().any(|account| account.id == id) {
+                    self.open_account_menu = match self.open_account_menu {
+                        Some(open_id) if open_id == id => None,
+                        _ => Some(id),
+                    };
+                } else {
+                    self.open_account_menu = None;
                 }
 
-                self.status = "No account selected".to_string();
                 Task::none()
+            }
+            Message::RequestDeleteAccount(id) => {
+                if self.state.accounts.iter().any(|account| account.id == id) {
+                    self.open_account_menu = None;
+                    self.confirm_delete_account = Some(id);
+                } else {
+                    self.open_account_menu = None;
+                    self.confirm_delete_account = None;
+                    self.status = "Account profile no longer exists".to_string();
+                }
+
+                Task::none()
+            }
+            Message::CancelDeleteAccount => {
+                self.confirm_delete_account = None;
+                Task::none()
+            }
+            Message::ConfirmDeleteAccount(id) => {
+                let Some(account) = self
+                    .state
+                    .accounts
+                    .iter()
+                    .find(|account| account.id == id)
+                    .cloned()
+                else {
+                    self.open_account_menu = None;
+                    self.confirm_delete_account = None;
+                    self.status = "Account profile no longer exists".to_string();
+                    return Task::none();
+                };
+
+                let was_selected = self.state.selected_account == Some(id);
+                self.state.remove_account(id);
+                self.open_account_menu = None;
+                self.confirm_delete_account = None;
+
+                if was_selected {
+                    self.store_summary = None;
+                    self.loadout_summary = None;
+                }
+
+                self.status = format!("Deleted {}", account.summary());
+                self.save_task()
             }
             Message::RedirectChanged(value) => {
                 self.redirect_input = value;
@@ -340,10 +403,15 @@ impl PrimeApp {
                     }
                 }
             }
-            Message::StartLauncherSessionLogin => {
-                let Some(account_id) = self.state.selected_account else {
-                    self.status =
-                        "Select an account before starting launcher session capture".to_string();
+            Message::StartLauncherSessionLogin(account_id) => {
+                let Some(account) = self
+                    .state
+                    .accounts
+                    .iter()
+                    .find(|account| account.id == account_id)
+                else {
+                    self.open_account_menu = None;
+                    self.status = "Account profile no longer exists".to_string();
                     return Task::none();
                 };
 
@@ -352,8 +420,12 @@ impl PrimeApp {
                     ..LaunchConfig::default()
                 };
                 let backup_root = self.repo.launcher_backups_dir();
-                self.status =
-                    "Opening Riot Client and waiting for remembered login capture".to_string();
+                let summary = account.summary();
+                self.open_account_menu = None;
+                self.confirm_delete_account = None;
+                self.status = format!(
+                    "Opening Riot Client and waiting for remembered login capture for {summary}"
+                );
 
                 Task::perform(
                     async move { start_launcher_session_login(account_id, backup_root, config).await },
@@ -372,14 +444,23 @@ impl PrimeApp {
 
                 Task::none()
             }
-            Message::RefreshProfileIdentity => {
-                let Some(account) = self.state.selected_account().cloned() else {
-                    self.status =
-                        "Select an account before refreshing profile identity".to_string();
+            Message::RefreshProfileIdentity(account_id) => {
+                let Some(account) = self
+                    .state
+                    .accounts
+                    .iter()
+                    .find(|account| account.id == account_id)
+                    .cloned()
+                else {
+                    self.open_account_menu = None;
+                    self.status = "Account profile no longer exists".to_string();
                     return Task::none();
                 };
 
-                self.status = "Refreshing Riot profile identity".to_string();
+                let summary = account.summary();
+                self.open_account_menu = None;
+                self.confirm_delete_account = None;
+                self.status = format!("Refreshing Riot profile identity for {summary}");
                 Task::perform(
                     fetch_profile_identity(account),
                     Message::ProfileIdentityLoaded,
@@ -550,9 +631,15 @@ impl PrimeApp {
 
                 Task::none()
             }
-            Message::LaunchSelected => {
-                let Some(account) = self.state.selected_account() else {
-                    self.status = "Select an account before launching".to_string();
+            Message::LaunchAccount(id) => {
+                let Some(account) = self
+                    .state
+                    .accounts
+                    .iter()
+                    .find(|account| account.id == id)
+                    .cloned()
+                else {
+                    self.status = "Account profile no longer exists".to_string();
                     return Task::none();
                 };
 
@@ -561,11 +648,22 @@ impl PrimeApp {
                     ..LaunchConfig::default()
                 };
                 let backup = account.launcher_session.clone();
+                let summary = account.summary();
 
-                Task::perform(
-                    async move { launch_account(config, backup).await },
-                    Message::LaunchFinished,
-                )
+                self.state.selected_account = Some(id);
+                self.open_account_menu = None;
+                self.confirm_delete_account = None;
+                self.store_summary = None;
+                self.loadout_summary = None;
+                self.status = format!("Launching {summary}");
+
+                Task::batch([
+                    self.save_task(),
+                    Task::perform(
+                        async move { launch_account(config, backup).await },
+                        Message::LaunchFinished,
+                    ),
+                ])
             }
             Message::LaunchFinished(result) => {
                 self.status = match result {
@@ -683,37 +781,28 @@ impl PrimeApp {
     }
 
     fn accounts_tab(&self) -> Element<'_, Message> {
-        let selected = self
-            .state
-            .selected_account()
-            .map(|account| account.summary())
-            .unwrap_or_else(|| "No account selected".to_string());
-        let launcher_session = self
-            .state
-            .selected_account()
-            .and_then(|account| account.launcher_session.as_ref())
-            .map(|backup| {
-                format!(
-                    "Launcher session: captured for {} at {}",
-                    backup.puuid, backup.captured_at_unix
-                )
-            })
-            .unwrap_or_else(|| "Launcher session: not captured".to_string());
+        let mut account_cards = column![].spacing(12).width(Length::Fill);
+
+        if self.state.accounts.is_empty() {
+            account_cards = account_cards.push(
+                container(text("No account profiles yet"))
+                    .padding(16)
+                    .width(Length::Fill)
+                    .style(iced::widget::container::bordered_box),
+            );
+        }
+
+        for account in &self.state.accounts {
+            account_cards = account_cards.push(self.account_card(account));
+        }
 
         let mut content = column![
-            text(format!("Selected: {selected}")),
-            text(launcher_session),
-            row![
-                button("Add account").on_press(Message::AddAccount),
-                button("Remove selected").on_press(Message::DeleteSelected),
-                button("Re-capture selected login").on_press(Message::StartLauncherSessionLogin),
-                button("Refresh profile").on_press(Message::RefreshProfileIdentity),
-                button("Launch VALORANT").on_press(Message::LaunchSelected)
-            ]
-            .spacing(10),
-            text("Add account opens Riot Client, waits for a remembered login, then asks you to confirm the profile details.")
+            row![button("Add account").on_press(Message::AddAccount)].spacing(10),
+            text("Add account opens Riot Client, waits for a remembered login, then asks you to confirm the profile details."),
+            account_cards
         ]
-        .spacing(12);
+        .spacing(12)
+        .width(Length::Fill);
 
         if let Some(draft) = &self.pending_account {
             content = content.push(
@@ -749,6 +838,78 @@ impl PrimeApp {
         }
 
         content.into()
+    }
+
+    fn account_card<'a>(&'a self, account: &'a AccountProfile) -> Element<'a, Message> {
+        let riot_tag = account
+            .riot_id()
+            .unwrap_or_else(|| "Riot tag not captured".to_string());
+        let session_label = if account.has_launcher_session() {
+            "Launcher session captured"
+        } else {
+            "Launcher session not captured"
+        };
+        let is_selected = self.state.selected_account == Some(account.id);
+        let is_account_menu_open = self.open_account_menu == Some(account.id);
+        let selected_label = if is_selected {
+            "Selected"
+        } else {
+            "Not selected"
+        };
+
+        let header = row![
+            column![
+                text(&account.display_name).size(22),
+                text(riot_tag).size(15)
+            ]
+            .spacing(4)
+            .width(Length::Fill),
+            button(text("..."))
+                .style(move |theme, status| {
+                    account_menu_button_style(theme, status, is_account_menu_open)
+                })
+                .on_press(Message::ToggleAccountMenu(account.id))
+        ]
+        .spacing(10)
+        .align_y(alignment::Vertical::Top);
+
+        let body = column![
+            header,
+            text(format!(
+                "Riot shard: {} | {} | {}",
+                account.shard, session_label, selected_label
+            ))
+            .size(13),
+        ]
+        .spacing(10)
+        .width(Length::Fill);
+
+        let body = body.push(
+            row![
+                button("Select")
+                    .style(move |theme, status| {
+                        select_account_button_style(theme, status, is_selected)
+                    })
+                    .on_press_maybe((!is_selected).then_some(Message::SelectAccount(account.id))),
+                space().width(Length::Fill),
+                button("Launch VALORANT").on_press(Message::LaunchAccount(account.id))
+            ]
+            .spacing(10)
+            .width(Length::Fill),
+        );
+
+        let base = container(body)
+            .padding(14)
+            .width(Length::Fill)
+            .style(move |theme| account_card_style(theme, is_selected));
+
+        let mut card = stack![base].width(Length::Fill);
+
+        if self.confirm_delete_account == Some(account.id) {
+            card = card.push(delete_account_prompt_overlay(account));
+        }
+
+        account_menu_popover(card, account_menu(account.id), is_account_menu_open)
     }
 
     fn token_import_controls(&self) -> Element<'_, Message> {
@@ -945,19 +1106,18 @@ impl PrimeApp {
             .find(|account| account.id == captured.account_id)
         {
             let captured_puuid = captured.backup.puuid.clone();
+            let summary = account.summary();
 
             if let Err(error) = account.attach_launcher_session(captured.backup) {
                 self.status = format!("Launcher session rejected: {error}");
                 return Task::none();
             }
 
-            self.status =
-                format!("Captured launcher session for selected account ({captured_puuid})");
+            self.status = format!("Captured launcher session for {summary} ({captured_puuid})");
             return self.save_task();
         }
 
-        self.status =
-            "Captured launcher session, but the selected profile no longer exists".to_string();
+        self.status = "Captured launcher session, but the profile no longer exists".to_string();
         Task::none()
     }
 }
@@ -1128,6 +1288,407 @@ fn loadout_skin_label(name: &str) -> String {
     label.to_string()
 }
 
+fn account_menu(account_id: AccountId) -> Element<'static, Message> {
+    container(
+        column![
+            button("Re-capture login")
+                .width(Length::Fill)
+                .on_press(Message::StartLauncherSessionLogin(account_id)),
+            button("Refresh profile")
+                .width(Length::Fill)
+                .on_press(Message::RefreshProfileIdentity(account_id)),
+            button("Delete account")
+                .width(Length::Fill)
+                .style(iced::widget::button::danger)
+                .on_press(Message::RequestDeleteAccount(account_id))
+        ]
+        .spacing(8),
+    )
+    .padding(8)
+    .width(ACCOUNT_MENU_WIDTH)
+    .style(iced::widget::container::bordered_box)
+    .into()
+}
+
+const ACCOUNT_MENU_WIDTH: f32 = 180.0;
+const ACCOUNT_MENU_TOP_OFFSET: f32 = 48.0;
+const ACCOUNT_MENU_RIGHT_INSET: f32 = 14.0;
+
+// Keep the action menu in the window overlay layer so it is not clipped by the card.
+fn account_menu_popover<'a>(
+    base: impl Into<Element<'a, Message>>,
+    menu: impl Into<Element<'a, Message>>,
+    is_open: bool,
+) -> Element<'a, Message> {
+    Element::new(AccountMenuPopover {
+        base: base.into(),
+        menu: menu.into(),
+        is_open,
+    })
+}
+
+struct AccountMenuPopover<'a> {
+    base: Element<'a, Message>,
+    menu: Element<'a, Message>,
+    is_open: bool,
+}
+
+impl Widget<Message, Theme, Renderer> for AccountMenuPopover<'_> {
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.base), Tree::new(&self.menu)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(&[self.base.as_widget(), self.menu.as_widget()]);
+    }
+
+    fn size(&self) -> Size<Length> {
+        self.base.as_widget().size()
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.base.as_widget().size_hint()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.base
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn iced::advanced::widget::Operation,
+    ) {
+        self.base
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        self.base.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        self.base.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.base.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'b>,
+        renderer: &Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        let mut children = tree.children.iter_mut();
+
+        let base_overlay = self.base.as_widget_mut().overlay(
+            children.next().unwrap(),
+            layout,
+            renderer,
+            viewport,
+            translation,
+        );
+
+        let menu_overlay = self.is_open.then(|| {
+            overlay::Element::new(Box::new(AccountMenuOverlay {
+                anchor: layout.bounds() + translation,
+                menu: &mut self.menu,
+                tree: children.next().unwrap(),
+            }))
+        });
+
+        if base_overlay.is_some() || menu_overlay.is_some() {
+            Some(
+                overlay::Group::with_children(
+                    base_overlay.into_iter().chain(menu_overlay).collect(),
+                )
+                .overlay(),
+            )
+        } else {
+            None
+        }
+    }
+}
+
+struct AccountMenuOverlay<'a, 'b> {
+    anchor: Rectangle,
+    menu: &'b mut Element<'a, Message>,
+    tree: &'b mut Tree,
+}
+
+impl overlay::Overlay<Message, Theme, Renderer> for AccountMenuOverlay<'_, '_> {
+    fn layout(&mut self, renderer: &Renderer, bounds: Size) -> layout::Node {
+        let viewport = Rectangle::with_size(bounds);
+        let menu = self.menu.as_widget_mut().layout(
+            self.tree,
+            renderer,
+            &layout::Limits::new(Size::ZERO, viewport.size()),
+        );
+        let menu_size = menu.size();
+
+        let max_x = viewport.x + viewport.width - menu_size.width;
+        let x = (self.anchor.x + self.anchor.width - menu_size.width - ACCOUNT_MENU_RIGHT_INSET)
+            .clamp(viewport.x, max_x.max(viewport.x));
+
+        let desired_y = self.anchor.y + ACCOUNT_MENU_TOP_OFFSET;
+        let max_y = viewport.y + viewport.height - menu_size.height;
+        let y = if desired_y > max_y {
+            (self.anchor.y + self.anchor.height - menu_size.height)
+                .clamp(viewport.y, max_y.max(viewport.y))
+        } else {
+            desired_y
+        };
+
+        layout::Node::with_children(menu_size, vec![menu]).move_to(Point::new(x, y))
+    }
+
+    fn operate(
+        &mut self,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn iced::advanced::widget::Operation,
+    ) {
+        self.menu.as_widget_mut().operate(
+            self.tree,
+            layout.children().next().unwrap(),
+            renderer,
+            operation,
+        );
+    }
+
+    fn update(
+        &mut self,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+    ) {
+        let viewport = Rectangle::with_size(Size::INFINITE);
+
+        self.menu.as_widget_mut().update(
+            self.tree,
+            event,
+            layout.children().next().unwrap(),
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            &viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &Renderer,
+    ) -> mouse::Interaction {
+        let viewport = Rectangle::with_size(Size::INFINITE);
+
+        self.menu.as_widget().mouse_interaction(
+            self.tree,
+            layout.children().next().unwrap(),
+            cursor,
+            &viewport,
+            renderer,
+        )
+    }
+
+    fn draw(
+        &self,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+    ) {
+        let viewport = Rectangle::with_size(Size::INFINITE);
+
+        self.menu.as_widget().draw(
+            self.tree,
+            renderer,
+            theme,
+            style,
+            layout.children().next().unwrap(),
+            cursor,
+            &viewport,
+        );
+    }
+
+    fn overlay<'a>(
+        &'a mut self,
+        layout: Layout<'a>,
+        renderer: &Renderer,
+    ) -> Option<overlay::Element<'a, Message, Theme, Renderer>> {
+        let viewport = Rectangle::with_size(Size::INFINITE);
+
+        self.menu.as_widget_mut().overlay(
+            self.tree,
+            layout.children().next().unwrap(),
+            renderer,
+            &viewport,
+            Vector::ZERO,
+        )
+    }
+
+    fn index(&self) -> f32 {
+        10.0
+    }
+}
+
+fn delete_account_prompt_overlay(account: &AccountProfile) -> Element<'_, Message> {
+    let prompt = container(
+        column![
+            column![
+                text(format!("Delete {}?", account.display_name)).size(16),
+                text("This removes the local profile and captured launcher session reference.")
+                    .size(13)
+            ]
+            .spacing(3)
+            .width(Length::Fill),
+            row![
+                space().width(Length::Fill),
+                button("Cancel").on_press(Message::CancelDeleteAccount),
+                button("Delete")
+                    .style(iced::widget::button::danger)
+                    .on_press(Message::ConfirmDeleteAccount(account.id))
+            ]
+            .spacing(10)
+        ]
+        .spacing(10),
+    )
+    .padding(10)
+    .width(520)
+    .style(delete_prompt_style);
+
+    opaque(
+        container(prompt)
+            .padding(14)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center)
+            .style(delete_prompt_scrim_style),
+    )
+}
+
+fn account_card_style(theme: &Theme, selected: bool) -> iced::widget::container::Style {
+    let mut style = iced::widget::container::bordered_box(theme);
+
+    if selected {
+        style.background = Some(Color::from_rgba8(30, 48, 67, 0.55).into());
+        style.border.color = Color::from_rgb8(95, 176, 224);
+    }
+
+    style
+}
+
+fn select_account_button_style(
+    theme: &Theme,
+    status: iced::widget::button::Status,
+    selected: bool,
+) -> iced::widget::button::Style {
+    if !selected {
+        return iced::widget::button::primary(theme, status);
+    }
+
+    let mut style = iced::widget::button::secondary(theme, iced::widget::button::Status::Disabled);
+    style.background = Some(Color::from_rgb8(68, 72, 78).into());
+    style.text_color = Color::from_rgb8(180, 184, 190);
+    style
+}
+
+fn account_menu_button_style(
+    theme: &Theme,
+    status: iced::widget::button::Status,
+    is_open: bool,
+) -> iced::widget::button::Style {
+    if !is_open {
+        return iced::widget::button::primary(theme, status);
+    }
+
+    iced::widget::button::secondary(theme, status)
+}
+
+fn delete_prompt_style(theme: &Theme) -> iced::widget::container::Style {
+    let mut style = iced::widget::container::bordered_box(theme);
+    style.background = Some(Color::from_rgba8(70, 28, 32, 0.55).into());
+    style.border.color = Color::from_rgb8(214, 92, 92);
+    style
+}
+
+fn delete_prompt_scrim_style(_: &Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(Color::from_rgba8(8, 10, 14, 0.68).into()),
+        ..Default::default()
+    }
+}
+
 fn rarity_card_style(theme: &Theme, rarity: Option<&str>) -> iced::widget::container::Style {
     let mut style = iced::widget::container::bordered_box(theme);
 
@@ -1263,15 +1824,18 @@ enum Message {
     AccountCaptureFinished(Result<CapturedAccountDraft, String>),
     ConfirmCapturedAccount,
     CancelCapturedAccount,
-    DeleteSelected,
+    ToggleAccountMenu(AccountId),
+    RequestDeleteAccount(AccountId),
+    CancelDeleteAccount,
+    ConfirmDeleteAccount(AccountId),
     RedirectChanged(String),
     ClientVersionChanged(String),
     RefreshClientVersion,
     ClientVersionLoaded(Result<String, String>),
     ImportRedirect,
-    StartLauncherSessionLogin,
+    StartLauncherSessionLogin(AccountId),
     LauncherSessionLoginStarted(Result<CapturedLauncherSession, String>),
-    RefreshProfileIdentity,
+    RefreshProfileIdentity(AccountId),
     ProfileIdentityLoaded(Result<RefreshedProfileIdentity, String>),
     StorefrontLoaded(Result<StorefrontResult, String>),
     ShopTimerTick(iced::time::Instant),
@@ -1281,7 +1845,7 @@ enum Message {
     ImageCacheSizeLoaded(Result<u64, String>),
     ClearImageCache,
     ImageCacheCleared(Result<(), String>),
-    LaunchSelected,
+    LaunchAccount(AccountId),
     LaunchFinished(Result<(), String>),
 }
 
