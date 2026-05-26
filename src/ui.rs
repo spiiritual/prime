@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -1503,12 +1502,18 @@ impl StoreSummary {
         currencies: &CurrencyCatalog,
         loaded_at: iced::time::Instant,
     ) -> Self {
-        let mut seen_bundles = HashSet::new();
-        let featured_bundles = std::iter::once(&response.featured_bundle.bundle)
-            .chain(response.featured_bundle.bundles.iter())
-            .filter(|bundle| seen_bundles.insert(bundle_identity_key(bundle)))
-            .map(|bundle| store_bundle_display(bundle, skins, bundles, currencies))
-            .collect();
+        let featured_bundles = if response.featured_bundle.bundles.is_empty() {
+            std::iter::once(&response.featured_bundle.bundle)
+                .map(|bundle| store_bundle_display(bundle, skins, bundles, currencies))
+                .collect()
+        } else {
+            response
+                .featured_bundle
+                .bundles
+                .iter()
+                .map(|bundle| store_bundle_display(bundle, skins, bundles, currencies))
+                .collect()
+        };
         let night_market_remaining_seconds = response
             .bonus_store
             .as_ref()
@@ -1763,16 +1768,6 @@ fn store_bundle_display(
         price: bundle_price(bundle, currencies),
         item_count,
         rarity,
-    }
-}
-
-fn bundle_identity_key(bundle: &StoreBundle) -> String {
-    let id = bundle.id.trim();
-
-    if id.is_empty() {
-        bundle.data_asset_id.trim().to_ascii_lowercase()
-    } else {
-        id.to_ascii_lowercase()
     }
 }
 
@@ -2494,16 +2489,58 @@ mod tests {
                     "ID": "bundle-a",
                     "DataAssetID": "asset-a",
                     "CurrencyID": "vp",
-                    "Items": [],
+                    "Items": [{
+                        "Item": {
+                            "ItemTypeID": "skin-type",
+                            "ItemID": "skin-a",
+                            "Amount": 99
+                        },
+                        "BasePrice": 0,
+                        "CurrencyID": "vp",
+                        "DiscountPercent": 0,
+                        "DiscountedPrice": 0,
+                        "IsPromoItem": false
+                    }],
                     "DurationRemainingInSeconds": 10
                 },
-                "Bundles": [{
-                    "ID": "bundle-a-copy",
-                    "DataAssetID": "asset-a",
-                    "CurrencyID": "vp",
-                    "Items": [],
-                    "DurationRemainingInSeconds": 10
-                }],
+                "Bundles": [
+                    {
+                        "ID": "bundle-a",
+                        "DataAssetID": "asset-a",
+                        "CurrencyID": "vp",
+                        "Items": [{
+                            "Item": {
+                                "ItemTypeID": "skin-type",
+                                "ItemID": "skin-a",
+                                "Amount": 1
+                            },
+                            "BasePrice": 0,
+                            "CurrencyID": "vp",
+                            "DiscountPercent": 0,
+                            "DiscountedPrice": 0,
+                            "IsPromoItem": false
+                        }],
+                        "DurationRemainingInSeconds": 10
+                    },
+                    {
+                        "ID": "bundle-b",
+                        "DataAssetID": "asset-a",
+                        "CurrencyID": "vp",
+                        "Items": [{
+                            "Item": {
+                                "ItemTypeID": "skin-type",
+                                "ItemID": "skin-b",
+                                "Amount": 2
+                            },
+                            "BasePrice": 0,
+                            "CurrencyID": "vp",
+                            "DiscountPercent": 0,
+                            "DiscountedPrice": 0,
+                            "IsPromoItem": false
+                        }],
+                        "DurationRemainingInSeconds": 10
+                    }
+                ],
                 "BundleRemainingDurationInSeconds": 20
             },
             "SkinsPanelLayout": {
@@ -2515,7 +2552,7 @@ mod tests {
         .expect("response");
         let bundles = BundleCatalog::from_bundles(vec![crate::riot::content::Bundle {
             uuid: "asset-a".to_string(),
-            display_name: "Duo's Day Duckling Duo".to_string(),
+            display_name: "Shared Test Bundle".to_string(),
             display_icon: None,
             display_icon2: None,
             vertical_promo_image: None,
@@ -2529,13 +2566,19 @@ mod tests {
         );
 
         assert_eq!(summary.featured_bundles.len(), 2);
-        assert_eq!(
-            summary.featured_bundles[0].bundle.display_name,
-            "Duo's Day Duckling Duo"
+        assert!(
+            summary
+                .featured_bundles
+                .iter()
+                .all(|bundle| bundle.bundle.display_name == "Shared Test Bundle")
         );
         assert_eq!(
-            summary.featured_bundles[1].bundle.display_name,
-            "Duo's Day Duckling Duo"
+            summary
+                .featured_bundles
+                .iter()
+                .map(StoreBundleDisplay::item_count_label)
+                .collect::<Vec<_>>(),
+            ["1 item", "2 items"]
         );
     }
 
