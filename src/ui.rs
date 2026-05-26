@@ -1,11 +1,12 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use iced::widget::image::Handle;
 use iced::widget::{
-    button, column, container, image, pick_list, row, scrollable, text, text_input,
+    button, column, container, image, pick_list, row, scrollable, stack, text, text_input,
 };
-use iced::{Color, ContentFit, Element, Length, Subscription, Task, Theme};
+use iced::{Color, ContentFit, Element, Length, Padding, Subscription, Task, Theme, alignment};
 
 use crate::account::LauncherSessionBackup;
 use crate::account::{AccountId, AccountProfile, AuthSession, Shard};
@@ -581,6 +582,7 @@ impl PrimeApp {
         .height(Length::Fill);
 
         container(content)
+            .padding(Padding::ZERO.right(14))
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
@@ -997,21 +999,35 @@ fn store_bundle_card(bundle: &StoreBundleDisplay) -> Element<'_, Message> {
         .map(OfferPrice::label)
         .unwrap_or_else(|| "Price unavailable".to_string());
     let rarity_for_style = bundle.rarity.clone();
-    let mut details = iced::widget::Column::new()
-        .spacing(7)
-        .push(asset_image(bundle.bundle.cached_icon.as_ref(), 172.0))
-        .push(text(&bundle.bundle.display_name).size(20))
-        .push(text(bundle.item_count_label()).size(14));
+    let details = column![
+        text(&bundle.bundle.display_name).size(20),
+        text(price).size(16),
+        text(bundle.item_count_label()).size(14),
+    ]
+    .spacing(5)
+    .width(Length::Fill);
+    let overlay = container(
+        container(details)
+            .padding([10, 12])
+            .width(Length::Fill)
+            .style(bundle_text_scrim_style),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_y(alignment::Vertical::Bottom);
 
-    if let Some(rarity) = &bundle.rarity {
-        details = details.push(text(rarity.clone()).size(13));
-    }
-
-    details = details.push(text(price).size(16));
-
-    container(details)
-        .padding(14)
+    container(
+        stack![
+            asset_background_image(bundle.bundle.cached_icon.as_ref(), 214.0),
+            overlay
+        ]
         .width(Length::Fill)
+        .height(214.0)
+        .clip(true),
+    )
+        .width(Length::Fill)
+        .height(214.0)
+        .clip(true)
         .style(move |theme| rarity_card_style(theme, rarity_for_style.as_deref()))
         .into()
 }
@@ -1023,16 +1039,10 @@ fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {
         .map(OfferPrice::label)
         .unwrap_or_else(|| "Price unavailable".to_string());
     let rarity_for_style = offer.skin.rarity.clone();
-    let rarity_label = offer
-        .skin
-        .rarity
-        .clone()
-        .unwrap_or_else(|| "Unknown rarity".to_string());
     let mut details = iced::widget::Column::new()
         .spacing(6)
         .push(asset_image(offer.skin.cached_icon.as_ref(), 118.0))
         .push(text(&offer.skin.display_name).size(16))
-        .push(text(rarity_label).size(13))
         .push(text(price).size(14));
 
     if offer.discount_percent > 0 {
@@ -1087,6 +1097,14 @@ fn rarity_card_style(theme: &Theme, rarity: Option<&str>) -> iced::widget::conta
     style
 }
 
+fn bundle_text_scrim_style(_: &Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(Color::from_rgba8(8, 10, 14, 0.78).into()),
+        text_color: Some(Color::WHITE),
+        ..Default::default()
+    }
+}
+
 fn rarity_colors(rarity: Option<&str>) -> Option<(Color, Color)> {
     let rarity = rarity?.to_ascii_lowercase();
 
@@ -1135,20 +1153,39 @@ fn asset_image(path: Option<&PathBuf>, height: f32) -> Element<'_, Message> {
     }
 }
 
+fn asset_background_image(path: Option<&PathBuf>, height: f32) -> Element<'_, Message> {
+    match path {
+        Some(path) => image(Handle::from_path(path.clone()))
+            .width(Length::Fill)
+            .height(height)
+            .content_fit(ContentFit::Cover)
+            .into(),
+        None => container(text("No image").size(13))
+            .width(Length::Fill)
+            .height(height)
+            .style(iced::widget::container::rounded_box)
+            .into(),
+    }
+}
+
 fn format_duration(seconds: i64) -> String {
     if seconds <= 0 {
         return "soon".to_string();
     }
 
-    let hours = seconds / 3600;
+    let days = seconds / 86_400;
+    let hours = (seconds % 86_400) / 3600;
     let minutes = (seconds % 3600) / 60;
+    let seconds = seconds % 60;
 
-    if hours >= 24 {
-        format!("{}d {}h", hours / 24, hours % 24)
+    if days > 0 {
+        format!("{days}d {hours}h {minutes}m")
     } else if hours > 0 {
-        format!("{hours}h {minutes}m")
+        format!("{hours}h {minutes}m {seconds}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
     } else {
-        format!("{minutes}m")
+        format!("{seconds}s")
     }
 }
 
@@ -1241,7 +1278,7 @@ fn require_launcher_session(
 
 const LOGIN_CAPTURE_TIMEOUT: Duration = Duration::from_secs(600);
 const LOGIN_CAPTURE_POLL_INTERVAL: Duration = Duration::from_secs(2);
-const SHOP_RESET_CHECK_INTERVAL: Duration = Duration::from_secs(30);
+const SHOP_RESET_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
 async fn start_launcher_session_login(
     account_id: AccountId,
@@ -1474,8 +1511,10 @@ impl StoreSummary {
         currencies: &CurrencyCatalog,
         loaded_at: iced::time::Instant,
     ) -> Self {
+        let mut seen_bundles = HashSet::new();
         let featured_bundles = std::iter::once(&response.featured_bundle.bundle)
             .chain(response.featured_bundle.bundles.iter())
+            .filter(|bundle| seen_bundles.insert(bundle_identity_key(bundle)))
             .map(|bundle| store_bundle_display(bundle, skins, bundles, currencies))
             .collect();
         let night_market_remaining_seconds = response
@@ -1732,6 +1771,16 @@ fn store_bundle_display(
         price: bundle_price(bundle, currencies),
         item_count,
         rarity,
+    }
+}
+
+fn bundle_identity_key(bundle: &StoreBundle) -> String {
+    let data_asset_id = bundle.data_asset_id.trim();
+
+    if data_asset_id.is_empty() {
+        bundle.id.trim().to_ascii_lowercase()
+    } else {
+        data_asset_id.to_ascii_lowercase()
     }
 }
 
@@ -2444,6 +2493,55 @@ mod tests {
     }
 
     #[test]
+    fn store_summary_deduplicates_featured_bundle_entries() {
+        let response: StorefrontResponse = serde_json::from_value(serde_json::json!({
+            "FeaturedBundle": {
+                "Bundle": {
+                    "ID": "bundle-a",
+                    "DataAssetID": "asset-a",
+                    "CurrencyID": "vp",
+                    "Items": [],
+                    "DurationRemainingInSeconds": 10
+                },
+                "Bundles": [{
+                    "ID": "bundle-a-copy",
+                    "DataAssetID": "asset-a",
+                    "CurrencyID": "vp",
+                    "Items": [],
+                    "DurationRemainingInSeconds": 10
+                }],
+                "BundleRemainingDurationInSeconds": 20
+            },
+            "SkinsPanelLayout": {
+                "SingleItemOffers": [],
+                "SingleItemStoreOffers": [],
+                "SingleItemOffersRemainingDurationInSeconds": 30
+            }
+        }))
+        .expect("response");
+        let bundles = BundleCatalog::from_bundles(vec![crate::riot::content::Bundle {
+            uuid: "asset-a".to_string(),
+            display_name: "Duo's Day Duckling Duo".to_string(),
+            display_icon: None,
+            display_icon2: None,
+            vertical_promo_image: None,
+        }]);
+
+        let summary = StoreSummary::from_response(
+            response,
+            &SkinCatalog::default(),
+            &bundles,
+            &CurrencyCatalog::default(),
+        );
+
+        assert_eq!(summary.featured_bundles.len(), 1);
+        assert_eq!(
+            summary.featured_bundles[0].bundle.display_name,
+            "Duo's Day Duckling Duo"
+        );
+    }
+
+    #[test]
     fn store_summary_expires_at_earliest_shop_section_reset() {
         let loaded_at = iced::time::Instant::now();
         let summary = StoreSummary {
@@ -2458,6 +2556,13 @@ mod tests {
 
         assert!(!summary.is_expired_at(loaded_at + Duration::from_secs(19)));
         assert!(summary.is_expired_at(loaded_at + Duration::from_secs(20)));
+    }
+
+    #[test]
+    fn format_duration_includes_ticking_seconds() {
+        assert_eq!(format_duration(3_661), "1h 1m 1s");
+        assert_eq!(format_duration(61), "1m 1s");
+        assert_eq!(format_duration(5), "5s");
     }
 
     #[test]
