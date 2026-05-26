@@ -55,11 +55,11 @@ impl RiotApi {
     pub fn new() -> Result<Self, RiotApiError> {
         let client = reqwest::Client::builder()
             .cookie_store(true)
-            .user_agent("prime-valorant-manager/0.1")
+            .user_agent("prime/0.1")
             .build()?;
         let no_redirect_client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .user_agent("prime-valorant-manager/0.1")
+            .user_agent("prime/0.1")
             .build()?;
 
         Ok(Self {

@@ -17,7 +17,7 @@ impl ImageCache {
     }
 
     pub fn default_path() -> PathBuf {
-        ProjectDirs::from("dev", "prime", "Prime Valorant Manager")
+        ProjectDirs::from("dev", "prime", "prime")
             .map(|dirs| dirs.cache_dir().join("images"))
             .unwrap_or_else(|| PathBuf::from("image-cache"))
     }

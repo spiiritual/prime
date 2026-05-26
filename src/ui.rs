@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use iced::widget::image::Handle;
 use iced::widget::{
-    button, column, container, image, pick_list, row, scrollable, stack, text, text_input,
+    button, column, container, grid, image, pick_list, row, scrollable, stack, text, text_input,
 };
 use iced::{Color, ContentFit, Element, Length, Padding, Subscription, Task, Theme, alignment};
 
@@ -41,7 +41,7 @@ pub fn run() -> iced::Result {
 }
 
 fn app_title(_: &PrimeApp) -> String {
-    "Prime Valorant Manager".to_string()
+    "prime".to_string()
 }
 
 fn app_theme(_: &PrimeApp) -> Theme {
@@ -468,7 +468,6 @@ impl PrimeApp {
 
                 Task::none()
             }
-            Message::FetchLoadout => self.fetch_loadout_task(),
             Message::LoadoutLoaded(result) => {
                 self.loadout_loading = false;
 
@@ -639,19 +638,16 @@ impl PrimeApp {
             Tab::Loadout => self.loadout_tab(),
             Tab::Settings => self.settings_tab(),
         };
+        let scroll_body = container(body)
+            .padding(Padding::ZERO.right(18))
+            .width(Length::Fill);
 
         column![
-            container(
-                row![
-                    text(self.active_tab.to_string()).size(30),
-                    button("Launch VALORANT").on_press(Message::LaunchSelected)
-                ]
-                .spacing(16)
-            )
-            .padding(14)
-            .width(Length::Fill)
-            .style(iced::widget::container::bordered_box),
-            container(scrollable(body))
+            container(text(self.active_tab.to_string()).size(30))
+                .padding(14)
+                .width(Length::Fill)
+                .style(iced::widget::container::bordered_box),
+            container(scrollable(scroll_body))
                 .padding(16)
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -703,7 +699,8 @@ impl PrimeApp {
                 button("Add account").on_press(Message::AddAccount),
                 button("Remove selected").on_press(Message::DeleteSelected),
                 button("Re-capture selected login").on_press(Message::StartLauncherSessionLogin),
-                button("Refresh profile").on_press(Message::RefreshProfileIdentity)
+                button("Refresh profile").on_press(Message::RefreshProfileIdentity),
+                button("Launch VALORANT").on_press(Message::LaunchSelected)
             ]
             .spacing(10),
             text("Add account opens Riot Client, waits for a remembered login, then asks you to confirm the profile details.")
@@ -813,16 +810,9 @@ impl PrimeApp {
         } else {
             "Loadout loads automatically for the selected account."
         };
-        let mut content = column![
-            text(loading_label),
-            button("Refresh loadout").on_press(Message::FetchLoadout)
-        ]
-        .spacing(12)
-        .width(Length::Fill);
+        let mut content = column![text(loading_label)].spacing(12).width(Length::Fill);
 
         if let Some(summary) = &self.loadout_summary {
-            content = content.push(text(format!("Account level {}", summary.account_level)));
-
             for category in [
                 "Sidearms",
                 "SMGs",
@@ -1025,11 +1015,11 @@ fn store_bundle_card(bundle: &StoreBundleDisplay) -> Element<'_, Message> {
         .height(214.0)
         .clip(true),
     )
-        .width(Length::Fill)
-        .height(214.0)
-        .clip(true)
-        .style(move |theme| rarity_card_style(theme, rarity_for_style.as_deref()))
-        .into()
+    .width(Length::Fill)
+    .height(214.0)
+    .clip(true)
+    .style(move |theme| rarity_card_style(theme, rarity_for_style.as_deref()))
+    .into()
 }
 
 fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {
@@ -1060,7 +1050,10 @@ fn loadout_section<'a>(
     category: &'static str,
     guns: impl IntoIterator<Item = &'a LoadoutGunDisplay>,
 ) -> Option<Element<'a, Message>> {
-    let mut cards = iced::widget::Row::new().spacing(10).width(Length::Fill);
+    let mut cards = grid::Grid::new()
+        .spacing(10)
+        .fluid(152)
+        .height(grid::aspect_ratio(152, 176));
     let mut count = 0;
 
     for gun in guns {
@@ -1075,8 +1068,8 @@ fn loadout_card(gun: &LoadoutGunDisplay) -> Element<'_, Message> {
     container(
         column![
             asset_image(gun.skin.cached_icon.as_ref(), 108.0),
-            text(&gun.weapon.display_name).size(15),
-            text(&gun.skin.display_name).size(14)
+            text(&gun.weapon.display_name).size(15).width(Length::Fill),
+            text(&gun.skin.display_name).size(14).width(Length::Fill)
         ]
         .spacing(6),
     )
@@ -1233,7 +1226,6 @@ enum Message {
     ProfileIdentityLoaded(Result<RefreshedProfileIdentity, String>),
     StorefrontLoaded(Result<StorefrontResult, String>),
     ShopTimerTick(iced::time::Instant),
-    FetchLoadout,
     LoadoutLoaded(Result<LoadoutResult, String>),
     RiotClientPathChanged(String),
     SaveSettings,
@@ -1775,12 +1767,12 @@ fn store_bundle_display(
 }
 
 fn bundle_identity_key(bundle: &StoreBundle) -> String {
-    let data_asset_id = bundle.data_asset_id.trim();
+    let id = bundle.id.trim();
 
-    if data_asset_id.is_empty() {
-        bundle.id.trim().to_ascii_lowercase()
+    if id.is_empty() {
+        bundle.data_asset_id.trim().to_ascii_lowercase()
     } else {
-        data_asset_id.to_ascii_lowercase()
+        id.to_ascii_lowercase()
     }
 }
 
@@ -1928,19 +1920,21 @@ fn weapon_order(name: &str) -> (usize, String) {
         "Frenzy" => 2,
         "Ghost" => 3,
         "Sheriff" => 4,
-        "Stinger" => 5,
-        "Spectre" => 6,
-        "Bucky" => 7,
-        "Judge" => 8,
-        "Bulldog" => 9,
-        "Guardian" => 10,
-        "Phantom" => 11,
-        "Vandal" => 12,
-        "Marshal" => 13,
-        "Operator" => 14,
-        "Ares" => 15,
-        "Odin" => 16,
-        "Melee" => 17,
+        "Bandit" => 5,
+        "Stinger" => 6,
+        "Spectre" => 7,
+        "Bucky" => 8,
+        "Judge" => 9,
+        "Bulldog" => 10,
+        "Guardian" => 11,
+        "Phantom" => 12,
+        "Vandal" => 13,
+        "Marshal" => 14,
+        "Outlaw" => 15,
+        "Operator" => 16,
+        "Ares" => 17,
+        "Odin" => 18,
+        "Melee" => 19,
         _ => 99,
     };
 
@@ -1949,11 +1943,11 @@ fn weapon_order(name: &str) -> (usize, String) {
 
 fn weapon_category(name: &str) -> &'static str {
     match name {
-        "Classic" | "Shorty" | "Frenzy" | "Ghost" | "Sheriff" => "Sidearms",
+        "Classic" | "Shorty" | "Frenzy" | "Ghost" | "Sheriff" | "Bandit" => "Sidearms",
         "Stinger" | "Spectre" => "SMGs",
         "Bucky" | "Judge" => "Shotguns",
         "Bulldog" | "Guardian" | "Phantom" | "Vandal" => "Rifles",
-        "Marshal" | "Operator" => "Sniper Rifles",
+        "Marshal" | "Outlaw" | "Operator" => "Sniper Rifles",
         "Ares" | "Odin" => "Heavy",
         "Melee" => "Melee",
         _ => "Other",
@@ -2493,7 +2487,7 @@ mod tests {
     }
 
     #[test]
-    fn store_summary_deduplicates_featured_bundle_entries() {
+    fn store_summary_keeps_distinct_featured_bundle_entries_with_shared_asset() {
         let response: StorefrontResponse = serde_json::from_value(serde_json::json!({
             "FeaturedBundle": {
                 "Bundle": {
@@ -2534,9 +2528,13 @@ mod tests {
             &CurrencyCatalog::default(),
         );
 
-        assert_eq!(summary.featured_bundles.len(), 1);
+        assert_eq!(summary.featured_bundles.len(), 2);
         assert_eq!(
             summary.featured_bundles[0].bundle.display_name,
+            "Duo's Day Duckling Duo"
+        );
+        assert_eq!(
+            summary.featured_bundles[1].bundle.display_name,
             "Duo's Day Duckling Duo"
         );
     }
@@ -2605,6 +2603,14 @@ mod tests {
         let summary = LoadoutSummary::from_response(response, &catalog, &weapons, None);
 
         assert_eq!(summary.gun_skins[0].label(), "Vandal: Prime Vandal");
+    }
+
+    #[test]
+    fn loadout_weapon_categories_include_newer_weapons() {
+        assert_eq!(weapon_category("Bandit"), "Sidearms");
+        assert_eq!(weapon_category("Outlaw"), "Sniper Rifles");
+        assert!(weapon_order("Bandit") < weapon_order("Stinger"));
+        assert!(weapon_order("Outlaw") < weapon_order("Operator"));
     }
 
     #[test]

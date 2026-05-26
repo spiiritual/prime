@@ -83,6 +83,7 @@ pub struct StoreBundle {
     pub total_base_cost: Option<HashMap<String, i64>>,
     #[serde(default)]
     pub total_discounted_cost: Option<HashMap<String, i64>>,
+    #[serde(default)]
     pub duration_remaining_in_seconds: i64,
 }
 

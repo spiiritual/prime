@@ -1,6 +1,8 @@
-# prime - a valorant account manager
+# prime
 
-Prime is an account manager for Valorant written in Rust, with iced as the UI library. It's made to be fast and useful. 
+prime is an account manager for Valorant written in Rust, with iced as the UI library. It's made to be fast and useful.
+
+Project edition: 2026.
 
 ## Features
  

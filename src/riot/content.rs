@@ -17,9 +17,7 @@ pub struct ValorantContentApi {
 
 impl ValorantContentApi {
     pub fn new() -> Result<Self, ContentError> {
-        let client = reqwest::Client::builder()
-            .user_agent("prime-valorant-manager/0.1")
-            .build()?;
+        let client = reqwest::Client::builder().user_agent("prime/0.1").build()?;
 
         Ok(Self { client })
     }

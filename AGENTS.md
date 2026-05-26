@@ -1,6 +1,12 @@
-# Prime Valorant Manager
+# prime
 
 Rust + Iced desktop account manager for VALORANT.
+
+Project metadata:
+
+- Cargo package and app name are `prime`.
+- Product edition metadata is `2026`.
+- Rust source uses the latest Cargo-supported Rust edition in this toolchain; do not set Cargo's `package.edition` to an unsupported value just to match the product edition.
 
 Current scope:
 
@@ -18,9 +24,12 @@ Current scope:
 - Use the account XP endpoint for account level when loadout identity reports zero.
 - Resolve store/loadout skin UUIDs and store currency IDs to display names through the public Valorant content API.
 - Display featured bundles, daily offers, and Night Market offers with resolved art, rarity tinting, and prices where available.
+- Preserve distinct featured bundle entries by store bundle ID, even when multiple entries resolve to the same public content bundle asset.
 - Cache downloaded skin and weapon images locally, show the cache size in Settings, and allow clearing the cache.
-- Resolve and order loadout weapon IDs so equipped skins are shown by weapon category like the in-game collection.
+- Resolve and order loadout weapon IDs so equipped skins are shown by weapon category like the in-game collection, including newer weapons such as Bandit as a sidearm and Outlaw as a sniper rifle.
 - Fetch the current Riot client version automatically from the public Valorant version endpoint.
+- Load Shop and Loadout automatically when the selected tab opens; Loadout should not show a manual refresh button or account level indicator.
+- Launch VALORANT from the Accounts tab after restoring the selected account's captured launcher session; do not add a global launch button to every tab header.
 
 Notes:
 
@@ -28,6 +37,7 @@ Notes:
 - Store and loadout requests use the undocumented client endpoints described by <https://valapidocs.techchrism.me/>.
 - Launcher switching follows the same broad approach as Assist: preserve Riot Client remembered-login data per account, restore the selected account's data, then launch VALORANT through Riot Client.
 - This app should not store Riot passwords. The current token import flow stores only session tokens in the local profile JSON and redacts them from debug output.
+- Keep direct Rust dependencies current with crates.io when touching dependency metadata, then run Cargo to update the lockfile.
 
 Run:
 

@@ -71,7 +71,7 @@ impl AccountRepository {
     }
 
     pub fn default_path() -> PathBuf {
-        ProjectDirs::from("dev", "prime", "Prime Valorant Manager")
+        ProjectDirs::from("dev", "prime", "prime")
             .map(|dirs| dirs.config_dir().join("accounts.json"))
             .unwrap_or_else(|| PathBuf::from("accounts.json"))
     }
