@@ -1090,11 +1090,13 @@ fn loadout_section<'a>(
 }
 
 fn loadout_card(gun: &LoadoutGunDisplay) -> Element<'_, Message> {
+    let skin_label = loadout_skin_label(&gun.skin.display_name);
+
     container(
         column![
             asset_image(gun.skin.cached_icon.as_ref(), 164.0),
             text(&gun.weapon.display_name).size(15).width(Length::Fill),
-            text(&gun.skin.display_name).size(14).width(Length::Fill)
+            text(skin_label).size(12).width(Length::Fill)
         ]
         .spacing(6),
     )
@@ -1102,6 +1104,28 @@ fn loadout_card(gun: &LoadoutGunDisplay) -> Element<'_, Message> {
     .width(Length::Fill)
     .style(iced::widget::container::bordered_box)
     .into()
+}
+
+fn loadout_skin_label(name: &str) -> String {
+    let mut label = name.trim();
+
+    while let Some(without_close) = label.strip_suffix(')') {
+        let Some(open_index) = without_close.rfind('(') else {
+            break;
+        };
+        let parenthetical = without_close[open_index + 1..].trim();
+
+        if !parenthetical
+            .get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("variant"))
+        {
+            break;
+        }
+
+        label = without_close[..open_index].trim_end();
+    }
+
+    label.to_string()
 }
 
 fn rarity_card_style(theme: &Theme, rarity: Option<&str>) -> iced::widget::container::Style {
@@ -2671,6 +2695,22 @@ mod tests {
         assert_eq!(format_duration(3_661), "1h 1m 1s");
         assert_eq!(format_duration(61), "1m 1s");
         assert_eq!(format_duration(5), "5s");
+    }
+
+    #[test]
+    fn loadout_skin_label_removes_variant_suffix_but_keeps_level() {
+        assert_eq!(
+            loadout_skin_label("Prime Vandal Level 4 (Variant 1 Blue)"),
+            "Prime Vandal Level 4"
+        );
+        assert_eq!(
+            loadout_skin_label("Prime Vandal Level 4"),
+            "Prime Vandal Level 4"
+        );
+        assert_eq!(
+            loadout_skin_label("Prime Vandal (Upgraded)"),
+            "Prime Vandal (Upgraded)"
+        );
     }
 
     #[test]
