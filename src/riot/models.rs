@@ -79,6 +79,10 @@ pub struct StoreBundle {
     pub currency_id: String,
     #[serde(default)]
     pub items: Vec<BundleItem>,
+    #[serde(default)]
+    pub total_base_cost: Option<HashMap<String, i64>>,
+    #[serde(default)]
+    pub total_discounted_cost: Option<HashMap<String, i64>>,
     pub duration_remaining_in_seconds: i64,
 }
 
@@ -345,7 +349,10 @@ mod tests {
         let storefront: StorefrontResponse =
             serde_json::from_value(json).expect("storefront response");
 
-        assert_eq!(storefront.featured_bundle.bundle.items[0].discount_percent, 40);
+        assert_eq!(
+            storefront.featured_bundle.bundle.items[0].discount_percent,
+            40
+        );
         assert_eq!(
             storefront.bonus_store.unwrap().bonus_store_offers[0].discount_percent,
             35

@@ -5,6 +5,7 @@ use thiserror::Error;
 
 pub const WEAPONS_URL: &str = "https://valorant-api.com/v1/weapons";
 pub const WEAPON_SKINS_URL: &str = "https://valorant-api.com/v1/weapons/skins";
+pub const BUNDLES_URL: &str = "https://valorant-api.com/v1/bundles";
 pub const CONTENT_TIERS_URL: &str = "https://valorant-api.com/v1/contenttiers";
 pub const CURRENCIES_URL: &str = "https://valorant-api.com/v1/currencies";
 pub const VERSION_URL: &str = "https://valorant-api.com/v1/version";
@@ -61,6 +62,19 @@ impl ValorantContentApi {
             .await?;
 
         Ok(CurrencyCatalog::from_currencies(response.data))
+    }
+
+    pub async fn bundle_catalog(&self) -> Result<BundleCatalog, ContentError> {
+        let response: ApiResponse<Vec<Bundle>> = self
+            .client
+            .get(BUNDLES_URL)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        Ok(BundleCatalog::from_bundles(response.data))
     }
 
     pub async fn content_tier_catalog(&self) -> Result<ContentTierCatalog, ContentError> {
@@ -298,6 +312,58 @@ impl ResolvedCurrency {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BundleCatalog {
+    by_uuid: HashMap<String, ResolvedBundle>,
+}
+
+impl BundleCatalog {
+    pub fn from_bundles(bundles: Vec<Bundle>) -> Self {
+        let by_uuid = bundles
+            .into_iter()
+            .map(|bundle| {
+                (
+                    normalize_uuid(&bundle.uuid),
+                    ResolvedBundle {
+                        uuid: bundle.uuid,
+                        display_name: bundle.display_name,
+                        display_icon: bundle
+                            .vertical_promo_image
+                            .or(bundle.display_icon2)
+                            .or(bundle.display_icon),
+                    },
+                )
+            })
+            .collect();
+
+        Self { by_uuid }
+    }
+
+    pub fn resolve(&self, uuid: &str) -> ResolvedBundle {
+        self.by_uuid
+            .get(&normalize_uuid(uuid))
+            .cloned()
+            .unwrap_or_else(|| ResolvedBundle::unknown(uuid))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedBundle {
+    pub uuid: String,
+    pub display_name: String,
+    pub display_icon: Option<String>,
+}
+
+impl ResolvedBundle {
+    pub fn unknown(uuid: &str) -> Self {
+        Self {
+            uuid: uuid.to_string(),
+            display_name: uuid.to_string(),
+            display_icon: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 struct ApiResponse<T> {
     data: T,
@@ -367,6 +433,19 @@ pub struct ContentTier {
     pub uuid: String,
     #[serde(rename = "displayName")]
     pub display_name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct Bundle {
+    pub uuid: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    #[serde(rename = "displayIcon")]
+    pub display_icon: Option<String>,
+    #[serde(rename = "displayIcon2")]
+    pub display_icon2: Option<String>,
+    #[serde(rename = "verticalPromoImage")]
+    pub vertical_promo_image: Option<String>,
 }
 
 fn normalize_uuid(uuid: &str) -> String {
@@ -489,6 +568,23 @@ mod tests {
             catalog.resolve("vp-uuid").display_icon.as_deref(),
             Some("vp-icon")
         );
+        assert_eq!(catalog.resolve("missing").display_name, "missing");
+    }
+
+    #[test]
+    fn resolves_bundle_ids_to_display_names_and_promo_images() {
+        let catalog = BundleCatalog::from_bundles(vec![Bundle {
+            uuid: "bundle-uuid".to_string(),
+            display_name: "Give Back Bundle".to_string(),
+            display_icon: Some("display-icon".to_string()),
+            display_icon2: Some("display-icon-2".to_string()),
+            vertical_promo_image: Some("vertical-promo".to_string()),
+        }]);
+
+        let bundle = catalog.resolve("BUNDLE-UUID");
+
+        assert_eq!(bundle.display_name, "Give Back Bundle");
+        assert_eq!(bundle.display_icon.as_deref(), Some("vertical-promo"));
         assert_eq!(catalog.resolve("missing").display_name, "missing");
     }
 

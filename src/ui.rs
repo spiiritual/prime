@@ -5,7 +5,7 @@ use iced::widget::image::Handle;
 use iced::widget::{
     button, column, container, image, pick_list, row, scrollable, text, text_input,
 };
-use iced::{ContentFit, Element, Length, Task, Theme};
+use iced::{Color, ContentFit, Element, Length, Subscription, Task, Theme};
 
 use crate::account::LauncherSessionBackup;
 use crate::account::{AccountId, AccountProfile, AuthSession, Shard};
@@ -16,8 +16,8 @@ use crate::launch::{
 use crate::riot::auth::parse_redirect_tokens;
 use crate::riot::client::{ApiCredentials, RiotApi};
 use crate::riot::content::{
-    CurrencyCatalog, ResolvedCurrency, ResolvedSkin, ResolvedWeapon, SkinCatalog,
-    ValorantContentApi, WeaponCatalog,
+    BundleCatalog, CurrencyCatalog, ResolvedBundle, ResolvedCurrency, ResolvedSkin, ResolvedWeapon,
+    SkinCatalog, ValorantContentApi, WeaponCatalog,
 };
 use crate::riot::launcher_session::{
     CapturedLauncherSession, LauncherSessionError, apply_launcher_session_backup,
@@ -25,7 +25,7 @@ use crate::riot::launcher_session::{
     read_backup_cookies,
 };
 use crate::riot::models::{
-    BonusStoreOffer, BundleItem, PlayerInfoResponse, PlayerLoadoutResponse, StoreOffer,
+    BonusStoreOffer, PlayerInfoResponse, PlayerLoadoutResponse, StoreBundle, StoreOffer,
     StorefrontResponse,
 };
 use crate::storage::{AccountRepository, StoredState};
@@ -34,6 +34,7 @@ pub fn run() -> iced::Result {
     iced::application(PrimeApp::boot, PrimeApp::update, PrimeApp::view)
         .title(app_title)
         .theme(app_theme)
+        .subscription(app_subscription)
         .window_size((1100.0, 720.0))
         .run()
 }
@@ -44,6 +45,14 @@ fn app_title(_: &PrimeApp) -> String {
 
 fn app_theme(_: &PrimeApp) -> Theme {
     Theme::Dark
+}
+
+fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
+    if app.store_summary.is_some() {
+        iced::time::every(SHOP_RESET_CHECK_INTERVAL).map(Message::ShopTimerTick)
+    } else {
+        Subscription::none()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +74,7 @@ struct PrimeApp {
     store_loading: bool,
     loadout_loading: bool,
     image_cache_size_bytes: u64,
+    now: iced::time::Instant,
 }
 
 impl PrimeApp {
@@ -93,6 +103,7 @@ impl PrimeApp {
                 store_loading: false,
                 loadout_loading: false,
                 image_cache_size_bytes: 0,
+                now: iced::time::Instant::now(),
             },
             Task::batch([
                 Task::perform(
@@ -399,9 +410,9 @@ impl PrimeApp {
 
                 Task::none()
             }
-            Message::FetchStorefront => self.fetch_storefront_task(),
             Message::StorefrontLoaded(result) => {
                 self.store_loading = false;
+                self.now = iced::time::Instant::now();
 
                 match result {
                     Ok(result) => {
@@ -416,12 +427,13 @@ impl PrimeApp {
                             return Task::none();
                         }
 
+                        let bundle_count = result.summary.featured_bundles.len();
                         let daily_count = result.summary.daily_offers.len();
                         let night_market_count = result.summary.night_market_offers.len();
 
                         self.status = format!(
-                            "Loaded {} daily offer(s) and {} night market offer(s)",
-                            daily_count, night_market_count
+                            "Loaded {} featured bundle(s), {} daily offer(s), and {} night market offer(s)",
+                            bundle_count, daily_count, night_market_count
                         );
                         if self.state.selected_account == Some(result.account_id) {
                             self.store_summary = Some(result.summary);
@@ -432,6 +444,25 @@ impl PrimeApp {
                     Err(error) => {
                         self.status = format!("Store check failed: {error}");
                     }
+                }
+
+                Task::none()
+            }
+            Message::ShopTimerTick(now) => {
+                self.now = now;
+
+                if self.store_loading {
+                    return Task::none();
+                }
+
+                if self
+                    .store_summary
+                    .as_ref()
+                    .is_some_and(|summary| summary.is_expired_at(now))
+                {
+                    self.store_summary = None;
+                    self.status = "Shop reset reached; loading updated shop".to_string();
+                    return self.fetch_storefront_task();
                 }
 
                 Task::none()
@@ -741,35 +772,37 @@ impl PrimeApp {
         let loading_label = if self.store_loading {
             "Loading shop..."
         } else {
-            "Shop loads automatically for the selected account."
+            "Shop loads automatically and updates when the reset timer expires."
         };
-        let mut content = column![
-            text(loading_label),
-            button("Refresh shop").on_press(Message::FetchStorefront)
-        ]
-        .spacing(12);
+        let mut content = column![text(loading_label)].spacing(12).width(Length::Fill);
 
         if let Some(summary) = &self.store_summary {
             content = content
                 .push(text(format!(
-                    "Featured bundle expires in {}",
-                    format_duration(summary.bundle_remaining_seconds)
+                    "Featured bundles expire in {}",
+                    format_duration(summary.bundle_remaining_seconds_at(self.now))
                 )))
-                .push(offer_row(&summary.featured_bundle_items))
+                .push(bundle_row(&summary.featured_bundles))
                 .push(text(format!(
-                    "Daily offers expire in {}",
-                    format_duration(summary.daily_remaining_seconds)
+                    "Daily offers reset in {}",
+                    format_duration(summary.daily_remaining_seconds_at(self.now))
                 )))
                 .push(offer_row(&summary.daily_offers));
 
             if !summary.night_market_offers.is_empty() {
                 content = content
-                    .push(text("Night Market"))
+                    .push(text(format!(
+                        "Night Market expires in {}",
+                        format_duration(summary.night_market_remaining_seconds_at(self.now))
+                    )))
                     .push(offer_row(&summary.night_market_offers));
             }
         }
 
-        content.into()
+        container(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 
     fn loadout_tab(&self) -> Element<'_, Message> {
@@ -782,7 +815,8 @@ impl PrimeApp {
             text(loading_label),
             button("Refresh loadout").on_press(Message::FetchLoadout)
         ]
-        .spacing(12);
+        .spacing(12)
+        .width(Length::Fill);
 
         if let Some(summary) = &self.loadout_summary {
             content = content.push(text(format!("Account level {}", summary.account_level)));
@@ -809,7 +843,10 @@ impl PrimeApp {
             }
         }
 
-        content.into()
+        container(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 
     fn settings_tab(&self) -> Element<'_, Message> {
@@ -930,7 +967,7 @@ fn offer_row<'a>(offers: &'a [StoreOfferDisplay]) -> Element<'a, Message> {
         return text("No offers available").into();
     }
 
-    let mut cards = iced::widget::Row::new().spacing(10);
+    let mut cards = iced::widget::Row::new().spacing(10).width(Length::Fill);
 
     for offer in offers {
         cards = cards.push(store_offer_card(offer));
@@ -939,45 +976,81 @@ fn offer_row<'a>(offers: &'a [StoreOfferDisplay]) -> Element<'a, Message> {
     cards.into()
 }
 
+fn bundle_row<'a>(bundles: &'a [StoreBundleDisplay]) -> Element<'a, Message> {
+    if bundles.is_empty() {
+        return text("No featured bundles available").into();
+    }
+
+    let mut cards = iced::widget::Row::new().spacing(12).width(Length::Fill);
+
+    for bundle in bundles {
+        cards = cards.push(store_bundle_card(bundle));
+    }
+
+    cards.into()
+}
+
+fn store_bundle_card(bundle: &StoreBundleDisplay) -> Element<'_, Message> {
+    let price = bundle
+        .price
+        .as_ref()
+        .map(OfferPrice::label)
+        .unwrap_or_else(|| "Price unavailable".to_string());
+    let rarity_for_style = bundle.rarity.clone();
+    let mut details = iced::widget::Column::new()
+        .spacing(7)
+        .push(asset_image(bundle.bundle.cached_icon.as_ref(), 172.0))
+        .push(text(&bundle.bundle.display_name).size(20))
+        .push(text(bundle.item_count_label()).size(14));
+
+    if let Some(rarity) = &bundle.rarity {
+        details = details.push(text(rarity.clone()).size(13));
+    }
+
+    details = details.push(text(price).size(16));
+
+    container(details)
+        .padding(14)
+        .width(Length::Fill)
+        .style(move |theme| rarity_card_style(theme, rarity_for_style.as_deref()))
+        .into()
+}
+
 fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {
     let price = offer
         .price
         .as_ref()
         .map(OfferPrice::label)
         .unwrap_or_else(|| "Price unavailable".to_string());
-    let rarity = offer
+    let rarity_for_style = offer.skin.rarity.clone();
+    let rarity_label = offer
         .skin
         .rarity
-        .as_deref()
-        .unwrap_or("Unknown rarity")
-        .to_string();
-    let discount = if offer.discount_percent > 0 {
-        format!("{}% off", offer.discount_percent)
-    } else {
-        String::new()
-    };
+        .clone()
+        .unwrap_or_else(|| "Unknown rarity".to_string());
+    let mut details = iced::widget::Column::new()
+        .spacing(6)
+        .push(asset_image(offer.skin.cached_icon.as_ref(), 118.0))
+        .push(text(&offer.skin.display_name).size(16))
+        .push(text(rarity_label).size(13))
+        .push(text(price).size(14));
 
-    container(
-        column![
-            asset_image(offer.skin.cached_icon.as_ref(), 118.0),
-            text(&offer.skin.display_name).size(16),
-            text(rarity).size(13),
-            text(price).size(14),
-            text(discount).size(13)
-        ]
-        .spacing(6),
-    )
-    .padding(10)
-    .width(160)
-    .style(iced::widget::container::bordered_box)
-    .into()
+    if offer.discount_percent > 0 {
+        details = details.push(text(format!("{}% off", offer.discount_percent)).size(13));
+    }
+
+    container(details)
+        .padding(10)
+        .width(Length::Fill)
+        .style(move |theme| rarity_card_style(theme, rarity_for_style.as_deref()))
+        .into()
 }
 
 fn loadout_section<'a>(
     category: &'static str,
     guns: impl IntoIterator<Item = &'a LoadoutGunDisplay>,
 ) -> Option<Element<'a, Message>> {
-    let mut cards = iced::widget::Row::new().spacing(10);
+    let mut cards = iced::widget::Row::new().spacing(10).width(Length::Fill);
     let mut count = 0;
 
     for gun in guns {
@@ -991,17 +1064,60 @@ fn loadout_section<'a>(
 fn loadout_card(gun: &LoadoutGunDisplay) -> Element<'_, Message> {
     container(
         column![
-            asset_image(gun.weapon.cached_icon.as_ref(), 56.0),
+            asset_image(gun.skin.cached_icon.as_ref(), 108.0),
             text(&gun.weapon.display_name).size(15),
-            asset_image(gun.skin.cached_icon.as_ref(), 86.0),
             text(&gun.skin.display_name).size(14)
         ]
         .spacing(6),
     )
     .padding(10)
-    .width(150)
+    .width(Length::Fill)
     .style(iced::widget::container::bordered_box)
     .into()
+}
+
+fn rarity_card_style(theme: &Theme, rarity: Option<&str>) -> iced::widget::container::Style {
+    let mut style = iced::widget::container::bordered_box(theme);
+
+    if let Some((background, border)) = rarity_colors(rarity) {
+        style.background = Some(background.into());
+        style.border.color = border;
+    }
+
+    style
+}
+
+fn rarity_colors(rarity: Option<&str>) -> Option<(Color, Color)> {
+    let rarity = rarity?.to_ascii_lowercase();
+
+    if rarity.contains("exclusive") {
+        Some((
+            Color::from_rgba8(86, 42, 42, 0.72),
+            Color::from_rgb8(214, 92, 92),
+        ))
+    } else if rarity.contains("ultra") {
+        Some((
+            Color::from_rgba8(78, 58, 32, 0.72),
+            Color::from_rgb8(218, 154, 72),
+        ))
+    } else if rarity.contains("premium") {
+        Some((
+            Color::from_rgba8(58, 48, 82, 0.72),
+            Color::from_rgb8(166, 132, 224),
+        ))
+    } else if rarity.contains("deluxe") {
+        Some((
+            Color::from_rgba8(34, 55, 82, 0.72),
+            Color::from_rgb8(91, 157, 218),
+        ))
+    } else if rarity.contains("select") {
+        Some((
+            Color::from_rgba8(32, 68, 55, 0.72),
+            Color::from_rgb8(86, 184, 139),
+        ))
+    } else {
+        None
+    }
 }
 
 fn asset_image(path: Option<&PathBuf>, height: f32) -> Element<'_, Message> {
@@ -1078,8 +1194,8 @@ enum Message {
     LauncherSessionLoginStarted(Result<CapturedLauncherSession, String>),
     RefreshProfileIdentity,
     ProfileIdentityLoaded(Result<RefreshedProfileIdentity, String>),
-    FetchStorefront,
     StorefrontLoaded(Result<StorefrontResult, String>),
+    ShopTimerTick(iced::time::Instant),
     FetchLoadout,
     LoadoutLoaded(Result<LoadoutResult, String>),
     RiotClientPathChanged(String),
@@ -1125,6 +1241,7 @@ fn require_launcher_session(
 
 const LOGIN_CAPTURE_TIMEOUT: Duration = Duration::from_secs(600);
 const LOGIN_CAPTURE_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const SHOP_RESET_CHECK_INTERVAL: Duration = Duration::from_secs(30);
 
 async fn start_launcher_session_login(
     account_id: AccountId,
@@ -1325,10 +1442,12 @@ struct ApiIdentity {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StoreSummary {
-    featured_bundle_items: Vec<StoreOfferDisplay>,
+    featured_bundles: Vec<StoreBundleDisplay>,
     daily_offers: Vec<StoreOfferDisplay>,
     daily_remaining_seconds: i64,
     bundle_remaining_seconds: i64,
+    night_market_remaining_seconds: Option<i64>,
+    loaded_at: iced::time::Instant,
     night_market_offers: Vec<StoreOfferDisplay>,
 }
 
@@ -1336,15 +1455,44 @@ impl StoreSummary {
     fn from_response(
         response: StorefrontResponse,
         skins: &SkinCatalog,
+        bundles: &BundleCatalog,
         currencies: &CurrencyCatalog,
     ) -> Self {
-        let featured_bundle_items = response
-            .featured_bundle
-            .bundle
-            .items
-            .iter()
-            .map(|item| bundle_item_display(item, skins, currencies))
+        Self::from_response_at(
+            response,
+            skins,
+            bundles,
+            currencies,
+            iced::time::Instant::now(),
+        )
+    }
+
+    fn from_response_at(
+        response: StorefrontResponse,
+        skins: &SkinCatalog,
+        bundles: &BundleCatalog,
+        currencies: &CurrencyCatalog,
+        loaded_at: iced::time::Instant,
+    ) -> Self {
+        let featured_bundles = std::iter::once(&response.featured_bundle.bundle)
+            .chain(response.featured_bundle.bundles.iter())
+            .map(|bundle| store_bundle_display(bundle, skins, bundles, currencies))
             .collect();
+        let night_market_remaining_seconds = response
+            .bonus_store
+            .as_ref()
+            .map(|store| store.bonus_store_remaining_duration_in_seconds);
+        let night_market_offers = response
+            .bonus_store
+            .as_ref()
+            .map(|store| {
+                store
+                    .bonus_store_offers
+                    .iter()
+                    .map(|offer| bonus_store_offer_display(offer, skins, currencies))
+                    .collect()
+            })
+            .unwrap_or_default();
         let daily_offers = response
             .skins_panel_layout
             .single_item_offers
@@ -1359,19 +1507,9 @@ impl StoreSummary {
                 store_offer_display(offer_id, matching_offer, 0, skins, currencies)
             })
             .collect();
-        let night_market_offers = response
-            .bonus_store
-            .map(|store| {
-                store
-                    .bonus_store_offers
-                    .iter()
-                    .map(|offer| bonus_store_offer_display(offer, skins, currencies))
-                    .collect()
-            })
-            .unwrap_or_default();
 
         Self {
-            featured_bundle_items,
+            featured_bundles,
             daily_offers,
             daily_remaining_seconds: response
                 .skins_panel_layout
@@ -1379,9 +1517,48 @@ impl StoreSummary {
             bundle_remaining_seconds: response
                 .featured_bundle
                 .bundle_remaining_duration_in_seconds,
+            night_market_remaining_seconds,
+            loaded_at,
             night_market_offers,
         }
     }
+
+    fn daily_remaining_seconds_at(&self, now: iced::time::Instant) -> i64 {
+        remaining_seconds_at(self.daily_remaining_seconds, self.loaded_at, now)
+    }
+
+    fn bundle_remaining_seconds_at(&self, now: iced::time::Instant) -> i64 {
+        remaining_seconds_at(self.bundle_remaining_seconds, self.loaded_at, now)
+    }
+
+    fn night_market_remaining_seconds_at(&self, now: iced::time::Instant) -> i64 {
+        self.night_market_remaining_seconds
+            .map(|seconds| remaining_seconds_at(seconds, self.loaded_at, now))
+            .unwrap_or(0)
+    }
+
+    fn is_expired_at(&self, now: iced::time::Instant) -> bool {
+        let section_expired =
+            self.daily_remaining_seconds_at(now) == 0 || self.bundle_remaining_seconds_at(now) == 0;
+        let night_market_expired = self
+            .night_market_remaining_seconds
+            .is_some_and(|_| self.night_market_remaining_seconds_at(now) == 0);
+
+        section_expired || night_market_expired
+    }
+}
+
+fn remaining_seconds_at(
+    original_seconds: i64,
+    loaded_at: iced::time::Instant,
+    now: iced::time::Instant,
+) -> i64 {
+    let elapsed_seconds = now
+        .checked_duration_since(loaded_at)
+        .map(|duration| i64::try_from(duration.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or(0);
+
+    original_seconds.saturating_sub(elapsed_seconds)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1404,6 +1581,35 @@ impl StoreOfferDisplay {
             label.push_str(&format!(", {}% off", self.discount_percent));
         }
 
+        label
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct StoreBundleDisplay {
+    bundle: BundleDisplay,
+    price: Option<OfferPrice>,
+    item_count: i64,
+    rarity: Option<String>,
+}
+
+impl StoreBundleDisplay {
+    fn item_count_label(&self) -> String {
+        match self.item_count {
+            1 => "1 item".to_string(),
+            count => format!("{count} items"),
+        }
+    }
+
+    #[cfg(test)]
+    fn label(&self) -> String {
+        let mut label = self.bundle.display_name.clone();
+
+        if let Some(price) = &self.price {
+            label.push_str(&format!(" ({})", price.label()));
+        }
+
+        label.push_str(&format!(", {}", self.item_count_label()));
         label
     }
 }
@@ -1433,6 +1639,25 @@ impl From<ResolvedCurrency> for CurrencyDisplay {
             uuid: currency.uuid,
             display_name: currency.display_name,
             display_icon: currency.display_icon,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BundleDisplay {
+    uuid: String,
+    display_name: String,
+    display_icon: Option<String>,
+    cached_icon: Option<PathBuf>,
+}
+
+impl From<ResolvedBundle> for BundleDisplay {
+    fn from(bundle: ResolvedBundle) -> Self {
+        Self {
+            uuid: bundle.uuid,
+            display_name: bundle.display_name,
+            display_icon: bundle.display_icon,
+            cached_icon: None,
         }
     }
 }
@@ -1483,22 +1708,105 @@ fn bonus_store_offer_display(
     }
 }
 
-fn bundle_item_display(
-    item: &BundleItem,
+fn store_bundle_display(
+    bundle: &StoreBundle,
     skins: &SkinCatalog,
+    bundles: &BundleCatalog,
     currencies: &CurrencyCatalog,
-) -> StoreOfferDisplay {
-    StoreOfferDisplay {
-        skin: SkinDisplay::from(skins.resolve(&item.item.item_id)),
-        price: Some(OfferPrice {
-            amount: if item.discounted_price > 0 {
+) -> StoreBundleDisplay {
+    let direct = bundles.resolve(&bundle.data_asset_id);
+    let resolved = if direct.display_name != bundle.data_asset_id {
+        direct
+    } else {
+        bundles.resolve(&bundle.id)
+    };
+    let rarity = strongest_bundle_rarity(bundle, skins);
+    let item_count = bundle
+        .items
+        .iter()
+        .map(|item| item.item.amount.max(1))
+        .sum::<i64>();
+
+    StoreBundleDisplay {
+        bundle: BundleDisplay::from(resolved),
+        price: bundle_price(bundle, currencies),
+        item_count,
+        rarity,
+    }
+}
+
+fn bundle_price(bundle: &StoreBundle, currencies: &CurrencyCatalog) -> Option<OfferPrice> {
+    bundle
+        .total_discounted_cost
+        .as_ref()
+        .and_then(|costs| offer_price(costs, currencies))
+        .or_else(|| {
+            bundle
+                .total_base_cost
+                .as_ref()
+                .and_then(|costs| offer_price(costs, currencies))
+        })
+        .or_else(|| summed_bundle_item_price(bundle, currencies))
+}
+
+fn summed_bundle_item_price(
+    bundle: &StoreBundle,
+    currencies: &CurrencyCatalog,
+) -> Option<OfferPrice> {
+    let currency_id = bundle
+        .currency_id
+        .trim()
+        .is_empty()
+        .then(|| bundle.items.first().map(|item| item.currency_id.as_str()))
+        .flatten()
+        .unwrap_or(bundle.currency_id.as_str());
+
+    if currency_id.trim().is_empty() || bundle.items.is_empty() {
+        return None;
+    }
+
+    let amount = bundle
+        .items
+        .iter()
+        .filter(|item| item.currency_id.eq_ignore_ascii_case(currency_id))
+        .map(|item| {
+            if item.discounted_price > 0 {
                 item.discounted_price
             } else {
                 item.base_price
-            },
-            currency: CurrencyDisplay::from(currencies.resolve(&item.currency_id)),
-        }),
-        discount_percent: item.discount_percent,
+            }
+        })
+        .sum();
+
+    Some(OfferPrice {
+        amount,
+        currency: CurrencyDisplay::from(currencies.resolve(currency_id)),
+    })
+}
+
+fn strongest_bundle_rarity(bundle: &StoreBundle, skins: &SkinCatalog) -> Option<String> {
+    bundle
+        .items
+        .iter()
+        .filter_map(|item| skins.resolve(&item.item.item_id).rarity)
+        .max_by_key(|rarity| rarity_rank(rarity))
+}
+
+fn rarity_rank(rarity: &str) -> usize {
+    let rarity = rarity.to_ascii_lowercase();
+
+    if rarity.contains("exclusive") {
+        5
+    } else if rarity.contains("ultra") {
+        4
+    } else if rarity.contains("premium") {
+        3
+    } else if rarity.contains("deluxe") {
+        2
+    } else if rarity.contains("select") {
+        1
+    } else {
+        0
     }
 }
 
@@ -1532,9 +1840,11 @@ impl LoadoutSummary {
             .into_iter()
             .map(|gun| {
                 let weapon = WeaponDisplay::from(weapons.resolve(&gun.id));
-                let skin = SkinDisplay::from(resolve_first(
+                let skin = SkinDisplay::from(resolve_current_skin(
                     skins,
-                    [&gun.skin_id, &gun.skin_level_id, &gun.chroma_id],
+                    &gun.skin_id,
+                    &gun.skin_level_id,
+                    &gun.chroma_id,
                 ));
 
                 LoadoutGunDisplay { weapon, skin }
@@ -1653,7 +1963,12 @@ async fn fetch_storefront(
         .storefront(&resolved.credentials)
         .await
         .map(|response| {
-            StoreSummary::from_response(response, &metadata.skins, &metadata.currencies)
+            StoreSummary::from_response(
+                response,
+                &metadata.skins,
+                &metadata.bundles,
+                &metadata.currencies,
+            )
         })
         .map_err(|error| error.to_string())?;
     cache_store_images(&mut summary, &image_cache).await;
@@ -1723,6 +2038,7 @@ async fn fetch_profile_identity(
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct StoreMetadata {
     skins: SkinCatalog,
+    bundles: BundleCatalog,
     currencies: CurrencyCatalog,
 }
 
@@ -1730,6 +2046,7 @@ async fn fetch_store_metadata() -> StoreMetadata {
     match ValorantContentApi::new() {
         Ok(api) => StoreMetadata {
             skins: api.skin_catalog().await.unwrap_or_default(),
+            bundles: api.bundle_catalog().await.unwrap_or_default(),
             currencies: api.currency_catalog().await.unwrap_or_default(),
         },
         Err(_) => StoreMetadata::default(),
@@ -1737,10 +2054,13 @@ async fn fetch_store_metadata() -> StoreMetadata {
 }
 
 async fn cache_store_images(summary: &mut StoreSummary, image_cache: &ImageCache) {
+    for bundle in &mut summary.featured_bundles {
+        cache_bundle_icon(&mut bundle.bundle, image_cache).await;
+    }
+
     for offer in summary
-        .featured_bundle_items
+        .daily_offers
         .iter_mut()
-        .chain(summary.daily_offers.iter_mut())
         .chain(summary.night_market_offers.iter_mut())
     {
         cache_skin_icon(&mut offer.skin, image_cache).await;
@@ -1773,6 +2093,17 @@ async fn cache_weapon_icon(weapon: &mut WeaponDisplay, image_cache: &ImageCache)
         .ok();
 }
 
+async fn cache_bundle_icon(bundle: &mut BundleDisplay, image_cache: &ImageCache) {
+    let Some(url) = bundle.display_icon.as_ref() else {
+        return;
+    };
+
+    bundle.cached_icon = image_cache
+        .cache_url("bundles", &bundle.uuid, url)
+        .await
+        .ok();
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct LoadoutMetadata {
     skins: SkinCatalog,
@@ -1797,24 +2128,29 @@ async fn fetch_current_client_version() -> Result<String, String> {
         .map_err(|error| error.to_string())
 }
 
-fn resolve_first<'a>(
+fn resolve_current_skin(
     catalog: &SkinCatalog,
-    ids: impl IntoIterator<Item = &'a String>,
+    skin_id: &str,
+    skin_level_id: &str,
+    chroma_id: &str,
 ) -> ResolvedSkin {
-    let ids = ids.into_iter().collect::<Vec<_>>();
+    let mut fallback = None;
 
-    for id in &ids {
-        let raw = id.as_str();
-        let skin = catalog.resolve(raw);
+    for id in [chroma_id, skin_level_id, skin_id] {
+        let skin = catalog.resolve(id);
 
-        if skin.display_name != raw {
+        if skin.display_name == id {
+            continue;
+        }
+
+        if skin.display_icon.is_some() {
             return skin;
         }
+
+        fallback.get_or_insert(skin);
     }
 
-    ids.first()
-        .map(|id| catalog.resolve(id.as_str()))
-        .unwrap_or_else(|| ResolvedSkin::unknown(""))
+    fallback.unwrap_or_else(|| catalog.resolve(skin_id))
 }
 
 async fn resolve_credentials(
@@ -2069,15 +2405,22 @@ mod tests {
             display_name: "VP".to_string(),
             display_icon: None,
         }]);
-        let summary = StoreSummary::from_response(response, &catalog, &currencies);
+        let bundles = BundleCatalog::from_bundles(vec![crate::riot::content::Bundle {
+            uuid: "asset".to_string(),
+            display_name: "Give Back Bundle".to_string(),
+            display_icon: Some("bundle-icon".to_string()),
+            display_icon2: None,
+            vertical_promo_image: None,
+        }]);
+        let summary = StoreSummary::from_response(response, &catalog, &bundles, &currencies);
 
         assert_eq!(
             summary
-                .featured_bundle_items
+                .featured_bundles
                 .iter()
-                .map(StoreOfferDisplay::label)
+                .map(StoreBundleDisplay::label)
                 .collect::<Vec<_>>(),
-            ["Prime Vandal Level 1 (1420 VP), 20% off"]
+            ["Give Back Bundle (1420 VP), 1 item"]
         );
         assert_eq!(
             summary
@@ -2089,6 +2432,7 @@ mod tests {
         );
         assert_eq!(summary.daily_remaining_seconds, 30);
         assert_eq!(summary.bundle_remaining_seconds, 20);
+        assert_eq!(summary.night_market_remaining_seconds, Some(40));
         assert_eq!(
             summary
                 .night_market_offers
@@ -2097,6 +2441,23 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["Prime Vandal Level 1 (1200 VP), 10% off"]
         );
+    }
+
+    #[test]
+    fn store_summary_expires_at_earliest_shop_section_reset() {
+        let loaded_at = iced::time::Instant::now();
+        let summary = StoreSummary {
+            featured_bundles: vec![],
+            daily_offers: vec![],
+            daily_remaining_seconds: 30,
+            bundle_remaining_seconds: 20,
+            night_market_remaining_seconds: None,
+            loaded_at,
+            night_market_offers: vec![],
+        };
+
+        assert!(!summary.is_expired_at(loaded_at + Duration::from_secs(19)));
+        assert!(summary.is_expired_at(loaded_at + Duration::from_secs(20)));
     }
 
     #[test]
@@ -2139,6 +2500,61 @@ mod tests {
         let summary = LoadoutSummary::from_response(response, &catalog, &weapons, None);
 
         assert_eq!(summary.gun_skins[0].label(), "Vandal: Prime Vandal");
+    }
+
+    #[test]
+    fn loadout_summary_prefers_current_chroma_render() {
+        let response: PlayerLoadoutResponse = serde_json::from_value(serde_json::json!({
+            "Subject": "puuid",
+            "Version": 1,
+            "Guns": [{
+                "ID": "weapon",
+                "SkinID": "skin-a",
+                "SkinLevelID": "level-a",
+                "ChromaID": "chroma-a",
+                "Attachments": []
+            }],
+            "Sprays": [],
+            "Identity": {
+                "PlayerCardID": "card",
+                "PlayerTitleID": "title",
+                "AccountLevel": 42,
+                "PreferredLevelBorderID": "border",
+                "HideAccountLevel": false
+            },
+            "Incognito": false
+        }))
+        .expect("loadout");
+        let catalog = SkinCatalog::from_skins(vec![crate::riot::content::WeaponSkin {
+            uuid: "skin-a".to_string(),
+            display_name: "Prime Vandal".to_string(),
+            display_icon: Some("skin-icon".to_string()),
+            content_tier_uuid: None,
+            levels: vec![crate::riot::content::WeaponSkinLevel {
+                uuid: "level-a".to_string(),
+                display_name: "Prime Vandal Level 4".to_string(),
+                display_icon: None,
+            }],
+            chromas: vec![crate::riot::content::WeaponSkinChroma {
+                uuid: "chroma-a".to_string(),
+                display_name: "Prime Vandal Blue".to_string(),
+                display_icon: None,
+                full_render: Some("chroma-render".to_string()),
+            }],
+        }]);
+        let weapons = WeaponCatalog::from_weapons(vec![crate::riot::content::Weapon {
+            uuid: "weapon".to_string(),
+            display_name: "Vandal".to_string(),
+            display_icon: Some("weapon-icon".to_string()),
+        }]);
+
+        let summary = LoadoutSummary::from_response(response, &catalog, &weapons, None);
+
+        assert_eq!(summary.gun_skins[0].skin.uuid, "chroma-a");
+        assert_eq!(
+            summary.gun_skins[0].skin.display_icon.as_deref(),
+            Some("chroma-render")
+        );
     }
 
     #[test]
