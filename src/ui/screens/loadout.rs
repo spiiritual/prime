@@ -1,8 +1,8 @@
-use iced::widget::{button, column, container, grid, row, text};
+use iced::widget::{button, column, container, grid, progress_bar, row, text};
 use iced::{Color, Element, Length, Theme, border};
 
 use super::super::components::{asset_image, loading_line};
-use super::super::data::{LoadoutGunDisplay, weapon_category};
+use super::super::data::{BattlePassProgressDisplay, LoadoutGunDisplay, weapon_category};
 use super::super::{LoadoutTab, Message, PrimeApp};
 
 const LOADOUT_CATEGORIES: [&str; 8] = [
@@ -60,10 +60,7 @@ fn loadout_tab_button(app: &PrimeApp, tab: LoadoutTab) -> Element<'_, Message> {
 fn active_loadout_tab(app: &PrimeApp) -> Element<'_, Message> {
     match app.active_loadout_tab {
         LoadoutTab::Skins => skins_tab(app),
-        LoadoutTab::BattlePass => container(column![])
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into(),
+        LoadoutTab::BattlePass => battle_pass_tab(app),
     }
 }
 
@@ -85,6 +82,29 @@ fn skins_tab(app: &PrimeApp) -> Element<'_, Message> {
             ) {
                 content = content.push(section);
             }
+        }
+    }
+
+    container(content)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+fn battle_pass_tab(app: &PrimeApp) -> Element<'_, Message> {
+    let mut content = column![].spacing(12).width(Length::Fill);
+
+    if app.loadout_loading {
+        content = content.push(loading_line("Loading battle pass...", app.loading_frame));
+    }
+
+    if let Some(summary) = &app.loadout_summary {
+        if let Some(battle_pass) = &summary.battle_pass {
+            content = content.push(battle_pass_panel(battle_pass, app.now));
+        } else if let Some(error) = &summary.battle_pass_error {
+            content = content.push(text(format!("Battle pass progress unavailable: {error}")));
+        } else if !app.loadout_loading {
+            content = content.push(text("No battle pass progress loaded"));
         }
     }
 
@@ -149,4 +169,69 @@ fn loadout_card(gun: &LoadoutGunDisplay) -> Element<'_, Message> {
     .height(Length::Fill)
     .style(iced::widget::container::bordered_box)
     .into()
+}
+
+fn battle_pass_panel(
+    battle_pass: &BattlePassProgressDisplay,
+    now: iced::time::Instant,
+) -> Element<'_, Message> {
+    let remaining = battle_pass
+        .remaining_seconds_at(now)
+        .map(format_duration)
+        .unwrap_or_else(|| "unavailable".to_string());
+    let mut details = column![
+        text(battle_pass.title()).size(22),
+        progress_bar(0.0..=1.0, battle_pass.progress_fraction()),
+        row![
+            battle_pass_metric("Progress", battle_pass.tier_label()),
+            battle_pass_metric("Next tier", battle_pass.next_tier_label()),
+            battle_pass_metric("Time left", remaining),
+        ]
+        .spacing(18)
+        .width(Length::Fill),
+    ]
+    .spacing(12)
+    .width(Length::Fill);
+
+    if let Some(total_progress) = battle_pass.total_progress_label() {
+        details = details.push(text(total_progress).size(14));
+    }
+
+    if let Some(percent) = battle_pass.progress_percent_label() {
+        details = details.push(text(percent).size(14));
+    }
+
+    container(details)
+        .padding(14)
+        .width(Length::Fill)
+        .style(iced::widget::container::bordered_box)
+        .into()
+}
+
+fn battle_pass_metric(label: &'static str, value: String) -> Element<'static, Message> {
+    column![text(label).size(12), text(value).size(16)]
+        .spacing(4)
+        .width(Length::FillPortion(1))
+        .into()
+}
+
+fn format_duration(seconds: i64) -> String {
+    if seconds <= 0 {
+        return "soon".to_string();
+    }
+
+    let days = seconds / 86_400;
+    let hours = (seconds % 86_400) / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let seconds = seconds % 60;
+
+    if days > 0 {
+        format!("{days}d {hours}h {minutes}m")
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m {seconds}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
 }

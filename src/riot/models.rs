@@ -52,6 +52,49 @@ pub struct AccountXpProgress {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
+pub struct GameContentResponse {
+    #[serde(default, rename = "DisabledIDs")]
+    pub disabled_ids: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub seasons: Vec<GameContentSeason>,
+    #[serde(default)]
+    pub events: Vec<GameContentEvent>,
+}
+
+impl GameContentResponse {
+    pub fn active_act(&self) -> Option<&GameContentSeason> {
+        self.seasons
+            .iter()
+            .find(|season| season.is_active && season.season_type.eq_ignore_ascii_case("act"))
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct GameContentSeason {
+    #[serde(rename = "ID")]
+    pub id: String,
+    pub name: String,
+    #[serde(rename = "Type")]
+    pub season_type: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub is_active: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct GameContentEvent {
+    #[serde(rename = "ID")]
+    pub id: String,
+    pub name: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub is_active: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 pub struct PlayerMmrResponse {
     pub version: i64,
     pub subject: String,
@@ -98,6 +141,52 @@ pub struct CompetitiveUpdate {
     pub tier_after_update: i64,
     #[serde(default)]
     pub ranked_rating_after_update: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct ContractsResponse {
+    pub version: i64,
+    pub subject: String,
+    #[serde(default)]
+    pub contracts: Vec<PlayerContract>,
+    #[serde(default)]
+    pub active_special_contract: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct PlayerContract {
+    #[serde(default, rename = "ContractDefinitionID")]
+    pub contract_definition_id: String,
+    #[serde(default)]
+    pub contract_progression: ContractProgression,
+    #[serde(default)]
+    pub progression_level_reached: i64,
+    #[serde(default)]
+    pub progression_towards_next_level: i64,
+    #[serde(default)]
+    pub progression_completed: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct ContractProgression {
+    #[serde(default)]
+    pub total_progression_earned: i64,
+    #[serde(default)]
+    pub total_progression_earned_version: i64,
+    #[serde(default)]
+    pub highest_rewarded_level: HashMap<String, ContractRewardedLevel>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct ContractRewardedLevel {
+    #[serde(default)]
+    pub amount: i64,
+    #[serde(default)]
+    pub version: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -389,6 +478,74 @@ mod tests {
             1250
         );
         assert_eq!(wallet.balances["e59aa87c-4cbf-517a-5983-6e81511be9b7"], 40);
+    }
+
+    #[test]
+    fn deserializes_game_content_active_act() {
+        let json = serde_json::json!({
+            "DisabledIDs": [],
+            "Seasons": [{
+                "ID": "episode",
+                "Name": "Episode 11",
+                "Type": "episode",
+                "StartTime": "2026-01-01T00:00:00Z",
+                "EndTime": "2026-12-31T00:00:00Z",
+                "IsActive": true
+            }, {
+                "ID": "act",
+                "Name": "Act 3",
+                "Type": "act",
+                "StartTime": "2026-05-01T00:00:00Z",
+                "EndTime": "2026-06-24T13:00:00Z",
+                "IsActive": true
+            }],
+            "Events": []
+        });
+
+        let content: GameContentResponse = serde_json::from_value(json).expect("content");
+
+        assert_eq!(
+            content.active_act().map(|act| act.name.as_str()),
+            Some("Act 3")
+        );
+        assert_eq!(
+            content.active_act().map(|act| act.end_time.as_str()),
+            Some("2026-06-24T13:00:00Z")
+        );
+    }
+
+    #[test]
+    fn deserializes_contract_progress() {
+        let json = serde_json::json!({
+            "Version": 1,
+            "Subject": "puuid",
+            "Contracts": [{
+                "ContractDefinitionID": "battle-pass",
+                "ContractProgression": {
+                    "TotalProgressionEarned": 123456,
+                    "TotalProgressionEarnedVersion": 7,
+                    "HighestRewardedLevel": {
+                        "0": {"Amount": 10, "Version": 7}
+                    }
+                },
+                "ProgressionLevelReached": 12,
+                "ProgressionTowardsNextLevel": 3456,
+                "ProgressionCompleted": false
+            }],
+            "ActiveSpecialContract": "special"
+        });
+
+        let contracts: ContractsResponse = serde_json::from_value(json).expect("contracts");
+
+        assert_eq!(contracts.subject, "puuid");
+        assert_eq!(contracts.contracts[0].contract_definition_id, "battle-pass");
+        assert_eq!(
+            contracts.contracts[0]
+                .contract_progression
+                .total_progression_earned,
+            123456
+        );
+        assert_eq!(contracts.contracts[0].progression_level_reached, 12);
     }
 
     #[test]

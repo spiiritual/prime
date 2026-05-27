@@ -620,6 +620,7 @@ impl PrimeApp {
             }
             Message::LoadoutLoaded(result) => {
                 self.loadout_loading = false;
+                self.now = iced::time::Instant::now();
 
                 match result {
                     Ok(result) => {
@@ -635,8 +636,16 @@ impl PrimeApp {
                         }
 
                         let gun_count = result.summary.gun_skins.len();
+                        let battle_pass_status = if result.summary.battle_pass.is_some() {
+                            " and battle pass progress"
+                        } else {
+                            ""
+                        };
 
-                        self.status = format!("Loaded loadout with {} gun skin(s)", gun_count);
+                        self.status = format!(
+                            "Loaded loadout with {} gun skin(s){}",
+                            gun_count, battle_pass_status
+                        );
                         if self.state.selected_account == Some(result.account_id) {
                             self.loadout_summary = Some(result.summary);
                         }

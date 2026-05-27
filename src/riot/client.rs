@@ -6,12 +6,13 @@ use crate::account::Shard;
 use super::auth::{AuthParseError, COOKIE_REAUTH_URL, RedirectTokens, parse_redirect_tokens};
 use super::endpoints::{
     CLIENT_PLATFORM, ENTITLEMENTS_URL, HEADER_CLIENT_PLATFORM, HEADER_CLIENT_VERSION,
-    HEADER_ENTITLEMENTS, PLAYER_INFO_URL, RIOT_GEO_URL, account_xp_url, player_loadout_url,
-    player_mmr_url, storefront_url, wallet_url,
+    HEADER_ENTITLEMENTS, PLAYER_INFO_URL, RIOT_GEO_URL, account_xp_url, content_url, contracts_url,
+    player_loadout_url, player_mmr_url, storefront_url, wallet_url,
 };
 use super::models::{
-    AccountXpResponse, EntitlementResponse, PlayerInfoResponse, PlayerLoadoutResponse,
-    PlayerMmrResponse, RiotGeoResponse, StorefrontResponse, WalletResponse,
+    AccountXpResponse, ContractsResponse, EntitlementResponse, GameContentResponse,
+    PlayerInfoResponse, PlayerLoadoutResponse, PlayerMmrResponse, RiotGeoResponse,
+    StorefrontResponse, WalletResponse,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -212,6 +213,40 @@ impl RiotApi {
 
         self.client
             .get(player_mmr_url(credentials.shard, &credentials.puuid))
+            .headers(valorant_headers(credentials)?)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await
+            .map_err(RiotApiError::Http)
+    }
+
+    pub async fn contracts(
+        &self,
+        credentials: &ApiCredentials,
+    ) -> Result<ContractsResponse, RiotApiError> {
+        credentials.validate()?;
+
+        self.client
+            .get(contracts_url(credentials.shard, &credentials.puuid))
+            .headers(valorant_headers(credentials)?)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await
+            .map_err(RiotApiError::Http)
+    }
+
+    pub async fn game_content(
+        &self,
+        credentials: &ApiCredentials,
+    ) -> Result<GameContentResponse, RiotApiError> {
+        credentials.validate()?;
+
+        self.client
+            .get(content_url(credentials.shard))
             .headers(valorant_headers(credentials)?)
             .send()
             .await?

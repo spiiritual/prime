@@ -14,6 +14,14 @@ pub fn pd_base_url(shard: Shard) -> String {
     format!("https://pd.{}.a.pvp.net", shard.as_str())
 }
 
+pub fn shared_base_url(shard: Shard) -> String {
+    format!("https://shared.{}.a.pvp.net", shard.as_str())
+}
+
+pub fn content_url(shard: Shard) -> String {
+    format!("{}/content-service/v3/content", shared_base_url(shard))
+}
+
 pub fn storefront_url(shard: Shard, puuid: &str) -> String {
     format!("{}/store/v3/storefront/{puuid}", pd_base_url(shard))
 }
@@ -35,6 +43,10 @@ pub fn account_xp_url(shard: Shard, puuid: &str) -> String {
 
 pub fn player_mmr_url(shard: Shard, puuid: &str) -> String {
     format!("{}/mmr/v1/players/{puuid}", pd_base_url(shard))
+}
+
+pub fn contracts_url(shard: Shard, puuid: &str) -> String {
+    format!("{}/contracts/v1/contracts/{puuid}", pd_base_url(shard))
 }
 
 #[cfg(test)]
@@ -78,6 +90,22 @@ mod tests {
         assert_eq!(
             player_mmr_url(Shard::Na, "puuid"),
             "https://pd.na.a.pvp.net/mmr/v1/players/puuid"
+        );
+    }
+
+    #[test]
+    fn builds_documented_content_url() {
+        assert_eq!(
+            content_url(Shard::Na),
+            "https://shared.na.a.pvp.net/content-service/v3/content"
+        );
+    }
+
+    #[test]
+    fn builds_documented_contracts_url() {
+        assert_eq!(
+            contracts_url(Shard::Eu, "puuid"),
+            "https://pd.eu.a.pvp.net/contracts/v1/contracts/puuid"
         );
     }
 }

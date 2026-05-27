@@ -12,6 +12,7 @@ pub const BUDDIES_URL: &str = "https://valorant-api.com/v1/buddies";
 pub const SPRAYS_URL: &str = "https://valorant-api.com/v1/sprays";
 pub const PLAYER_CARDS_URL: &str = "https://valorant-api.com/v1/playercards";
 pub const PLAYER_TITLES_URL: &str = "https://valorant-api.com/v1/playertitles";
+pub const CONTRACTS_URL: &str = "https://valorant-api.com/v1/contracts";
 pub const VERSION_URL: &str = "https://valorant-api.com/v1/version";
 
 #[derive(Clone)]
@@ -118,6 +119,14 @@ impl ValorantContentApi {
         ))
     }
 
+    pub async fn contract_catalog(&self) -> Result<ContractCatalog, ContentError> {
+        let contracts = self
+            .content_data::<Vec<ValorantContract>>(CONTRACTS_URL)
+            .await?;
+
+        Ok(ContractCatalog::from_contracts(contracts))
+    }
+
     pub async fn client_version(&self) -> Result<String, ContentError> {
         let response: ApiResponse<ValorantVersion> = self
             .client
@@ -145,6 +154,81 @@ impl ValorantContentApi {
             .await?;
 
         Ok(response.data)
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ContractCatalog {
+    by_uuid: HashMap<String, ResolvedContract>,
+    season_contracts: HashMap<String, String>,
+}
+
+impl ContractCatalog {
+    pub fn from_contracts(contracts: Vec<ValorantContract>) -> Self {
+        let mut by_uuid = HashMap::new();
+        let mut season_contracts = HashMap::new();
+
+        for contract in contracts {
+            let uuid = contract.uuid.unwrap_or_default();
+            let content = contract.content.unwrap_or_default();
+            let level_xp = content
+                .chapters
+                .into_iter()
+                .flat_map(|chapter| {
+                    chapter
+                        .levels
+                        .into_iter()
+                        .map(|level| level.xp.unwrap_or(0))
+                })
+                .collect::<Vec<_>>();
+            let relation_type = content.relation_type.unwrap_or_default();
+            let relation_uuid = content.relation_uuid.unwrap_or_default();
+
+            if relation_type.eq_ignore_ascii_case("season") && !relation_uuid.trim().is_empty() {
+                season_contracts.insert(normalize_uuid(&relation_uuid), normalize_uuid(&uuid));
+            }
+
+            by_uuid.insert(
+                normalize_uuid(&uuid),
+                ResolvedContract {
+                    uuid,
+                    display_name: contract.display_name.unwrap_or_default(),
+                    relation_type,
+                    relation_uuid,
+                    level_xp,
+                },
+            );
+        }
+
+        Self {
+            by_uuid,
+            season_contracts,
+        }
+    }
+
+    pub fn resolve(&self, uuid: &str) -> Option<&ResolvedContract> {
+        self.by_uuid.get(&normalize_uuid(uuid))
+    }
+
+    pub fn resolve_active_season(&self, season_uuid: &str) -> Option<&ResolvedContract> {
+        self.season_contracts
+            .get(&normalize_uuid(season_uuid))
+            .and_then(|contract_uuid| self.by_uuid.get(contract_uuid))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedContract {
+    pub uuid: String,
+    pub display_name: String,
+    pub relation_type: String,
+    pub relation_uuid: String,
+    pub level_xp: Vec<i64>,
+}
+
+impl ResolvedContract {
+    pub fn is_season_contract(&self) -> bool {
+        self.relation_type.eq_ignore_ascii_case("season")
     }
 }
 
@@ -607,6 +691,40 @@ pub struct Bundle {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct ValorantContract {
+    #[serde(default)]
+    pub uuid: Option<String>,
+    #[serde(rename = "displayName")]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub content: Option<ContractContent>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+pub struct ContractContent {
+    #[serde(default, rename = "relationType")]
+    pub relation_type: Option<String>,
+    #[serde(default, rename = "relationUuid")]
+    pub relation_uuid: Option<String>,
+    #[serde(default)]
+    pub chapters: Vec<ContractChapter>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+pub struct ContractChapter {
+    #[serde(default, rename = "isEpilogue")]
+    pub is_epilogue: bool,
+    #[serde(default)]
+    pub levels: Vec<ContractLevel>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+pub struct ContractLevel {
+    #[serde(default)]
+    pub xp: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct Buddy {
     pub uuid: String,
     #[serde(rename = "displayName")]
@@ -852,6 +970,32 @@ mod tests {
         assert_eq!(bundle.display_name, "Give Back Bundle");
         assert_eq!(bundle.display_icon.as_deref(), Some("vertical-promo"));
         assert_eq!(catalog.resolve("missing").display_name, "missing");
+    }
+
+    #[test]
+    fn resolves_active_season_contracts() {
+        let catalog = ContractCatalog::from_contracts(vec![ValorantContract {
+            uuid: Some("contract-uuid".to_string()),
+            display_name: Some("Season 2026 // Act III".to_string()),
+            content: Some(ContractContent {
+                relation_type: Some("Season".to_string()),
+                relation_uuid: Some("act-uuid".to_string()),
+                chapters: vec![ContractChapter {
+                    is_epilogue: false,
+                    levels: vec![
+                        ContractLevel { xp: Some(0) },
+                        ContractLevel { xp: Some(2_000) },
+                        ContractLevel { xp: Some(2_750) },
+                    ],
+                }],
+            }),
+        }]);
+
+        let contract = catalog.resolve_active_season("ACT-UUID").expect("contract");
+
+        assert_eq!(contract.uuid, "contract-uuid");
+        assert_eq!(contract.display_name, "Season 2026 // Act III");
+        assert_eq!(contract.level_xp, [0, 2_000, 2_750]);
     }
 
     #[test]

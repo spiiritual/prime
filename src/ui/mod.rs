@@ -50,7 +50,12 @@ fn app_theme(_: &PrimeApp) -> Theme {
 fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
     let mut subscriptions = Vec::new();
 
-    if app.store_summary.is_some() {
+    if app.store_summary.is_some()
+        || app
+            .loadout_summary
+            .as_ref()
+            .is_some_and(LoadoutSummary::battle_pass_timer_active)
+    {
         subscriptions
             .push(iced::time::every(data::SHOP_RESET_CHECK_INTERVAL).map(Message::ShopTimerTick));
     }

@@ -6,18 +6,21 @@ use tempfile::tempdir;
 
 use super::data::{
     ApiIdentity, LoadoutSummary, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
-    StoreSummary, cache_account_api_context, competitive_rank_from_mmr, format_whole_number,
-    is_pending_launcher_capture_error, non_empty_path, rank_name_for_competitive_tier,
-    require_launcher_session, weapon_category, weapon_order,
+    StoreSummary, battle_pass_progress_from_responses, cache_account_api_context,
+    competitive_rank_from_mmr, format_whole_number, is_pending_launcher_capture_error,
+    non_empty_path, rank_name_for_competitive_tier, require_launcher_session, weapon_category,
+    weapon_order,
 };
 use super::{loading_status_active, status_bar_visible};
 use crate::account::{AccountId, AccountProfile, AuthSession, LauncherSessionBackup, Shard};
 use crate::riot::content::{
-    AccessoryCatalog, Buddy, BuddyLevel, BundleCatalog, CurrencyCatalog, SkinCatalog, WeaponCatalog,
+    AccessoryCatalog, Buddy, BuddyLevel, BundleCatalog, ContractCatalog, ContractChapter,
+    ContractContent, ContractLevel, CurrencyCatalog, SkinCatalog, ValorantContract, WeaponCatalog,
 };
 use crate::riot::launcher_session::LauncherSessionError;
 use crate::riot::models::{
-    PlayerLoadoutResponse, PlayerMmrResponse, StorefrontResponse, WalletResponse,
+    ContractsResponse, GameContentResponse, PlayerLoadoutResponse, PlayerMmrResponse,
+    StorefrontResponse, WalletResponse,
 };
 use crate::storage::StoredState;
 
@@ -618,6 +621,72 @@ fn loadout_summary_prefers_account_xp_level() {
     );
 
     assert_eq!(summary.account_level, 88);
+}
+
+#[test]
+fn battle_pass_progress_uses_story_contract_and_active_act() {
+    let contracts: ContractsResponse = serde_json::from_value(serde_json::json!({
+        "Version": 1,
+        "Subject": "puuid",
+        "Contracts": [{
+            "ContractDefinitionID": "battle-pass",
+            "ContractProgression": {
+                "TotalProgressionEarned": 4_500,
+                "TotalProgressionEarnedVersion": 1,
+                "HighestRewardedLevel": {}
+            },
+            "ProgressionLevelReached": 2,
+            "ProgressionTowardsNextLevel": 2_500,
+            "ProgressionCompleted": false
+        }],
+        "ActiveSpecialContract": ""
+    }))
+    .expect("contracts");
+    let catalog = ContractCatalog::from_contracts(vec![ValorantContract {
+        uuid: Some("battle-pass".to_string()),
+        display_name: Some("Season 2026 // Act III".to_string()),
+        content: Some(ContractContent {
+            relation_type: Some("Season".to_string()),
+            relation_uuid: Some("act".to_string()),
+            chapters: vec![ContractChapter {
+                is_epilogue: false,
+                levels: vec![
+                    ContractLevel { xp: Some(0) },
+                    ContractLevel { xp: Some(2_000) },
+                    ContractLevel { xp: Some(3_000) },
+                    ContractLevel { xp: Some(4_000) },
+                ],
+            }],
+        }),
+    }]);
+    let content: GameContentResponse = serde_json::from_value(serde_json::json!({
+        "DisabledIDs": [],
+        "Seasons": [{
+            "ID": "act",
+            "Name": "Act 3",
+            "Type": "act",
+            "StartTime": "2026-05-01T00:00:00Z",
+            "EndTime": "2099-06-24T13:00:00Z",
+            "IsActive": true
+        }],
+        "Events": []
+    }))
+    .expect("content");
+
+    let progress = battle_pass_progress_from_responses(&contracts, &catalog, Some(&content))
+        .expect("battle pass progress");
+
+    assert_eq!(progress.title(), "Act 3 Battle Pass");
+    assert_eq!(progress.tier_label(), "Tier 2 of 4");
+    assert_eq!(
+        progress.next_tier_label(),
+        "2,500 / 3,000 XP toward next tier"
+    );
+    assert_eq!(
+        progress.total_progress_label().as_deref(),
+        Some("4,500 / 9,000 XP total")
+    );
+    assert!(progress.remaining_seconds.is_some());
 }
 
 #[test]

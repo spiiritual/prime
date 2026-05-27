@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time};
+
 use crate::account::{
     AccountId, AccountProfile, AuthSession, CompetitiveRank, LauncherSessionBackup, Shard,
 };
@@ -11,8 +13,9 @@ use crate::launch::{
 };
 use crate::riot::client::{ApiCredentials, RiotApi};
 use crate::riot::content::{
-    AccessoryCatalog, BundleCatalog, CurrencyCatalog, ResolvedAccessory, ResolvedBundle,
-    ResolvedCurrency, ResolvedSkin, ResolvedWeapon, SkinCatalog, ValorantContentApi, WeaponCatalog,
+    AccessoryCatalog, BundleCatalog, ContractCatalog, CurrencyCatalog, ResolvedAccessory,
+    ResolvedBundle, ResolvedContract, ResolvedCurrency, ResolvedSkin, ResolvedWeapon, SkinCatalog,
+    ValorantContentApi, WeaponCatalog,
 };
 use crate::riot::launcher_session::{
     CapturedLauncherSession, LauncherSessionError, apply_launcher_session_backup,
@@ -20,7 +23,8 @@ use crate::riot::launcher_session::{
     read_backup_cookies,
 };
 use crate::riot::models::{
-    AccessoryStoreOffer, BonusStoreOffer, MmrSeasonInfo, PlayerInfoResponse, PlayerLoadoutResponse,
+    AccessoryStoreOffer, BonusStoreOffer, ContractsResponse, GameContentResponse,
+    GameContentSeason, MmrSeasonInfo, PlayerContract, PlayerInfoResponse, PlayerLoadoutResponse,
     PlayerMmrResponse, StoreBundle, StoreOffer, StorefrontResponse, WalletResponse,
 };
 use crate::storage::StoredState;
@@ -1100,6 +1104,8 @@ fn non_empty_string(value: String) -> Option<String> {
 pub(super) struct LoadoutSummary {
     pub(super) account_level: i64,
     pub(super) gun_skins: Vec<LoadoutGunDisplay>,
+    pub(super) battle_pass: Option<BattlePassProgressDisplay>,
+    pub(super) battle_pass_error: Option<String>,
 }
 
 impl LoadoutSummary {
@@ -1140,8 +1146,254 @@ impl LoadoutSummary {
         Self {
             account_level: account_level.unwrap_or(response.identity.account_level),
             gun_skins,
+            battle_pass: None,
+            battle_pass_error: None,
         }
     }
+
+    pub(super) fn battle_pass_timer_active(&self) -> bool {
+        self.battle_pass
+            .as_ref()
+            .is_some_and(|battle_pass| battle_pass.remaining_seconds.is_some())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct BattlePassProgressDisplay {
+    pub(super) name: String,
+    pub(super) season_name: Option<String>,
+    pub(super) level_reached: i64,
+    pub(super) total_levels: Option<i64>,
+    pub(super) progression_towards_next_level: i64,
+    pub(super) next_level_progress_required: Option<i64>,
+    pub(super) total_progression_earned: i64,
+    pub(super) total_progression_required: Option<i64>,
+    pub(super) completed: bool,
+    pub(super) remaining_seconds: Option<i64>,
+    pub(super) loaded_at: iced::time::Instant,
+}
+
+impl BattlePassProgressDisplay {
+    pub(super) fn title(&self) -> String {
+        self.season_name
+            .as_ref()
+            .filter(|name| !name.trim().is_empty())
+            .map(|season| format!("{season} Battle Pass"))
+            .unwrap_or_else(|| self.name.clone())
+    }
+
+    pub(super) fn tier_label(&self) -> String {
+        match self.total_levels {
+            Some(total_levels) if total_levels > 0 => {
+                format!(
+                    "Tier {} of {}",
+                    self.level_reached.clamp(0, total_levels),
+                    total_levels
+                )
+            }
+            _ => format!("Tier {}", self.level_reached.max(0)),
+        }
+    }
+
+    pub(super) fn next_tier_label(&self) -> String {
+        if self.completed {
+            return "Complete".to_string();
+        }
+
+        match self.next_level_progress_required {
+            Some(required) if required > 0 => format!(
+                "{} / {} XP toward next tier",
+                format_whole_number(self.progression_towards_next_level.max(0)),
+                format_whole_number(required)
+            ),
+            _ => format!(
+                "{} XP toward next tier",
+                format_whole_number(self.progression_towards_next_level.max(0))
+            ),
+        }
+    }
+
+    pub(super) fn total_progress_label(&self) -> Option<String> {
+        self.total_progression_required
+            .filter(|required| *required > 0)
+            .map(|required| {
+                format!(
+                    "{} / {} XP total",
+                    format_whole_number(self.total_progression_earned.max(0)),
+                    format_whole_number(required)
+                )
+            })
+    }
+
+    pub(super) fn progress_percent_label(&self) -> Option<String> {
+        self.total_progression_required
+            .filter(|required| *required > 0)
+            .map(|required| {
+                let percent =
+                    (self.total_progression_earned.max(0) as f64 / required as f64) * 100.0;
+                format!("{:.0}% complete", percent.clamp(0.0, 100.0))
+            })
+    }
+
+    pub(super) fn progress_fraction(&self) -> f32 {
+        if self.completed {
+            return 1.0;
+        }
+
+        self.total_progression_required
+            .filter(|required| *required > 0)
+            .map(|required| {
+                (self.total_progression_earned.max(0) as f32 / required as f32).clamp(0.0, 1.0)
+            })
+            .unwrap_or(0.0)
+    }
+
+    pub(super) fn remaining_seconds_at(&self, now: iced::time::Instant) -> Option<i64> {
+        self.remaining_seconds
+            .map(|seconds| remaining_seconds_at(seconds, self.loaded_at, now))
+    }
+}
+
+pub(super) fn battle_pass_progress_from_responses(
+    contracts: &ContractsResponse,
+    contract_catalog: &ContractCatalog,
+    content: Option<&GameContentResponse>,
+) -> Option<BattlePassProgressDisplay> {
+    battle_pass_progress_from_responses_at(
+        contracts,
+        contract_catalog,
+        content,
+        OffsetDateTime::now_utc(),
+        iced::time::Instant::now(),
+    )
+}
+
+fn battle_pass_progress_from_responses_at(
+    contracts: &ContractsResponse,
+    contract_catalog: &ContractCatalog,
+    content: Option<&GameContentResponse>,
+    now_utc: OffsetDateTime,
+    loaded_at: iced::time::Instant,
+) -> Option<BattlePassProgressDisplay> {
+    let active_act = content.and_then(GameContentResponse::active_act);
+    let (definition, contract) =
+        find_battle_pass_contract(contracts, contract_catalog, active_act)?;
+    let progression_deltas = definition.level_xp.as_slice();
+    let total_levels = Some(i64::try_from(progression_deltas.len()).unwrap_or(0));
+    let total_progression_required = Some(progression_deltas.iter().copied().sum::<i64>());
+    let next_level_index = usize::try_from(contract.progression_level_reached.max(0)).ok();
+    let next_level_progress_required =
+        next_level_index.and_then(|index| progression_deltas.get(index).copied());
+    let completed = contract.progression_completed
+        || total_levels
+            .is_some_and(|levels| levels > 0 && contract.progression_level_reached >= levels);
+    let remaining_seconds =
+        active_act.and_then(|act| remaining_seconds_until_utc_at(&act.end_time, now_utc));
+
+    Some(BattlePassProgressDisplay {
+        name: non_empty_string(definition.display_name.clone())
+            .unwrap_or_else(|| "Battle Pass".to_string()),
+        season_name: active_act.and_then(|act| non_empty_string(act.name.clone())),
+        level_reached: contract.progression_level_reached,
+        total_levels,
+        progression_towards_next_level: contract.progression_towards_next_level,
+        next_level_progress_required,
+        total_progression_earned: contract.contract_progression.total_progression_earned,
+        total_progression_required,
+        completed,
+        remaining_seconds,
+        loaded_at,
+    })
+}
+
+fn find_battle_pass_contract<'a>(
+    contracts: &'a ContractsResponse,
+    contract_catalog: &'a ContractCatalog,
+    active_act: Option<&GameContentSeason>,
+) -> Option<(&'a ResolvedContract, &'a PlayerContract)> {
+    if let Some((definition, contract)) = active_act
+        .and_then(|act| contract_catalog.resolve_active_season(&act.id))
+        .filter(|definition| !definition.level_xp.is_empty())
+        .and_then(|definition| {
+            contracts
+                .contracts
+                .iter()
+                .find(|contract| ids_match(&contract.contract_definition_id, &definition.uuid))
+                .map(|contract| (definition, contract))
+        })
+    {
+        return Some((definition, contract));
+    }
+
+    contracts
+        .contracts
+        .iter()
+        .filter_map(|contract| {
+            contract_catalog
+                .resolve(&contract.contract_definition_id)
+                .filter(|definition| {
+                    definition.is_season_contract() && !definition.level_xp.is_empty()
+                })
+                .map(|definition| (definition, contract))
+        })
+        .max_by_key(|(_, contract)| {
+            (
+                !contract.progression_completed,
+                contract.progression_level_reached,
+                contract.contract_progression.total_progression_earned,
+            )
+        })
+}
+
+fn ids_match(left: &str, right: &str) -> bool {
+    left.eq_ignore_ascii_case(right)
+}
+
+fn remaining_seconds_until_utc_at(end_time: &str, now: OffsetDateTime) -> Option<i64> {
+    let end = parse_utc_timestamp(end_time)?;
+
+    Some(
+        end.unix_timestamp()
+            .saturating_sub(now.unix_timestamp())
+            .max(0),
+    )
+}
+
+fn parse_utc_timestamp(value: &str) -> Option<OffsetDateTime> {
+    let trimmed = value.trim();
+    let timestamp = trimmed
+        .strip_suffix('Z')
+        .or_else(|| trimmed.strip_suffix("+00:00"))
+        .unwrap_or(trimmed);
+    let (date, time) = timestamp.split_once('T')?;
+    let mut date_parts = date.split('-');
+    let year = date_parts.next()?.parse::<i32>().ok()?;
+    let month = date_parts.next()?.parse::<u8>().ok()?;
+    let day = date_parts.next()?.parse::<u8>().ok()?;
+
+    if date_parts.next().is_some() {
+        return None;
+    }
+
+    let mut time_parts = time.split(':');
+    let hour = time_parts.next()?.parse::<u8>().ok()?;
+    let minute = time_parts.next()?.parse::<u8>().ok()?;
+    let second_part = time_parts.next()?;
+
+    if time_parts.next().is_some() {
+        return None;
+    }
+
+    let second = second_part
+        .split_once('.')
+        .map(|(seconds, _)| seconds)
+        .unwrap_or(second_part)
+        .parse::<u8>()
+        .ok()?;
+    let date = Date::from_calendar_date(year, Month::try_from(month).ok()?, day).ok()?;
+    let time = Time::from_hms(hour, minute, second).ok()?;
+
+    Some(PrimitiveDateTime::new(date, time).assume_utc())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1321,6 +1573,8 @@ pub(super) async fn fetch_loadout(
         .await
         .ok()
         .map(|xp| xp.progress.level);
+    let battle_pass =
+        fetch_battle_pass_progress(&api, &resolved.credentials, &metadata.contracts).await;
     let mut summary = api
         .player_loadout(&resolved.credentials)
         .await
@@ -1333,6 +1587,16 @@ pub(super) async fn fetch_loadout(
             )
         })
         .map_err(|error| error.to_string())?;
+    match battle_pass {
+        Ok(progress) => {
+            summary.battle_pass = Some(progress);
+            summary.battle_pass_error = None;
+        }
+        Err(error) => {
+            summary.battle_pass = None;
+            summary.battle_pass_error = Some(error);
+        }
+    }
     cache_loadout_images(&mut summary, &image_cache).await;
 
     Ok(LoadoutResult {
@@ -1341,6 +1605,21 @@ pub(super) async fn fetch_loadout(
         session: resolved.session,
         identity: resolved.identity,
     })
+}
+
+async fn fetch_battle_pass_progress(
+    api: &RiotApi,
+    credentials: &ApiCredentials,
+    contract_catalog: &ContractCatalog,
+) -> Result<BattlePassProgressDisplay, String> {
+    let contracts = api
+        .contracts(credentials)
+        .await
+        .map_err(|error| error.to_string())?;
+    let content = api.game_content(credentials).await.ok();
+
+    battle_pass_progress_from_responses(&contracts, contract_catalog, content.as_ref())
+        .ok_or_else(|| "No active battle pass progress found".to_string())
 }
 
 pub(super) async fn fetch_account_ranks(
@@ -1512,6 +1791,7 @@ pub(super) async fn cache_bundle_icon(bundle: &mut BundleDisplay, image_cache: &
 pub(super) struct LoadoutMetadata {
     pub(super) skins: SkinCatalog,
     pub(super) weapons: WeaponCatalog,
+    pub(super) contracts: ContractCatalog,
 }
 
 pub(super) async fn fetch_loadout_metadata() -> LoadoutMetadata {
@@ -1519,6 +1799,7 @@ pub(super) async fn fetch_loadout_metadata() -> LoadoutMetadata {
         Ok(api) => LoadoutMetadata {
             skins: api.skin_catalog().await.unwrap_or_default(),
             weapons: api.weapon_catalog().await.unwrap_or_default(),
+            contracts: api.contract_catalog().await.unwrap_or_default(),
         },
         Err(_) => LoadoutMetadata::default(),
     }
