@@ -1,9 +1,9 @@
-use iced::widget::{column, container, grid, text};
-use iced::{Element, Length};
+use iced::widget::{button, column, container, grid, row, text};
+use iced::{Color, Element, Length, Theme, border};
 
 use super::super::components::{asset_image, loading_line};
 use super::super::data::{LoadoutGunDisplay, weapon_category};
-use super::super::{Message, PrimeApp};
+use super::super::{LoadoutTab, Message, PrimeApp};
 
 const LOADOUT_CATEGORIES: [&str; 8] = [
     "Sidearms",
@@ -20,6 +20,54 @@ const LOADOUT_CARD_HEIGHT: u32 = 264;
 const LOADOUT_IMAGE_HEIGHT: f32 = 148.0;
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
+    container(
+        column![loadout_tabs(app), active_loadout_tab(app)]
+            .spacing(14)
+            .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+fn loadout_tabs(app: &PrimeApp) -> Element<'_, Message> {
+    row![
+        loadout_tab_button(app, LoadoutTab::Skins),
+        loadout_tab_button(app, LoadoutTab::BattlePass),
+    ]
+    .spacing(8)
+    .width(Length::Fill)
+    .into()
+}
+
+fn loadout_tab_button(app: &PrimeApp, tab: LoadoutTab) -> Element<'_, Message> {
+    let is_selected = app.active_loadout_tab == tab;
+    let label = if is_selected {
+        format!("[{}]", tab)
+    } else {
+        tab.to_string()
+    };
+
+    button(text(label).size(14))
+        .padding([12, 16])
+        .width(Length::Fill)
+        .height(46)
+        .style(move |theme, status| loadout_tab_button_style(theme, status, is_selected))
+        .on_press_maybe((!is_selected).then_some(Message::LoadoutTabSelected(tab)))
+        .into()
+}
+
+fn active_loadout_tab(app: &PrimeApp) -> Element<'_, Message> {
+    match app.active_loadout_tab {
+        LoadoutTab::Skins => skins_tab(app),
+        LoadoutTab::BattlePass => container(column![])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into(),
+    }
+}
+
+fn skins_tab(app: &PrimeApp) -> Element<'_, Message> {
     let mut content = column![].spacing(12).width(Length::Fill);
 
     if app.loadout_loading {
@@ -44,6 +92,27 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+fn loadout_tab_button_style(
+    theme: &Theme,
+    status: iced::widget::button::Status,
+    is_selected: bool,
+) -> iced::widget::button::Style {
+    if !is_selected {
+        let mut style = iced::widget::button::primary(theme, status);
+        style.border.radius = border::radius(4);
+        style.border.width = 1.0;
+        return style;
+    }
+
+    let mut style = iced::widget::button::secondary(theme, iced::widget::button::Status::Disabled);
+    style.background = Some(Color::from_rgb8(68, 72, 78).into());
+    style.text_color = Color::from_rgb8(180, 184, 190);
+    style.border.radius = border::radius(4);
+    style.border.width = 1.0;
+    style.border.color = Color::from_rgb8(96, 102, 112);
+    style
 }
 
 fn loadout_section<'a>(

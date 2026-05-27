@@ -120,6 +120,7 @@ struct PrimeApp {
     image_cache: ImageCache,
     state: StoredState,
     active_tab: Tab,
+    active_loadout_tab: LoadoutTab,
     new_display_name: String,
     new_username: String,
     new_shard: Shard,
@@ -213,11 +214,27 @@ impl std::fmt::Display for Tab {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LoadoutTab {
+    Skins,
+    BattlePass,
+}
+
+impl std::fmt::Display for LoadoutTab {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoadoutTab::Skins => f.write_str("Skins"),
+            LoadoutTab::BattlePass => f.write_str("Battle Pass"),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 enum Message {
     Loaded(Result<StoredState, String>),
     Saved(Result<(), String>),
     TabSelected(Tab),
+    LoadoutTabSelected(LoadoutTab),
     ToggleAccountSwitcher,
     SelectAccount(AccountId),
     NewDisplayNameChanged(String),

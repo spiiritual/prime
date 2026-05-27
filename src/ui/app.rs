@@ -13,7 +13,7 @@ use super::data::{
     fetch_profile_identity, fetch_storefront, launch_account, non_empty_path,
     start_account_capture, start_launcher_session_login,
 };
-use super::{AppUpdateStatus, Message, PrimeApp, Tab};
+use super::{AppUpdateStatus, LoadoutTab, Message, PrimeApp, Tab};
 
 impl PrimeApp {
     pub(super) fn boot() -> (Self, Task<Message>) {
@@ -28,6 +28,7 @@ impl PrimeApp {
                 image_cache,
                 state: StoredState::default(),
                 active_tab: Tab::Accounts,
+                active_loadout_tab: LoadoutTab::Skins,
                 new_display_name: String::new(),
                 new_username: String::new(),
                 new_shard: Shard::Na,
@@ -111,6 +112,10 @@ impl PrimeApp {
                 self.show_add_account_prompt = false;
                 self.confirm_delete_account = None;
                 self.load_active_tab()
+            }
+            Message::LoadoutTabSelected(tab) => {
+                self.active_loadout_tab = tab;
+                Task::none()
             }
             Message::ToggleAccountSwitcher => {
                 if self.state.accounts.is_empty() {
