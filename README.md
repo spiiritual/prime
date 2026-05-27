@@ -2,8 +2,6 @@
 
 prime is an account manager for Valorant written in Rust, with iced as the UI library. It's made to be fast and useful.
 
-Project edition: 2026.
-
 ## Features
  
  - Switch between Riot accounts and launch the game with them
