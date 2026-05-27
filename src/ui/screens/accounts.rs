@@ -243,7 +243,13 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
 
 fn level_badge(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Message> {
     if let Some(level) = account.account_level {
-        neutral_rank_badge(format!("Level {}", format_whole_number(level)))
+        container(text(format!("Level {}", format_whole_number(level))).size(13))
+            .height(ACCOUNT_BADGE_HEIGHT)
+            .padding(ACCOUNT_BADGE_PADDING)
+            .align_y(alignment::Vertical::Center)
+            .clip(true)
+            .style(level_badge_style)
+            .into()
     } else if app.account_ranks_loading {
         loading_level_badge(app.loading_frame)
     } else {
@@ -442,6 +448,16 @@ fn rank_badge_style(theme: &Theme, accent: Option<Color>) -> iced::widget::conta
         }
     }
 
+    style
+}
+
+fn level_badge_style(theme: &Theme) -> iced::widget::container::Style {
+    let mut style = iced::widget::container::bordered_box(theme);
+    let accent = Color::from_rgb8(95, 176, 224);
+
+    style.background = Some(Color::from_rgba(accent.r, accent.g, accent.b, 0.10).into());
+    style.border.color = Color::from_rgba(accent.r, accent.g, accent.b, 0.58);
+    style.text_color = Some(Color::from_rgb8(218, 226, 234));
     style
 }
 
