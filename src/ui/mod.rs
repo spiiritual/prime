@@ -8,6 +8,7 @@ mod tests;
 
 use std::time::Duration;
 
+use iced::widget::operation::AbsoluteOffset;
 use iced::{Size, Subscription, Theme, window};
 
 use crate::account::{AccountId, Shard};
@@ -21,6 +22,7 @@ use data::{
 };
 
 const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
+const MAIN_PANEL_SCROLLABLE_ID: &str = "main-panel-scrollable";
 
 pub fn run() -> iced::Result {
     iced::application(PrimeApp::boot, PrimeApp::update, PrimeApp::view)
@@ -121,6 +123,7 @@ struct PrimeApp {
     state: StoredState,
     active_tab: Tab,
     active_loadout_tab: LoadoutTab,
+    tab_scroll_offsets: TabScrollOffsets,
     new_display_name: String,
     new_username: String,
     new_shard: Shard,
@@ -214,6 +217,34 @@ impl std::fmt::Display for Tab {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct TabScrollOffsets {
+    accounts: AbsoluteOffset,
+    shop: AbsoluteOffset,
+    loadout: AbsoluteOffset,
+    settings: AbsoluteOffset,
+}
+
+impl TabScrollOffsets {
+    fn get(self, tab: Tab) -> AbsoluteOffset {
+        match tab {
+            Tab::Accounts => self.accounts,
+            Tab::Shop => self.shop,
+            Tab::Loadout => self.loadout,
+            Tab::Settings => self.settings,
+        }
+    }
+
+    fn set(&mut self, tab: Tab, offset: AbsoluteOffset) {
+        match tab {
+            Tab::Accounts => self.accounts = offset,
+            Tab::Shop => self.shop = offset,
+            Tab::Loadout => self.loadout = offset,
+            Tab::Settings => self.settings = offset,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LoadoutTab {
     Skins,
@@ -235,6 +266,10 @@ enum Message {
     Saved(Result<(), String>),
     TabSelected(Tab),
     LoadoutTabSelected(LoadoutTab),
+    MainPanelScrolled {
+        tab: Tab,
+        offset: AbsoluteOffset,
+    },
     ToggleAccountSwitcher,
     SelectAccount(AccountId),
     NewDisplayNameChanged(String),

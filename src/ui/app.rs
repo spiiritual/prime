@@ -1,4 +1,5 @@
 use iced::Task;
+use iced::widget::operation;
 
 use crate::account::{AccountId, AccountProfile, Shard};
 use crate::image_cache::ImageCache;
@@ -13,7 +14,9 @@ use super::data::{
     fetch_profile_identity, fetch_storefront, launch_account, non_empty_path,
     start_account_capture, start_launcher_session_login,
 };
-use super::{AppUpdateStatus, LoadoutTab, Message, PrimeApp, Tab};
+use super::{
+    AppUpdateStatus, LoadoutTab, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, Tab, TabScrollOffsets,
+};
 
 impl PrimeApp {
     pub(super) fn boot() -> (Self, Task<Message>) {
@@ -29,6 +32,7 @@ impl PrimeApp {
                 state: StoredState::default(),
                 active_tab: Tab::Accounts,
                 active_loadout_tab: LoadoutTab::Skins,
+                tab_scroll_offsets: TabScrollOffsets::default(),
                 new_display_name: String::new(),
                 new_username: String::new(),
                 new_shard: Shard::Na,
@@ -111,10 +115,20 @@ impl PrimeApp {
                 self.open_account_menu = None;
                 self.show_add_account_prompt = false;
                 self.confirm_delete_account = None;
-                self.load_active_tab()
+                Task::batch([
+                    self.load_active_tab(),
+                    self.restore_active_tab_scroll_task(),
+                ])
             }
             Message::LoadoutTabSelected(tab) => {
                 self.active_loadout_tab = tab;
+                Task::none()
+            }
+            Message::MainPanelScrolled { tab, offset } => {
+                if self.active_tab == tab {
+                    self.tab_scroll_offsets.set(tab, offset);
+                }
+
                 Task::none()
             }
             Message::ToggleAccountSwitcher => {
@@ -889,6 +903,13 @@ impl PrimeApp {
         Task::perform(
             async move { cache.size_bytes().map_err(|error| error.to_string()) },
             Message::ImageCacheSizeLoaded,
+        )
+    }
+
+    fn restore_active_tab_scroll_task(&self) -> Task<Message> {
+        operation::scroll_to(
+            MAIN_PANEL_SCROLLABLE_ID,
+            self.tab_scroll_offsets.get(self.active_tab),
         )
     }
 

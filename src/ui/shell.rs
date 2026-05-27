@@ -5,7 +5,7 @@ use crate::account::AccountProfile;
 
 use super::components::{anchored_popover, currency_balance_display, loading_indicator};
 use super::data::format_bytes;
-use super::{Message, PrimeApp, Tab, screens};
+use super::{MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, Tab, screens};
 use super::{loading_indicator_active, status_bar_visible};
 
 const SIDEBAR_WIDTH: f32 = 210.0;
@@ -130,6 +130,7 @@ impl PrimeApp {
     }
 
     fn main_panel(&self) -> Element<'_, Message> {
+        let active_tab = self.active_tab;
         let body = screens::tab(self, self.active_tab);
         let scroll_body = container(body)
             .padding(Padding::ZERO.right(18))
@@ -137,11 +138,18 @@ impl PrimeApp {
 
         let mut panel = column![
             self.main_header(),
-            container(scrollable(scroll_body))
-                .padding(16)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(iced::widget::container::rounded_box)
+            container(
+                scrollable(scroll_body)
+                    .id(MAIN_PANEL_SCROLLABLE_ID)
+                    .on_scroll(move |viewport| Message::MainPanelScrolled {
+                        tab: active_tab,
+                        offset: viewport.absolute_offset(),
+                    })
+            )
+            .padding(16)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(iced::widget::container::rounded_box)
         ]
         .spacing(12);
 
