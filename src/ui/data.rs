@@ -1,10 +1,13 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::account::{AccountId, AccountProfile, AuthSession, LauncherSessionBackup, Shard};
+use crate::account::{
+    AccountId, AccountProfile, AuthSession, CompetitiveRank, LauncherSessionBackup, Shard,
+};
 use crate::image_cache::ImageCache;
 use crate::launch::{
     LaunchConfig, close_riot_processes, launch_riot_login_capture, launch_valorant,
+    valorant_process_is_running,
 };
 use crate::riot::client::{ApiCredentials, RiotApi};
 use crate::riot::content::{
@@ -17,8 +20,8 @@ use crate::riot::launcher_session::{
     read_backup_cookies,
 };
 use crate::riot::models::{
-    AccessoryStoreOffer, BonusStoreOffer, PlayerInfoResponse, PlayerLoadoutResponse, StoreBundle,
-    StoreOffer, StorefrontResponse, WalletResponse,
+    AccessoryStoreOffer, BonusStoreOffer, MmrSeasonInfo, PlayerInfoResponse, PlayerLoadoutResponse,
+    PlayerMmrResponse, StoreBundle, StoreOffer, StorefrontResponse, WalletResponse,
 };
 use crate::storage::StoredState;
 
@@ -31,7 +34,8 @@ pub(super) async fn launch_account(
     close_riot_processes().map_err(|error| error.to_string())?;
     apply_launcher_session_backup(&backup).map_err(|error| error.to_string())?;
 
-    launch_valorant(&config).map_err(|error| error.to_string())
+    launch_valorant(&config).map_err(|error| error.to_string())?;
+    wait_for_valorant_process(VALORANT_OPEN_TIMEOUT, VALORANT_OPEN_POLL_INTERVAL).await
 }
 
 pub(super) fn require_launcher_session(
@@ -56,7 +60,29 @@ pub(super) fn require_launcher_session(
 
 pub(super) const LOGIN_CAPTURE_TIMEOUT: Duration = Duration::from_secs(600);
 pub(super) const LOGIN_CAPTURE_POLL_INTERVAL: Duration = Duration::from_secs(2);
+pub(super) const VALORANT_OPEN_TIMEOUT: Duration = Duration::from_secs(300);
+pub(super) const VALORANT_OPEN_POLL_INTERVAL: Duration = Duration::from_secs(1);
 pub(super) const SHOP_RESET_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+
+pub(super) async fn wait_for_valorant_process(
+    timeout: Duration,
+    poll_interval: Duration,
+) -> Result<(), String> {
+    let started = std::time::Instant::now();
+
+    while started.elapsed() < timeout {
+        if valorant_process_is_running().map_err(|error| error.to_string())? {
+            return Ok(());
+        }
+
+        tokio::time::sleep(poll_interval).await;
+    }
+
+    Err(
+        "sent VALORANT launch request to Riot Client, but the VALORANT process was not detected"
+            .to_string(),
+    )
+}
 
 pub(super) async fn start_launcher_session_login(
     account_id: AccountId,
@@ -211,6 +237,26 @@ pub(super) struct LoadoutResult {
     pub(super) summary: LoadoutSummary,
     pub(super) session: AuthSession,
     pub(super) identity: ApiIdentity,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct AccountRanksResult {
+    pub(super) ranks: Vec<AccountRankResult>,
+    pub(super) failures: Vec<AccountRankFailure>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct AccountRankResult {
+    pub(super) account_id: AccountId,
+    pub(super) rank: Option<CompetitiveRank>,
+    pub(super) session: AuthSession,
+    pub(super) identity: ApiIdentity,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct AccountRankFailure {
+    pub(super) account_id: AccountId,
+    pub(super) error: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -951,6 +997,105 @@ pub(super) fn format_whole_number(amount: i64) -> String {
     formatted
 }
 
+pub(super) fn competitive_rank_from_mmr(response: &PlayerMmrResponse) -> Option<CompetitiveRank> {
+    let competitive = response.queue_skills.competitive.as_ref()?;
+    let seasons = &competitive.seasonal_info_by_season_id;
+
+    if let Some((season_id, season)) =
+        response
+            .latest_competitive_update
+            .as_ref()
+            .and_then(|update| {
+                seasons
+                    .get(&update.season_id)
+                    .map(|season| (update.season_id.as_str(), season))
+            })
+    {
+        return Some(competitive_rank_from_season(season_id, season));
+    }
+
+    if let Some(update) = response
+        .latest_competitive_update
+        .as_ref()
+        .filter(|update| update.tier_after_update > 0 || update.ranked_rating_after_update > 0)
+    {
+        return Some(CompetitiveRank::new(
+            update.tier_after_update,
+            rank_name_for_competitive_tier(update.tier_after_update),
+            update.ranked_rating_after_update,
+            non_empty_string(update.season_id.clone()),
+        ));
+    }
+
+    seasons
+        .iter()
+        .find(|(_, season)| season_has_rank_data(season))
+        .map(|(season_id, season)| competitive_rank_from_season(season_id, season))
+}
+
+fn competitive_rank_from_season(season_id: &str, season: &MmrSeasonInfo) -> CompetitiveRank {
+    CompetitiveRank::new(
+        season.competitive_tier,
+        rank_name_for_competitive_tier(season.competitive_tier),
+        season.ranked_rating,
+        non_empty_string(if season.season_id.is_empty() {
+            season_id.to_string()
+        } else {
+            season.season_id.clone()
+        }),
+    )
+}
+
+fn season_has_rank_data(season: &MmrSeasonInfo) -> bool {
+    season.competitive_tier > 0
+        || season.ranked_rating > 0
+        || season.number_of_games > 0
+        || season.games_needed_for_rating > 0
+}
+
+pub(super) fn rank_name_for_competitive_tier(tier: i64) -> String {
+    match tier {
+        3 => "Iron 1",
+        4 => "Iron 2",
+        5 => "Iron 3",
+        6 => "Bronze 1",
+        7 => "Bronze 2",
+        8 => "Bronze 3",
+        9 => "Silver 1",
+        10 => "Silver 2",
+        11 => "Silver 3",
+        12 => "Gold 1",
+        13 => "Gold 2",
+        14 => "Gold 3",
+        15 => "Platinum 1",
+        16 => "Platinum 2",
+        17 => "Platinum 3",
+        18 => "Diamond 1",
+        19 => "Diamond 2",
+        20 => "Diamond 3",
+        21 => "Ascendant 1",
+        22 => "Ascendant 2",
+        23 => "Ascendant 3",
+        24 => "Immortal 1",
+        25 => "Immortal 2",
+        26 => "Immortal 3",
+        27 => "Radiant",
+        tier if tier > 27 => return format!("Tier {tier}"),
+        _ => "Unrated",
+    }
+    .to_string()
+}
+
+fn non_empty_string(value: String) -> Option<String> {
+    let trimmed = value.trim();
+
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct LoadoutSummary {
     pub(super) account_level: i64,
@@ -1153,6 +1298,63 @@ pub(super) async fn fetch_loadout(
     Ok(LoadoutResult {
         account_id: account.id,
         summary,
+        session: resolved.session,
+        identity: resolved.identity,
+    })
+}
+
+pub(super) async fn fetch_account_ranks(
+    accounts: Vec<AccountProfile>,
+    client_version: String,
+) -> AccountRanksResult {
+    let api = match RiotApi::new() {
+        Ok(api) => api,
+        Err(error) => {
+            return AccountRanksResult {
+                ranks: Vec::new(),
+                failures: accounts
+                    .into_iter()
+                    .map(|account| AccountRankFailure {
+                        account_id: account.id,
+                        error: error.to_string(),
+                    })
+                    .collect(),
+            };
+        }
+    };
+
+    let mut result = AccountRanksResult::default();
+
+    for account in accounts {
+        let account_id = account.id;
+
+        match fetch_account_rank(&api, account, client_version.clone()).await {
+            Ok(rank) => result.ranks.push(rank),
+            Err(error) => result
+                .failures
+                .push(AccountRankFailure { account_id, error }),
+        }
+    }
+
+    result
+}
+
+async fn fetch_account_rank(
+    api: &RiotApi,
+    account: AccountProfile,
+    client_version: String,
+) -> Result<AccountRankResult, String> {
+    let account_id = account.id;
+    let resolved = resolve_credentials(api, &account, client_version).await?;
+    let rank = api
+        .player_mmr(&resolved.credentials)
+        .await
+        .map(|response| competitive_rank_from_mmr(&response))
+        .map_err(|error| error.to_string())?;
+
+    Ok(AccountRankResult {
+        account_id,
+        rank,
         session: resolved.session,
         identity: resolved.identity,
     })

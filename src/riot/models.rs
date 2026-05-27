@@ -52,6 +52,56 @@ pub struct AccountXpProgress {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
+pub struct PlayerMmrResponse {
+    pub version: i64,
+    pub subject: String,
+    pub queue_skills: MmrQueueSkills,
+    #[serde(default)]
+    pub latest_competitive_update: Option<CompetitiveUpdate>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct MmrQueueSkills {
+    #[serde(default, rename = "competitive")]
+    pub competitive: Option<MmrQueueSkill>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct MmrQueueSkill {
+    #[serde(default, rename = "SeasonalInfoBySeasonID")]
+    pub seasonal_info_by_season_id: HashMap<String, MmrSeasonInfo>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct MmrSeasonInfo {
+    #[serde(default, rename = "SeasonID")]
+    pub season_id: String,
+    #[serde(default)]
+    pub competitive_tier: i64,
+    #[serde(default)]
+    pub ranked_rating: i64,
+    #[serde(default)]
+    pub number_of_games: i64,
+    #[serde(default)]
+    pub games_needed_for_rating: i64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct CompetitiveUpdate {
+    #[serde(default, rename = "SeasonID")]
+    pub season_id: String,
+    #[serde(default)]
+    pub tier_after_update: i64,
+    #[serde(default)]
+    pub ranked_rating_after_update: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 pub struct StorefrontResponse {
     pub featured_bundle: FeaturedBundle,
     pub skins_panel_layout: SkinsPanelLayout,
@@ -503,5 +553,44 @@ mod tests {
         assert_eq!(xp.subject, "puuid");
         assert_eq!(xp.progress.level, 123);
         assert_eq!(xp.progress.xp, 456);
+    }
+
+    #[test]
+    fn deserializes_player_mmr_ranked_rating() {
+        let json = serde_json::json!({
+            "Version": 1,
+            "Subject": "puuid",
+            "QueueSkills": {
+                "competitive": {
+                    "SeasonalInfoBySeasonID": {
+                        "season-a": {
+                            "SeasonID": "season-a",
+                            "CompetitiveTier": 15,
+                            "RankedRating": 42,
+                            "NumberOfGames": 12,
+                            "GamesNeededForRating": 0
+                        }
+                    }
+                }
+            },
+            "LatestCompetitiveUpdate": {
+                "SeasonID": "season-a",
+                "TierAfterUpdate": 15,
+                "RankedRatingAfterUpdate": 42
+            }
+        });
+
+        let mmr: PlayerMmrResponse = serde_json::from_value(json).expect("mmr response");
+        let competitive = mmr.queue_skills.competitive.expect("competitive");
+        let season = &competitive.seasonal_info_by_season_id["season-a"];
+
+        assert_eq!(season.competitive_tier, 15);
+        assert_eq!(season.ranked_rating, 42);
+        assert_eq!(
+            mmr.latest_competitive_update
+                .as_ref()
+                .map(|update| update.season_id.as_str()),
+            Some("season-a")
+        );
     }
 }

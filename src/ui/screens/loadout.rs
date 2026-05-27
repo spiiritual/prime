@@ -1,7 +1,7 @@
 use iced::widget::{column, container, grid, text};
 use iced::{Element, Length};
 
-use super::super::components::asset_image;
+use super::super::components::{asset_image, loading_line};
 use super::super::data::{LoadoutGunDisplay, weapon_category};
 use super::super::{Message, PrimeApp};
 
@@ -17,12 +17,11 @@ const LOADOUT_CATEGORIES: [&str; 8] = [
 ];
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
-    let loading_label = if app.loadout_loading {
-        "Loading loadout..."
-    } else {
-        "Loadout loads automatically for the selected account."
-    };
-    let mut content = column![text(loading_label)].spacing(12).width(Length::Fill);
+    let mut content = column![].spacing(12).width(Length::Fill);
+
+    if app.loadout_loading {
+        content = content.push(loading_line("Loading loadout...", app.loading_frame));
+    }
 
     if let Some(summary) = &app.loadout_summary {
         for category in LOADOUT_CATEGORIES {

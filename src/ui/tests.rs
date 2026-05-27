@@ -6,16 +6,19 @@ use tempfile::tempdir;
 
 use super::data::{
     ApiIdentity, LoadoutSummary, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
-    StoreSummary, cache_account_api_context, format_whole_number,
-    is_pending_launcher_capture_error, non_empty_path, require_launcher_session, weapon_category,
-    weapon_order,
+    StoreSummary, cache_account_api_context, competitive_rank_from_mmr, format_whole_number,
+    is_pending_launcher_capture_error, non_empty_path, rank_name_for_competitive_tier,
+    require_launcher_session, weapon_category, weapon_order,
 };
+use super::{loading_status_active, status_bar_visible};
 use crate::account::{AccountId, AccountProfile, AuthSession, LauncherSessionBackup, Shard};
 use crate::riot::content::{
     AccessoryCatalog, Buddy, BuddyLevel, BundleCatalog, CurrencyCatalog, SkinCatalog, WeaponCatalog,
 };
 use crate::riot::launcher_session::LauncherSessionError;
-use crate::riot::models::{PlayerLoadoutResponse, StorefrontResponse, WalletResponse};
+use crate::riot::models::{
+    PlayerLoadoutResponse, PlayerMmrResponse, StorefrontResponse, WalletResponse,
+};
 use crate::storage::StoredState;
 
 #[test]
@@ -399,6 +402,53 @@ fn format_whole_number_groups_thousands() {
 }
 
 #[test]
+fn competitive_rank_from_mmr_uses_latest_competitive_season() {
+    let response: PlayerMmrResponse = serde_json::from_value(serde_json::json!({
+        "Version": 1,
+        "Subject": "puuid",
+        "QueueSkills": {
+            "competitive": {
+                "SeasonalInfoBySeasonID": {
+                    "old-season": {
+                        "SeasonID": "old-season",
+                        "CompetitiveTier": 12,
+                        "RankedRating": 80,
+                        "NumberOfGames": 9,
+                        "GamesNeededForRating": 0
+                    },
+                    "current-season": {
+                        "SeasonID": "current-season",
+                        "CompetitiveTier": 15,
+                        "RankedRating": 42,
+                        "NumberOfGames": 12,
+                        "GamesNeededForRating": 0
+                    }
+                }
+            }
+        },
+        "LatestCompetitiveUpdate": {
+            "SeasonID": "current-season",
+            "TierAfterUpdate": 15,
+            "RankedRatingAfterUpdate": 42
+        }
+    }))
+    .expect("mmr");
+
+    let rank = competitive_rank_from_mmr(&response).expect("rank");
+
+    assert_eq!(rank.rank_name, "Platinum 1");
+    assert_eq!(rank.ranked_rating, 42);
+    assert_eq!(rank.label(), "Platinum 1 - 42 RR");
+}
+
+#[test]
+fn competitive_rank_names_known_tiers() {
+    assert_eq!(rank_name_for_competitive_tier(0), "Unrated");
+    assert_eq!(rank_name_for_competitive_tier(21), "Ascendant 1");
+    assert_eq!(rank_name_for_competitive_tier(27), "Radiant");
+}
+
+#[test]
 fn loadout_summary_resolves_skin_names() {
     let response: PlayerLoadoutResponse = serde_json::from_value(serde_json::json!({
         "Subject": "puuid",
@@ -446,6 +496,34 @@ fn loadout_weapon_categories_include_newer_weapons() {
     assert_eq!(weapon_category("Outlaw"), "Sniper Rifles");
     assert!(weapon_order("Bandit") < weapon_order("Stinger"));
     assert!(weapon_order("Outlaw") < weapon_order("Operator"));
+}
+
+#[test]
+fn status_bar_only_shows_error_like_messages() {
+    assert!(!status_bar_visible("Loaded 2 account profile(s)"));
+    assert!(!status_bar_visible("Loading shop"));
+    assert!(!status_bar_visible("Saved settings"));
+
+    assert!(status_bar_visible("Failed to load accounts: disk error"));
+    assert!(status_bar_visible(
+        "Could not import redirect token: invalid URL"
+    ));
+    assert!(status_bar_visible(
+        "Store loaded, but profile update failed: missing profile"
+    ));
+    assert!(status_bar_visible(
+        "Select an account before opening the shop"
+    ));
+    assert!(status_bar_visible("display name cannot be empty"));
+}
+
+#[test]
+fn loading_status_detection_still_tracks_hidden_progress_messages() {
+    assert!(loading_status_active("Loading shop"));
+    assert!(loading_status_active("Refreshing Riot client version"));
+    assert!(!loading_status_active(
+        "Failed to load accounts: disk error"
+    ));
 }
 
 #[test]

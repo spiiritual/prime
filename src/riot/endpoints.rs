@@ -33,6 +33,10 @@ pub fn account_xp_url(shard: Shard, puuid: &str) -> String {
     format!("{}/account-xp/v1/players/{puuid}", pd_base_url(shard))
 }
 
+pub fn player_mmr_url(shard: Shard, puuid: &str) -> String {
+    format!("{}/mmr/v1/players/{puuid}", pd_base_url(shard))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,6 +70,14 @@ mod tests {
         assert_eq!(
             account_xp_url(Shard::Ap, "puuid"),
             "https://pd.ap.a.pvp.net/account-xp/v1/players/puuid"
+        );
+    }
+
+    #[test]
+    fn builds_documented_player_mmr_url() {
+        assert_eq!(
+            player_mmr_url(Shard::Na, "puuid"),
+            "https://pd.na.a.pvp.net/mmr/v1/players/puuid"
         );
     }
 }

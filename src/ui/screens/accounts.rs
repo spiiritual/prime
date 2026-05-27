@@ -3,14 +3,16 @@ use iced::widget::{
 };
 use iced::{Color, Element, Length, Theme, alignment};
 
-use crate::account::{AccountId, AccountProfile, Shard};
+use crate::account::{AccountId, AccountProfile, CompetitiveRank, Shard};
 
-use super::super::components::anchored_popover;
+use super::super::components::{anchored_popover, compact_loading_indicator};
 use super::super::{Message, PrimeApp};
 
 const ACCOUNT_MENU_WIDTH: f32 = 180.0;
 const ACCOUNT_MENU_TOP_OFFSET: f32 = 48.0;
 const ACCOUNT_MENU_RIGHT_INSET: f32 = 14.0;
+const RANK_BADGE_HEIGHT: f32 = 22.0;
+const RANK_BADGE_SEGMENT_PADDING: [u16; 2] = [0, 8];
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     let mut account_cards = column![].spacing(12).width(Length::Fill);
@@ -30,7 +32,6 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
 
     let mut content = column![
         row![button("Add account").on_press(Message::AddAccount)].spacing(10),
-        text("Add account opens Riot Client, waits for a remembered login, then asks you to confirm the profile details."),
         account_cards
     ]
     .spacing(12)
@@ -83,16 +84,19 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
     };
     let is_selected = app.state.selected_account == Some(account.id);
     let is_account_menu_open = app.open_account_menu == Some(account.id);
+    let is_launching = app.launching_account == Some(account.id);
+    let launch_in_progress = app.launching_account.is_some();
     let selected_label = if is_selected {
         "Selected"
     } else {
         "Not selected"
     };
-
     let header = row![
         column![
             text(&account.display_name).size(22),
-            text(riot_tag).size(15)
+            row![text(riot_tag).size(15), rank_badge(app, account)]
+                .spacing(8)
+                .align_y(alignment::Vertical::Center)
         ]
         .spacing(4)
         .width(Length::Fill),
@@ -124,7 +128,12 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
                 })
                 .on_press_maybe((!is_selected).then_some(Message::SelectAccount(account.id))),
             space().width(Length::Fill),
-            button("Launch VALORANT").on_press(Message::LaunchAccount(account.id))
+            launch_button(
+                account.id,
+                app.loading_frame,
+                is_launching,
+                launch_in_progress
+            )
         ]
         .spacing(10)
         .width(Length::Fill),
@@ -148,6 +157,93 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
         ACCOUNT_MENU_TOP_OFFSET,
         ACCOUNT_MENU_RIGHT_INSET,
     )
+}
+
+fn launch_button(
+    account_id: AccountId,
+    loading_frame: usize,
+    is_launching: bool,
+    launch_in_progress: bool,
+) -> Element<'static, Message> {
+    let content: Element<_> = if is_launching {
+        row![compact_loading_indicator(loading_frame), text("Opening...")]
+            .spacing(8)
+            .align_y(alignment::Vertical::Center)
+            .into()
+    } else {
+        text("Launch VALORANT").into()
+    };
+
+    button(content)
+        .on_press_maybe((!launch_in_progress).then_some(Message::LaunchAccount(account_id)))
+        .into()
+}
+
+fn rank_badge<'a>(app: &PrimeApp, account: &'a AccountProfile) -> Element<'a, Message> {
+    if let Some(rank) = &account.competitive_rank {
+        let color = rank_color(rank);
+
+        container(rank_badge_label(&rank.rank_name, rank.ranked_rating, color))
+            .height(RANK_BADGE_HEIGHT)
+            .clip(true)
+            .style(move |theme| rank_badge_style(theme, Some(color)))
+            .into()
+    } else if app.account_ranks_loading {
+        loading_rank_badge(app.loading_frame)
+    } else {
+        neutral_rank_badge("Unavailable")
+    }
+}
+
+fn rank_badge_label<'a>(
+    rank_name: &'a str,
+    ranked_rating: i64,
+    accent: Color,
+) -> Element<'a, Message> {
+    row![
+        container(text(rank_name).size(13))
+            .height(RANK_BADGE_HEIGHT)
+            .padding(RANK_BADGE_SEGMENT_PADDING)
+            .align_y(alignment::Vertical::Center),
+        rank_badge_divider(accent),
+        container(text(format!("{} RR", ranked_rating)).size(13))
+            .height(RANK_BADGE_HEIGHT)
+            .padding(RANK_BADGE_SEGMENT_PADDING)
+            .align_y(alignment::Vertical::Center)
+    ]
+    .height(RANK_BADGE_HEIGHT)
+    .align_y(alignment::Vertical::Center)
+    .into()
+}
+
+fn rank_badge_divider(accent: Color) -> Element<'static, Message> {
+    container(space())
+        .width(1.0)
+        .height(RANK_BADGE_HEIGHT)
+        .style(move |_| rank_badge_divider_style(accent))
+        .into()
+}
+
+fn neutral_rank_badge(label: &'static str) -> Element<'static, Message> {
+    container(text(label).size(13))
+        .height(RANK_BADGE_HEIGHT)
+        .padding(RANK_BADGE_SEGMENT_PADDING)
+        .align_y(alignment::Vertical::Center)
+        .style(|theme| rank_badge_style(theme, None))
+        .into()
+}
+
+fn loading_rank_badge(frame: usize) -> Element<'static, Message> {
+    container(
+        row![compact_loading_indicator(frame), text("Loading").size(13)]
+            .spacing(6)
+            .align_y(alignment::Vertical::Center),
+    )
+    .height(RANK_BADGE_HEIGHT)
+    .padding(RANK_BADGE_SEGMENT_PADDING)
+    .align_y(alignment::Vertical::Center)
+    .style(|theme| rank_badge_style(theme, None))
+    .into()
 }
 
 fn account_menu(account_id: AccountId) -> Element<'static, Message> {
@@ -217,6 +313,47 @@ fn account_card_style(theme: &Theme, selected: bool) -> iced::widget::container:
     }
 
     style
+}
+
+fn rank_badge_style(theme: &Theme, accent: Option<Color>) -> iced::widget::container::Style {
+    let mut style = iced::widget::container::bordered_box(theme);
+
+    match accent {
+        Some(color) => {
+            style.background = Some(Color::from_rgba(color.r, color.g, color.b, 0.12).into());
+            style.border.color = Color::from_rgba(color.r, color.g, color.b, 0.62);
+            style.text_color = Some(Color::from_rgb8(218, 222, 230));
+        }
+        None => {
+            style.background = Some(Color::from_rgba8(48, 52, 59, 0.64).into());
+            style.border.color = Color::from_rgb8(88, 94, 105);
+            style.text_color = Some(Color::from_rgb8(170, 176, 188));
+        }
+    }
+
+    style
+}
+
+fn rank_badge_divider_style(accent: Color) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(Color::from_rgba(accent.r, accent.g, accent.b, 0.62).into()),
+        ..Default::default()
+    }
+}
+
+fn rank_color(rank: &CompetitiveRank) -> Color {
+    match rank.tier {
+        3..=5 => Color::from_rgb8(145, 151, 158),
+        6..=8 => Color::from_rgb8(190, 124, 74),
+        9..=11 => Color::from_rgb8(188, 198, 205),
+        12..=14 => Color::from_rgb8(235, 190, 82),
+        15..=17 => Color::from_rgb8(82, 204, 194),
+        18..=20 => Color::from_rgb8(181, 134, 236),
+        21..=23 => Color::from_rgb8(84, 209, 125),
+        24..=26 => Color::from_rgb8(224, 87, 92),
+        27 => Color::from_rgb8(255, 219, 108),
+        _ => Color::from_rgb8(160, 166, 176),
+    }
 }
 
 fn select_account_button_style(

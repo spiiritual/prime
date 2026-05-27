@@ -4,6 +4,8 @@ use std::{env, fs};
 
 use thiserror::Error;
 
+pub const VALORANT_PROCESS_IMAGES: [&str; 2] = ["VALORANT-Win64-Shipping.exe", "VALORANT.exe"];
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LaunchConfig {
     pub riot_client_path: Option<PathBuf>,
@@ -85,7 +87,10 @@ fn resolve_riot_client_executable(config: &LaunchConfig) -> Result<PathBuf, Laun
 pub fn close_riot_processes() -> Result<(), LaunchError> {
     #[cfg(windows)]
     {
-        for image in ["VALORANT-Win64-Shipping.exe", "RiotClientServices.exe"] {
+        for image in VALORANT_PROCESS_IMAGES
+            .into_iter()
+            .chain(["RiotClientServices.exe"])
+        {
             let _ = Command::new("taskkill")
                 .args(["/F", "/IM", image])
                 .output()
@@ -94,6 +99,50 @@ pub fn close_riot_processes() -> Result<(), LaunchError> {
     }
 
     Ok(())
+}
+
+pub fn valorant_process_is_running() -> Result<bool, LaunchError> {
+    for image_name in VALORANT_PROCESS_IMAGES {
+        if process_is_running(image_name)? {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+#[cfg(windows)]
+fn process_is_running(image_name: &str) -> Result<bool, LaunchError> {
+    let filter = format!("IMAGENAME eq {image_name}");
+    let output = Command::new("tasklist")
+        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+        .output()
+        .map_err(LaunchError::ListProcesses)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    Ok(tasklist_contains_image(&stdout, image_name))
+}
+
+#[cfg(not(windows))]
+fn process_is_running(_: &str) -> Result<bool, LaunchError> {
+    Ok(false)
+}
+
+fn tasklist_contains_image(output: &str, image_name: &str) -> bool {
+    output.lines().any(|line| {
+        tasklist_image_name(line)
+            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(image_name))
+    })
+}
+
+fn tasklist_image_name(line: &str) -> Option<&str> {
+    let line = line.trim();
+
+    if let Some(rest) = line.strip_prefix('"') {
+        return rest.split_once('"').map(|(image_name, _)| image_name);
+    }
+
+    line.split_whitespace().next()
 }
 
 pub fn default_riot_client_candidates() -> Vec<PathBuf> {
@@ -162,6 +211,8 @@ pub enum LaunchError {
     Spawn(std::io::Error),
     #[error("failed to close Riot process before switching accounts: {0}")]
     CloseProcess(std::io::Error),
+    #[error("failed to check whether VALORANT is running: {0}")]
+    ListProcesses(std::io::Error),
 }
 
 #[cfg(test)]
@@ -227,5 +278,32 @@ mod tests {
                 PathBuf::from(r"E:\Riot Games\Riot Client\RiotClientServices.exe")
             ]
         );
+    }
+
+    #[test]
+    fn tasklist_output_detects_valorant_process() {
+        let output = r#""VALORANT-Win64-Shipping.exe","1234","Console","1","120,000 K""#;
+
+        assert!(tasklist_contains_image(
+            output,
+            "VALORANT-Win64-Shipping.exe"
+        ));
+    }
+
+    #[test]
+    fn tasklist_output_ignores_no_matching_process_message() {
+        let output = "INFO: No tasks are running which match the specified criteria.";
+
+        assert!(!tasklist_contains_image(
+            output,
+            "VALORANT-Win64-Shipping.exe"
+        ));
+    }
+
+    #[test]
+    fn tasklist_output_supports_table_fallback() {
+        let output = "VALORANT.exe   1234 Console  1  120,000 K";
+
+        assert!(tasklist_contains_image(output, "VALORANT.exe"));
     }
 }

@@ -181,6 +181,35 @@ impl LauncherSessionBackup {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompetitiveRank {
+    pub tier: i64,
+    pub rank_name: String,
+    pub ranked_rating: i64,
+    #[serde(default)]
+    pub season_id: Option<String>,
+}
+
+impl CompetitiveRank {
+    pub fn new(
+        tier: i64,
+        rank_name: impl Into<String>,
+        ranked_rating: i64,
+        season_id: Option<String>,
+    ) -> Self {
+        Self {
+            tier,
+            rank_name: rank_name.into(),
+            ranked_rating,
+            season_id,
+        }
+    }
+
+    pub fn label(&self) -> String {
+        format!("{} - {} RR", self.rank_name, self.ranked_rating)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AccountProfile {
     pub id: AccountId,
     pub display_name: String,
@@ -193,6 +222,8 @@ pub struct AccountProfile {
     pub session: Option<AuthSession>,
     #[serde(default)]
     pub launcher_session: Option<LauncherSessionBackup>,
+    #[serde(default)]
+    pub competitive_rank: Option<CompetitiveRank>,
     #[serde(default)]
     pub notes: String,
 }
@@ -220,6 +251,7 @@ impl AccountProfile {
             shard,
             session: None,
             launcher_session: None,
+            competitive_rank: None,
             notes: String::new(),
         })
     }
@@ -477,5 +509,12 @@ mod tests {
         assert!(matches!(err, AccountSessionError::PuuidMismatch { .. }));
         assert_eq!(account.game_name, None);
         assert_eq!(account.tag_line, None);
+    }
+
+    #[test]
+    fn competitive_rank_formats_rank_and_rr() {
+        let rank = CompetitiveRank::new(15, "Gold 1", 42, Some("season".to_string()));
+
+        assert_eq!(rank.label(), "Gold 1 - 42 RR");
     }
 }

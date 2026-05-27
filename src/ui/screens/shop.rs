@@ -1,7 +1,7 @@
 use iced::widget::{column, container, rich_text, span, stack, text};
 use iced::{Color, Element, Length, Theme, alignment};
 
-use super::super::components::{asset_background_image, asset_image};
+use super::super::components::{asset_background_image, asset_image, loading_line};
 use super::super::data::{
     OfferPrice, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
 };
@@ -11,7 +11,7 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     let mut content = column![].spacing(12).width(Length::Fill);
 
     if app.store_loading {
-        content = content.push(text("Loading shop..."));
+        content = content.push(loading_line("Loading shop...", app.loading_frame));
     }
 
     if let Some(summary) = &app.store_summary {

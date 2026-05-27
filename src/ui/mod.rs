@@ -6,6 +6,8 @@ mod shell;
 #[cfg(test)]
 mod tests;
 
+use std::time::Duration;
+
 use iced::{Size, Subscription, Theme, window};
 
 use crate::account::{AccountId, Shard};
@@ -13,9 +15,11 @@ use crate::image_cache::ImageCache;
 use crate::storage::{AccountRepository, StoredState};
 
 use data::{
-    CapturedAccountDraft, LoadoutResult, LoadoutSummary, RefreshedProfileIdentity, StoreSummary,
-    StorefrontResult,
+    AccountRanksResult, CapturedAccountDraft, LoadoutResult, LoadoutSummary,
+    RefreshedProfileIdentity, StoreSummary, StorefrontResult,
 };
+
+const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
 
 pub fn run() -> iced::Result {
     iced::application(PrimeApp::boot, PrimeApp::update, PrimeApp::view)
@@ -41,11 +45,66 @@ fn app_theme(_: &PrimeApp) -> Theme {
 }
 
 fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
+    let mut subscriptions = Vec::new();
+
     if app.store_summary.is_some() {
-        iced::time::every(data::SHOP_RESET_CHECK_INTERVAL).map(Message::ShopTimerTick)
-    } else {
-        Subscription::none()
+        subscriptions
+            .push(iced::time::every(data::SHOP_RESET_CHECK_INTERVAL).map(Message::ShopTimerTick));
     }
+
+    if loading_indicator_active(app) {
+        subscriptions.push(iced::time::every(LOADING_TICK_INTERVAL).map(|_| Message::LoadingTick));
+    }
+
+    Subscription::batch(subscriptions)
+}
+
+fn loading_indicator_active(app: &PrimeApp) -> bool {
+    app.store_loading
+        || app.loadout_loading
+        || app.account_ranks_loading
+        || app.launching_account.is_some()
+        || loading_status_active(&app.status)
+}
+
+fn loading_status_active(status: &str) -> bool {
+    status.starts_with("Loading ")
+        || status.starts_with("Refreshing ")
+        || status.starts_with("Opening Riot Client")
+        || status.starts_with("Clearing ")
+        || status.starts_with("Launching ")
+}
+
+fn status_bar_visible(status: &str) -> bool {
+    status_message_is_error(status)
+}
+
+fn status_message_is_error(status: &str) -> bool {
+    const ERROR_PREFIXES: &[&str] = &[
+        "Failed ",
+        "Could not ",
+        "Launch failed",
+        "Profile refresh failed",
+        "Store check failed",
+        "Loadout check failed",
+        "Rank refresh failed",
+        "Captured account rejected",
+        "Captured identity rejected",
+        "Profile identity rejected",
+        "Launcher session rejected",
+        "No captured account",
+        "Select an account before",
+        "Account profile no longer exists",
+        "display name cannot be empty",
+        "unknown Valorant shard",
+    ];
+
+    ERROR_PREFIXES
+        .iter()
+        .any(|prefix| status.starts_with(prefix))
+        || status.contains(" failed")
+        || status.contains(" rejected")
+        || status.contains(" no longer exists")
 }
 
 #[derive(Clone, Debug)]
@@ -62,13 +121,17 @@ struct PrimeApp {
     riot_client_path_input: String,
     status: String,
     open_account_menu: Option<AccountId>,
+    show_add_account_prompt: bool,
     confirm_delete_account: Option<AccountId>,
     pending_account: Option<CapturedAccountDraft>,
     store_summary: Option<StoreSummary>,
     loadout_summary: Option<LoadoutSummary>,
     store_loading: bool,
     loadout_loading: bool,
+    account_ranks_loading: bool,
+    launching_account: Option<AccountId>,
     image_cache_size_bytes: u64,
+    loading_frame: usize,
     now: iced::time::Instant,
 }
 
@@ -101,6 +164,8 @@ enum Message {
     NewUsernameChanged(String),
     NewShardSelected(Shard),
     AddAccount,
+    ConfirmAddAccountCapture,
+    CancelAddAccountCapture,
     AccountCaptureFinished(Result<CapturedAccountDraft, String>),
     ConfirmCapturedAccount,
     CancelCapturedAccount,
@@ -119,8 +184,10 @@ enum Message {
     ),
     RefreshProfileIdentity(AccountId),
     ProfileIdentityLoaded(Result<RefreshedProfileIdentity, String>),
+    AccountRanksLoaded(AccountRanksResult),
     StorefrontLoaded(Result<StorefrontResult, String>),
     ShopTimerTick(iced::time::Instant),
+    LoadingTick,
     LoadoutLoaded(Result<LoadoutResult, String>),
     RiotClientPathChanged(String),
     SaveSettings,

@@ -1,8 +1,9 @@
-use iced::widget::{button, column, container, row, scrollable, text};
-use iced::{Element, Length, Padding, alignment};
+use iced::widget::{button, column, container, opaque, row, scrollable, space, stack, text};
+use iced::{Color, Element, Length, Padding, Theme, alignment};
 
-use super::components::currency_balance_display;
+use super::components::{currency_balance_display, loading_indicator};
 use super::{Message, PrimeApp, Tab, screens};
+use super::{loading_indicator_active, status_bar_visible};
 
 impl PrimeApp {
     pub(super) fn view(&self) -> Element<'_, Message> {
@@ -15,11 +16,19 @@ impl PrimeApp {
         ]
         .height(Length::Fill);
 
-        container(content)
+        let content = container(content)
             .padding(Padding::ZERO.right(14))
             .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+            .height(Length::Fill);
+
+        if self.show_add_account_prompt {
+            stack![content, add_account_prompt_overlay()]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else {
+            content.into()
+        }
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
@@ -72,20 +81,21 @@ impl PrimeApp {
             .padding(Padding::ZERO.right(18))
             .width(Length::Fill);
 
-        column![
+        let mut panel = column![
             self.main_header(),
             container(scrollable(scroll_body))
                 .padding(16)
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .style(iced::widget::container::rounded_box),
-            container(text(&self.status))
-                .padding(10)
-                .width(Length::Fill)
-                .style(iced::widget::container::bordered_box)
+                .style(iced::widget::container::rounded_box)
         ]
-        .spacing(12)
-        .into()
+        .spacing(12);
+
+        if status_bar_visible(&self.status) {
+            panel = panel.push(self.status_bar());
+        }
+
+        panel.into()
     }
 
     fn main_header(&self) -> Element<'_, Message> {
@@ -118,6 +128,26 @@ impl PrimeApp {
         }
     }
 
+    fn status_bar(&self) -> Element<'_, Message> {
+        let status: Element<_> = if loading_indicator_active(self) {
+            row![
+                loading_indicator(self.loading_frame),
+                text(&self.status).width(Length::Fill)
+            ]
+            .spacing(10)
+            .align_y(alignment::Vertical::Center)
+            .into()
+        } else {
+            text(&self.status).into()
+        };
+
+        container(status)
+            .padding(10)
+            .width(Length::Fill)
+            .style(iced::widget::container::bordered_box)
+            .into()
+    }
+
     fn tab_button(&self, tab: Tab) -> Element<'_, Message> {
         let label = if self.active_tab == tab {
             format!("[{}]", tab)
@@ -129,5 +159,56 @@ impl PrimeApp {
             .width(Length::Fill)
             .on_press(Message::TabSelected(tab))
             .into()
+    }
+}
+
+fn add_account_prompt_overlay() -> Element<'static, Message> {
+    let prompt = container(
+        column![
+            column![
+                text("Add Riot account").size(20),
+                text(
+                    "Prime will close Riot Client, clear any stale remembered launcher data, and open the Riot login screen."
+                )
+                .size(14),
+                text(
+                    "On the Riot login screen, tick \"Stay signed in\" before you sign in. After Riot Client remembers the login, Prime will capture the launcher session and ask you to confirm the profile details."
+                )
+                .size(14)
+            ]
+            .spacing(8)
+            .width(Length::Fill),
+            row![
+                space().width(Length::Fill),
+                button("Cancel").on_press(Message::CancelAddAccountCapture),
+                button("Continue").on_press(Message::ConfirmAddAccountCapture)
+            ]
+            .spacing(10)
+        ]
+        .spacing(18),
+    )
+    .padding(24)
+    .width(720)
+    .style(add_account_prompt_style);
+
+    opaque(
+        container(prompt)
+            .padding(14)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center)
+            .style(add_account_prompt_scrim_style),
+    )
+}
+
+fn add_account_prompt_style(theme: &Theme) -> iced::widget::container::Style {
+    iced::widget::container::bordered_box(theme)
+}
+
+fn add_account_prompt_scrim_style(_: &Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(Color::from_rgba8(8, 10, 14, 0.68).into()),
+        ..Default::default()
     }
 }
