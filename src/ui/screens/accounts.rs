@@ -6,13 +6,14 @@ use iced::{Color, Element, Length, Theme, alignment};
 use crate::account::{AccountId, AccountProfile, CompetitiveRank, Shard};
 
 use super::super::components::{anchored_popover, compact_loading_indicator};
+use super::super::data::format_whole_number;
 use super::super::{AccountExportOutput, Message, PrimeApp};
 
 const ACCOUNT_MENU_WIDTH: f32 = 190.0;
 const ACCOUNT_MENU_TOP_OFFSET: f32 = 48.0;
 const ACCOUNT_MENU_RIGHT_INSET: f32 = 14.0;
-const RANK_BADGE_HEIGHT: f32 = 22.0;
-const RANK_BADGE_SEGMENT_PADDING: [u16; 2] = [0, 8];
+const ACCOUNT_BADGE_HEIGHT: f32 = 22.0;
+const ACCOUNT_BADGE_PADDING: [u16; 2] = [0, 8];
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     let mut account_cards = column![].spacing(12).width(Length::Fill);
@@ -171,9 +172,13 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
     let header = row![
         column![
             text(&account.display_name).size(22),
-            row![text(riot_tag).size(15), rank_badge(app, account)]
-                .spacing(8)
-                .align_y(alignment::Vertical::Center)
+            row![
+                text(riot_tag).size(15),
+                level_badge(app, account),
+                rank_badge(app, account)
+            ]
+            .spacing(8)
+            .align_y(alignment::Vertical::Center)
         ]
         .spacing(4)
         .width(Length::Fill),
@@ -236,6 +241,30 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
     )
 }
 
+fn level_badge(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Message> {
+    if let Some(level) = account.account_level {
+        neutral_rank_badge(format!("Level {}", format_whole_number(level)))
+    } else if app.account_ranks_loading {
+        loading_level_badge(app.loading_frame)
+    } else {
+        neutral_rank_badge("Level unavailable")
+    }
+}
+
+fn loading_level_badge(frame: usize) -> Element<'static, Message> {
+    container(
+        row![compact_loading_indicator(frame), text("Level").size(13)]
+            .spacing(6)
+            .align_y(alignment::Vertical::Center),
+    )
+    .height(ACCOUNT_BADGE_HEIGHT)
+    .padding(ACCOUNT_BADGE_PADDING)
+    .align_y(alignment::Vertical::Center)
+    .clip(true)
+    .style(|theme| rank_badge_style(theme, None))
+    .into()
+}
+
 fn launch_button(
     account_id: AccountId,
     loading_frame: usize,
@@ -261,7 +290,7 @@ fn rank_badge<'a>(app: &PrimeApp, account: &'a AccountProfile) -> Element<'a, Me
         let color = rank_color(rank);
 
         container(rank_badge_label(&rank.rank_name, rank.ranked_rating, color))
-            .height(RANK_BADGE_HEIGHT)
+            .height(ACCOUNT_BADGE_HEIGHT)
             .clip(true)
             .style(move |theme| rank_badge_style(theme, Some(color)))
             .into()
@@ -279,16 +308,16 @@ fn rank_badge_label<'a>(
 ) -> Element<'a, Message> {
     row![
         container(text(rank_name).size(13))
-            .height(RANK_BADGE_HEIGHT)
-            .padding(RANK_BADGE_SEGMENT_PADDING)
+            .height(ACCOUNT_BADGE_HEIGHT)
+            .padding(ACCOUNT_BADGE_PADDING)
             .align_y(alignment::Vertical::Center),
         rank_badge_divider(accent),
         container(text(format!("{} RR", ranked_rating)).size(13))
-            .height(RANK_BADGE_HEIGHT)
-            .padding(RANK_BADGE_SEGMENT_PADDING)
+            .height(ACCOUNT_BADGE_HEIGHT)
+            .padding(ACCOUNT_BADGE_PADDING)
             .align_y(alignment::Vertical::Center)
     ]
-    .height(RANK_BADGE_HEIGHT)
+    .height(ACCOUNT_BADGE_HEIGHT)
     .align_y(alignment::Vertical::Center)
     .into()
 }
@@ -296,16 +325,17 @@ fn rank_badge_label<'a>(
 fn rank_badge_divider(accent: Color) -> Element<'static, Message> {
     container(space())
         .width(1.0)
-        .height(RANK_BADGE_HEIGHT)
+        .height(ACCOUNT_BADGE_HEIGHT)
         .style(move |_| rank_badge_divider_style(accent))
         .into()
 }
 
-fn neutral_rank_badge(label: &'static str) -> Element<'static, Message> {
-    container(text(label).size(13))
-        .height(RANK_BADGE_HEIGHT)
-        .padding(RANK_BADGE_SEGMENT_PADDING)
+fn neutral_rank_badge(label: impl Into<String>) -> Element<'static, Message> {
+    container(text(label.into()).size(13))
+        .height(ACCOUNT_BADGE_HEIGHT)
+        .padding(ACCOUNT_BADGE_PADDING)
         .align_y(alignment::Vertical::Center)
+        .clip(true)
         .style(|theme| rank_badge_style(theme, None))
         .into()
 }
@@ -316,9 +346,10 @@ fn loading_rank_badge(frame: usize) -> Element<'static, Message> {
             .spacing(6)
             .align_y(alignment::Vertical::Center),
     )
-    .height(RANK_BADGE_HEIGHT)
-    .padding(RANK_BADGE_SEGMENT_PADDING)
+    .height(ACCOUNT_BADGE_HEIGHT)
+    .padding(ACCOUNT_BADGE_PADDING)
     .align_y(alignment::Vertical::Center)
+    .clip(true)
     .style(|theme| rank_badge_style(theme, None))
     .into()
 }

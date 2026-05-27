@@ -276,7 +276,8 @@ pub(super) struct AccountRanksResult {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct AccountRankResult {
     pub(super) account_id: AccountId,
-    pub(super) rank: Option<CompetitiveRank>,
+    pub(super) rank: Result<Option<CompetitiveRank>, String>,
+    pub(super) account_level: Result<i64, String>,
     pub(super) session: AuthSession,
     pub(super) identity: ApiIdentity,
 }
@@ -1693,11 +1694,23 @@ async fn fetch_account_rank(
         .player_mmr(&resolved.credentials)
         .await
         .map(|response| competitive_rank_from_mmr(&response))
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string());
+    let account_level = api
+        .account_xp(&resolved.credentials)
+        .await
+        .map(|response| response.progress.level)
+        .map_err(|error| error.to_string());
+
+    if let (Err(rank_error), Err(level_error)) = (&rank, &account_level) {
+        return Err(format!(
+            "rank unavailable: {rank_error}; level unavailable: {level_error}"
+        ));
+    }
 
     Ok(AccountRankResult {
         account_id,
         rank,
+        account_level,
         session: resolved.session,
         identity: resolved.identity,
     })

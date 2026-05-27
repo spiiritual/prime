@@ -170,8 +170,9 @@ mod tests {
     fn round_trips_accounts() {
         let dir = tempdir().expect("temp dir");
         let repo = AccountRepository::new(dir.path().join("accounts.json"));
-        let account =
+        let mut account =
             AccountProfile::new("Main", Some("player".to_string()), Shard::Na).expect("account");
+        account.account_level = Some(123);
         let mut state = StoredState::default();
         let id = account.id;
         state.push_account(account);
@@ -182,6 +183,7 @@ mod tests {
         assert_eq!(loaded.accounts.len(), 1);
         assert_eq!(loaded.selected_account, Some(id));
         assert_eq!(loaded.accounts[0].display_name, "Main");
+        assert_eq!(loaded.accounts[0].account_level, Some(123));
     }
 
     #[test]

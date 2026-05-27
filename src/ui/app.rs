@@ -714,17 +714,22 @@ impl PrimeApp {
                 self.account_ranks_loading = false;
 
                 let mut updated = 0usize;
+                let mut partial = 0usize;
                 let mut context_failures = 0usize;
 
                 for rank in result.ranks {
+                    let account_id = rank.account_id;
+                    let rank_partial = rank.rank.is_err() || rank.account_level.is_err();
+
                     if let Err(error) = cache_account_api_context(
                         &mut self.state,
-                        rank.account_id,
+                        account_id,
                         rank.session,
                         rank.identity,
                     ) {
                         context_failures += 1;
-                        self.status = format!("Rank loaded, but profile update failed: {error}");
+                        self.status =
+                            format!("Account details loaded, but profile update failed: {error}");
                         continue;
                     }
 
@@ -732,20 +737,51 @@ impl PrimeApp {
                         .state
                         .accounts
                         .iter_mut()
-                        .find(|account| account.id == rank.account_id)
+                        .find(|account| account.id == account_id)
                     {
-                        account.competitive_rank = rank.rank;
-                        updated += 1;
+                        let mut account_updated = false;
+
+                        if let Ok(competitive_rank) = rank.rank {
+                            account.competitive_rank = competitive_rank;
+                            account_updated = true;
+                        }
+
+                        if let Ok(account_level) = rank.account_level {
+                            account.account_level = Some(account_level);
+                            account_updated = true;
+                        }
+
+                        if account_updated {
+                            updated += 1;
+                        }
+
+                        if rank_partial {
+                            partial += 1;
+                        }
                     }
                 }
 
                 let failed = result.failures.len() + context_failures;
-                self.status = match (updated, failed) {
-                    (0, 0) => "No account ranks to refresh".to_string(),
-                    (0, failed) => format!("Rank refresh failed for {failed} account(s)"),
-                    (updated, 0) => format!("Loaded rank for {updated} account(s)"),
-                    (updated, failed) => {
-                        format!("Loaded rank for {updated} account(s); {failed} unavailable")
+                self.status = match (updated, failed, partial) {
+                    (0, 0, 0) => "No account details to refresh".to_string(),
+                    (0, failed, _) => {
+                        format!("Account detail refresh failed for {failed} account(s)")
+                    }
+                    (updated, 0, 0) => format!("Loaded account details for {updated} account(s)"),
+                    (updated, 0, partial) => {
+                        format!(
+                            "Loaded account details for {updated} account(s); {partial} partial"
+                        )
+                    }
+                    (updated, failed, 0) => {
+                        format!(
+                            "Loaded account details for {updated} account(s); {failed} unavailable"
+                        )
+                    }
+                    (updated, failed, partial) => {
+                        format!(
+                            "Loaded account details for {updated} account(s); {failed} unavailable, {partial} partial"
+                        )
                     }
                 };
 
@@ -852,6 +888,15 @@ impl PrimeApp {
                             "Loaded loadout with {} gun skin(s){}",
                             gun_count, battle_pass_status
                         );
+                        if let Some(account) = self
+                            .state
+                            .accounts
+                            .iter_mut()
+                            .find(|account| account.id == result.account_id)
+                        {
+                            account.account_level = Some(result.summary.account_level);
+                        }
+
                         if self.state.selected_account == Some(result.account_id) {
                             self.loadout_summary = Some(result.summary);
                         }
@@ -1091,7 +1136,7 @@ impl PrimeApp {
         }
 
         self.account_ranks_loading = true;
-        self.status = "Loading account ranks".to_string();
+        self.status = "Loading account details".to_string();
         let accounts = self.state.accounts.clone();
         let client_version = self.client_version_input.clone();
 

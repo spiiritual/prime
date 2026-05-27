@@ -225,6 +225,8 @@ pub struct AccountProfile {
     #[serde(default)]
     pub competitive_rank: Option<CompetitiveRank>,
     #[serde(default)]
+    pub account_level: Option<i64>,
+    #[serde(default)]
     pub notes: String,
 }
 
@@ -252,6 +254,7 @@ impl AccountProfile {
             session: None,
             launcher_session: None,
             competitive_rank: None,
+            account_level: None,
             notes: String::new(),
         })
     }
