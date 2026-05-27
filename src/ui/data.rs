@@ -1114,6 +1114,12 @@ impl LoadoutSummary {
             .into_iter()
             .map(|gun| {
                 let weapon = WeaponDisplay::from(weapons.resolve(&gun.id));
+                let base_skin = skins.resolve(&gun.skin_id);
+                let skin_level = loadout_skin_level_label(
+                    &skins.resolve(&gun.skin_level_id),
+                    &base_skin.display_name,
+                    &gun.skin_level_id,
+                );
                 let skin = SkinDisplay::from(resolve_current_skin(
                     skins,
                     &gun.skin_id,
@@ -1121,7 +1127,12 @@ impl LoadoutSummary {
                     &gun.chroma_id,
                 ));
 
-                LoadoutGunDisplay { weapon, skin }
+                LoadoutGunDisplay {
+                    weapon,
+                    skin,
+                    skin_name: base_skin.display_name,
+                    skin_level,
+                }
             })
             .collect::<Vec<_>>();
         gun_skins.sort_by_key(|gun| weapon_order(&gun.weapon.display_name));
@@ -1137,13 +1148,42 @@ impl LoadoutSummary {
 pub(super) struct LoadoutGunDisplay {
     pub(super) weapon: WeaponDisplay,
     pub(super) skin: SkinDisplay,
+    pub(super) skin_name: String,
+    pub(super) skin_level: Option<String>,
 }
 
 impl LoadoutGunDisplay {
+    pub(super) fn skin_detail_label(&self) -> String {
+        match self
+            .skin_level
+            .as_ref()
+            .map(|level| level.trim())
+            .filter(|level| !level.is_empty())
+        {
+            Some(level) => format!("{} - {}", self.skin_name, level),
+            None => self.skin_name.clone(),
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn label(&self) -> String {
-        format!("{}: {}", self.weapon.display_name, self.skin.display_name)
+        format!("{}: {}", self.weapon.display_name, self.skin_detail_label())
     }
+}
+
+fn loadout_skin_level_label(
+    level: &ResolvedSkin,
+    skin_name: &str,
+    level_id: &str,
+) -> Option<String> {
+    level.level_label.clone().or_else(|| {
+        let display_name = level.display_name.trim();
+
+        (!display_name.is_empty()
+            && !display_name.eq_ignore_ascii_case(level_id)
+            && !display_name.eq_ignore_ascii_case(skin_name))
+        .then(|| display_name.to_string())
+    })
 }
 
 pub(super) fn weapon_order(name: &str) -> (usize, String) {

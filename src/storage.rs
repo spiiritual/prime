@@ -43,6 +43,15 @@ impl StoredState {
             .find(|account| account.id == selected)
     }
 
+    pub fn select_account(&mut self, id: AccountId) -> bool {
+        if !self.account_exists(id) {
+            return false;
+        }
+
+        self.selected_account = Some(id);
+        true
+    }
+
     pub fn push_account(&mut self, account: AccountProfile) {
         if self.selected_account.is_none() {
             self.selected_account = Some(account.id);
@@ -57,6 +66,10 @@ impl StoredState {
         if self.selected_account == Some(id) {
             self.selected_account = self.accounts.first().map(|account| account.id);
         }
+    }
+
+    fn account_exists(&self, id: AccountId) -> bool {
+        self.accounts.iter().any(|account| account.id == id)
     }
 }
 

@@ -1,10 +1,17 @@
 use iced::widget::{button, column, container, opaque, row, scrollable, space, stack, text};
 use iced::{Color, Element, Length, Padding, Theme, alignment};
 
-use super::components::{currency_balance_display, loading_indicator};
+use crate::account::AccountProfile;
+
+use super::components::{anchored_popover, currency_balance_display, loading_indicator};
 use super::data::format_bytes;
 use super::{Message, PrimeApp, Tab, screens};
 use super::{loading_indicator_active, status_bar_visible};
+
+const SIDEBAR_WIDTH: f32 = 210.0;
+const SIDEBAR_PADDING: u16 = 16;
+const ACCOUNT_SWITCHER_MENU_TOP_OFFSET: f32 = 62.0;
+const ACCOUNT_SWITCHER_MENU_WIDTH: f32 = SIDEBAR_WIDTH - (SIDEBAR_PADDING as f32 * 2.0);
 
 impl PrimeApp {
     pub(super) fn view(&self) -> Element<'_, Message> {
@@ -38,31 +45,7 @@ impl PrimeApp {
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
-        let mut accounts = column![text("Prime").size(26), text("Profiles").size(16)].spacing(8);
-
-        if self.state.accounts.is_empty() {
-            accounts = accounts.push(text("No profiles yet"));
-        }
-
-        for account in &self.state.accounts {
-            let prefix = if self.state.selected_account == Some(account.id) {
-                ">"
-            } else {
-                " "
-            };
-            let session = match (account.has_api_session(), account.has_launcher_session()) {
-                (true, true) => "api + launcher",
-                (true, false) => "api",
-                (false, true) => "launcher",
-                (false, false) => "no session",
-            };
-            let label = format!("{prefix} {} [{session}]", account.summary());
-            accounts = accounts.push(
-                button(text(label))
-                    .width(Length::Fill)
-                    .on_press(Message::SelectAccount(account.id)),
-            );
-        }
+        let accounts = column![text("Prime").size(26), self.account_switcher()].spacing(8);
 
         let tabs = column![
             text("Navigate").size(16),
@@ -74,10 +57,75 @@ impl PrimeApp {
         .spacing(8);
 
         container(scrollable(column![accounts, tabs].spacing(16)))
-            .padding(16)
-            .width(280)
+            .padding(SIDEBAR_PADDING)
+            .width(SIDEBAR_WIDTH)
             .height(Length::Fill)
             .style(iced::widget::container::dark)
+            .into()
+    }
+
+    fn account_switcher(&self) -> Element<'_, Message> {
+        anchored_popover(
+            self.account_badge(),
+            self.account_switcher_menu(),
+            self.account_switcher_open,
+            ACCOUNT_SWITCHER_MENU_TOP_OFFSET,
+            0.0,
+        )
+    }
+
+    fn account_badge(&self) -> Element<'_, Message> {
+        let account = self.state.selected_account();
+        let is_open = self.account_switcher_open;
+        let display_name = account
+            .map(|account| account.display_name.clone())
+            .unwrap_or_else(|| "No profile".to_string());
+        let detail = account
+            .map(account_detail_label)
+            .unwrap_or_else(|| "Add or select an account".to_string());
+
+        let content = container(
+            row![
+                column![
+                    text(display_name).size(15).width(Length::Fill),
+                    text(detail).size(12).width(Length::Fill)
+                ]
+                .spacing(2)
+                .width(Length::Fill),
+                text(if self.account_switcher_open { "^" } else { "v" }).size(13)
+            ]
+            .spacing(8)
+            .align_y(alignment::Vertical::Center),
+        )
+        .padding([9, 10])
+        .width(Length::Fill);
+
+        button(content)
+            .padding(0)
+            .width(Length::Fill)
+            .style(move |theme, status| account_badge_button_style(theme, status, is_open))
+            .on_press_maybe(
+                (!self.state.accounts.is_empty()).then_some(Message::ToggleAccountSwitcher),
+            )
+            .into()
+    }
+
+    fn account_switcher_menu(&self) -> Element<'_, Message> {
+        let mut accounts = column![].spacing(6).width(Length::Fill);
+
+        if self.state.accounts.is_empty() {
+            accounts = accounts.push(text("No profiles yet").size(13));
+        }
+
+        for account in &self.state.accounts {
+            let is_selected = self.state.selected_account == Some(account.id);
+            accounts = accounts.push(account_switcher_menu_item(account, is_selected));
+        }
+
+        container(accounts)
+            .padding(8)
+            .width(ACCOUNT_SWITCHER_MENU_WIDTH)
+            .style(iced::widget::container::bordered_box)
             .into()
     }
 
@@ -166,6 +214,62 @@ impl PrimeApp {
             .on_press(Message::TabSelected(tab))
             .into()
     }
+}
+
+fn account_switcher_menu_item(account: &AccountProfile, is_selected: bool) -> Element<'_, Message> {
+    let prefix = if is_selected { "> " } else { "" };
+    let display_name = format!("{prefix}{}", account.display_name);
+
+    let content = column![
+        text(display_name).size(14).width(Length::Fill),
+        text(account_detail_label(account))
+            .size(12)
+            .width(Length::Fill)
+    ]
+    .spacing(1)
+    .width(Length::Fill);
+
+    button(content)
+        .padding([7, 8])
+        .width(Length::Fill)
+        .style(move |theme, status| account_switcher_item_style(theme, status, is_selected))
+        .on_press_maybe((!is_selected).then_some(Message::SelectAccount(account.id)))
+        .into()
+}
+
+fn account_detail_label(account: &AccountProfile) -> String {
+    account
+        .riot_id()
+        .or_else(|| account.username.clone())
+        .map(|identity| format!("{identity} | {}", account.shard))
+        .unwrap_or_else(|| account.shard.to_string())
+}
+
+fn account_badge_button_style(
+    theme: &Theme,
+    status: iced::widget::button::Status,
+    is_open: bool,
+) -> iced::widget::button::Style {
+    if is_open {
+        iced::widget::button::secondary(theme, status)
+    } else {
+        iced::widget::button::primary(theme, status)
+    }
+}
+
+fn account_switcher_item_style(
+    theme: &Theme,
+    status: iced::widget::button::Status,
+    is_selected: bool,
+) -> iced::widget::button::Style {
+    if !is_selected {
+        return iced::widget::button::primary(theme, status);
+    }
+
+    let mut style = iced::widget::button::secondary(theme, iced::widget::button::Status::Disabled);
+    style.background = Some(Color::from_rgb8(68, 72, 78).into());
+    style.text_color = Color::from_rgb8(180, 184, 190);
+    style
 }
 
 fn add_account_prompt_overlay() -> Element<'static, Message> {

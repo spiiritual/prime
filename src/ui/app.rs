@@ -35,6 +35,7 @@ impl PrimeApp {
                 client_version_input: String::new(),
                 riot_client_path_input: String::new(),
                 status: "Loading accounts".to_string(),
+                account_switcher_open: false,
                 open_account_menu: None,
                 show_add_account_prompt: false,
                 confirm_delete_account: None,
@@ -105,13 +106,32 @@ impl PrimeApp {
             }
             Message::TabSelected(tab) => {
                 self.active_tab = tab;
+                self.account_switcher_open = false;
                 self.open_account_menu = None;
                 self.show_add_account_prompt = false;
                 self.confirm_delete_account = None;
                 self.load_active_tab()
             }
+            Message::ToggleAccountSwitcher => {
+                if self.state.accounts.is_empty() {
+                    self.account_switcher_open = false;
+                } else {
+                    self.account_switcher_open = !self.account_switcher_open;
+                    self.open_account_menu = None;
+                    self.show_add_account_prompt = false;
+                    self.confirm_delete_account = None;
+                }
+
+                Task::none()
+            }
             Message::SelectAccount(id) => {
-                self.state.selected_account = Some(id);
+                if !self.state.select_account(id) {
+                    self.account_switcher_open = false;
+                    self.status = "Account profile no longer exists".to_string();
+                    return Task::none();
+                }
+
+                self.account_switcher_open = false;
                 self.open_account_menu = None;
                 self.show_add_account_prompt = false;
                 self.confirm_delete_account = None;
@@ -138,6 +158,7 @@ impl PrimeApp {
             }
             Message::AddAccount => {
                 self.show_add_account_prompt = true;
+                self.account_switcher_open = false;
                 self.open_account_menu = None;
                 self.confirm_delete_account = None;
                 self.status =
@@ -155,6 +176,7 @@ impl PrimeApp {
                 let backup_root = self.repo.launcher_backups_dir();
                 self.show_add_account_prompt = false;
                 self.pending_account = None;
+                self.account_switcher_open = false;
                 self.open_account_menu = None;
                 self.confirm_delete_account = None;
                 self.new_display_name.clear();
@@ -225,7 +247,7 @@ impl PrimeApp {
 
                         self.status = format!("Added {}", account.summary());
                         self.state.push_account(account);
-                        self.state.selected_account = Some(draft.account_id);
+                        self.state.select_account(draft.account_id);
                         self.pending_account = None;
                         self.new_display_name.clear();
                         self.new_username.clear();
@@ -240,6 +262,7 @@ impl PrimeApp {
             }
             Message::CancelCapturedAccount => {
                 self.pending_account = None;
+                self.account_switcher_open = false;
                 self.open_account_menu = None;
                 self.show_add_account_prompt = false;
                 self.confirm_delete_account = None;
@@ -250,6 +273,7 @@ impl PrimeApp {
             }
             Message::ToggleAccountMenu(id) => {
                 self.confirm_delete_account = None;
+                self.account_switcher_open = false;
 
                 if self.state.accounts.iter().any(|account| account.id == id) {
                     self.open_account_menu = match self.open_account_menu {
@@ -264,10 +288,12 @@ impl PrimeApp {
             }
             Message::RequestDeleteAccount(id) => {
                 if self.state.accounts.iter().any(|account| account.id == id) {
+                    self.account_switcher_open = false;
                     self.open_account_menu = None;
                     self.show_add_account_prompt = false;
                     self.confirm_delete_account = Some(id);
                 } else {
+                    self.account_switcher_open = false;
                     self.open_account_menu = None;
                     self.show_add_account_prompt = false;
                     self.confirm_delete_account = None;
@@ -296,6 +322,7 @@ impl PrimeApp {
 
                 let was_selected = self.state.selected_account == Some(id);
                 self.state.remove_account(id);
+                self.account_switcher_open = false;
                 self.open_account_menu = None;
                 self.confirm_delete_account = None;
 
@@ -338,6 +365,7 @@ impl PrimeApp {
             }
             Message::ImportRedirect => {
                 let Some(account) = self.state.selected_account_mut() else {
+                    self.account_switcher_open = false;
                     self.status = "Select an account before importing a token".to_string();
                     return Task::none();
                 };
@@ -364,6 +392,7 @@ impl PrimeApp {
                     .find(|account| account.id == account_id)
                 else {
                     self.open_account_menu = None;
+                    self.account_switcher_open = false;
                     self.status = "Account profile no longer exists".to_string();
                     return Task::none();
                 };
@@ -374,6 +403,7 @@ impl PrimeApp {
                 };
                 let backup_root = self.repo.launcher_backups_dir();
                 let summary = account.summary();
+                self.account_switcher_open = false;
                 self.open_account_menu = None;
                 self.confirm_delete_account = None;
                 self.status = format!(
@@ -406,11 +436,13 @@ impl PrimeApp {
                     .cloned()
                 else {
                     self.open_account_menu = None;
+                    self.account_switcher_open = false;
                     self.status = "Account profile no longer exists".to_string();
                     return Task::none();
                 };
 
                 let summary = account.summary();
+                self.account_switcher_open = false;
                 self.open_account_menu = None;
                 self.confirm_delete_account = None;
                 self.status = format!("Refreshing Riot profile identity for {summary}");
@@ -664,7 +696,8 @@ impl PrimeApp {
                 let backup = account.launcher_session.clone();
                 let summary = account.summary();
 
-                self.state.selected_account = Some(id);
+                self.state.select_account(id);
+                self.account_switcher_open = false;
                 self.open_account_menu = None;
                 self.confirm_delete_account = None;
                 self.store_summary = None;

@@ -476,7 +476,11 @@ fn loadout_summary_resolves_skin_names() {
         display_name: "Prime Vandal".to_string(),
         display_icon: None,
         content_tier_uuid: None,
-        levels: vec![],
+        levels: vec![crate::riot::content::WeaponSkinLevel {
+            uuid: "level-a".to_string(),
+            display_name: "Prime Vandal Level 3".to_string(),
+            display_icon: None,
+        }],
         chromas: vec![],
     }]);
     let weapons = WeaponCatalog::from_weapons(vec![crate::riot::content::Weapon {
@@ -487,7 +491,10 @@ fn loadout_summary_resolves_skin_names() {
 
     let summary = LoadoutSummary::from_response(response, &catalog, &weapons, None);
 
-    assert_eq!(summary.gun_skins[0].label(), "Vandal: Prime Vandal");
+    assert_eq!(
+        summary.gun_skins[0].label(),
+        "Vandal: Prime Vandal - Level 3"
+    );
 }
 
 #[test]
@@ -578,6 +585,10 @@ fn loadout_summary_prefers_current_chroma_render() {
     assert_eq!(
         summary.gun_skins[0].skin.display_icon.as_deref(),
         Some("chroma-render")
+    );
+    assert_eq!(
+        summary.gun_skins[0].skin_detail_label(),
+        "Prime Vandal - Level 4"
     );
 }
 

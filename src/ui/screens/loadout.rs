@@ -15,6 +15,9 @@ const LOADOUT_CATEGORIES: [&str; 8] = [
     "Melee",
     "Other",
 ];
+const LOADOUT_CARD_WIDTH: u32 = 220;
+const LOADOUT_CARD_HEIGHT: u32 = 264;
+const LOADOUT_IMAGE_HEIGHT: f32 = 148.0;
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     let mut content = column![].spacing(12).width(Length::Fill);
@@ -49,8 +52,8 @@ fn loadout_section<'a>(
 ) -> Option<Element<'a, Message>> {
     let mut cards = grid::Grid::new()
         .spacing(12)
-        .fluid(220)
-        .height(grid::aspect_ratio(220, 252));
+        .fluid(LOADOUT_CARD_WIDTH)
+        .height(grid::aspect_ratio(LOADOUT_CARD_WIDTH, LOADOUT_CARD_HEIGHT));
     let mut count = 0;
 
     for gun in guns {
@@ -62,11 +65,11 @@ fn loadout_section<'a>(
 }
 
 fn loadout_card(gun: &LoadoutGunDisplay) -> Element<'_, Message> {
-    let skin_label = loadout_skin_label(&gun.skin.display_name);
+    let skin_label = gun.skin_detail_label();
 
     container(
         column![
-            asset_image(gun.skin.cached_icon.as_ref(), 164.0),
+            asset_image(gun.skin.cached_icon.as_ref(), LOADOUT_IMAGE_HEIGHT),
             text(&gun.weapon.display_name).size(15).width(Length::Fill),
             text(skin_label).size(12).width(Length::Fill)
         ]
@@ -74,49 +77,7 @@ fn loadout_card(gun: &LoadoutGunDisplay) -> Element<'_, Message> {
     )
     .padding(10)
     .width(Length::Fill)
+    .height(Length::Fill)
     .style(iced::widget::container::bordered_box)
     .into()
-}
-
-fn loadout_skin_label(name: &str) -> String {
-    let mut label = name.trim();
-
-    while let Some(without_close) = label.strip_suffix(')') {
-        let Some(open_index) = without_close.rfind('(') else {
-            break;
-        };
-        let parenthetical = without_close[open_index + 1..].trim();
-
-        if !parenthetical
-            .get(..7)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("variant"))
-        {
-            break;
-        }
-
-        label = without_close[..open_index].trim_end();
-    }
-
-    label.to_string()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::loadout_skin_label;
-
-    #[test]
-    fn loadout_skin_label_removes_variant_suffix_but_keeps_level() {
-        assert_eq!(
-            loadout_skin_label("Prime Vandal Level 4 (Variant 1 Blue)"),
-            "Prime Vandal Level 4"
-        );
-        assert_eq!(
-            loadout_skin_label("Prime Vandal Level 4"),
-            "Prime Vandal Level 4"
-        );
-        assert_eq!(
-            loadout_skin_label("Prime Vandal (Upgraded)"),
-            "Prime Vandal (Upgraded)"
-        );
-    }
 }

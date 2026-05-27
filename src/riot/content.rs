@@ -220,18 +220,24 @@ impl SkinCatalog {
                 display_name: skin.display_name.clone(),
                 display_icon: skin.display_icon.clone(),
                 rarity: rarity.clone(),
+                level_label: None,
             };
             by_uuid.insert(normalize_uuid(&skin.uuid), skin_info.clone());
 
-            for level in skin.levels {
+            for (level_index, level) in skin.levels.into_iter().enumerate() {
+                let display_name =
+                    display_name_with_fallback(&level.display_name, &skin.display_name);
+
                 by_uuid.insert(
                     normalize_uuid(&level.uuid),
                     ResolvedSkin {
                         uuid: level.uuid,
-                        display_name: display_name_with_fallback(
-                            &level.display_name,
+                        level_label: Some(skin_level_label(
+                            &display_name,
                             &skin.display_name,
-                        ),
+                            level_index + 1,
+                        )),
+                        display_name,
                         display_icon: level.display_icon.or_else(|| skin.display_icon.clone()),
                         rarity: rarity.clone(),
                     },
@@ -252,6 +258,7 @@ impl SkinCatalog {
                             .or(chroma.display_icon)
                             .or_else(|| skin_info.display_icon.clone()),
                         rarity: rarity.clone(),
+                        level_label: None,
                     },
                 );
             }
@@ -274,6 +281,7 @@ pub struct ResolvedSkin {
     pub display_name: String,
     pub display_icon: Option<String>,
     pub rarity: Option<String>,
+    pub level_label: Option<String>,
 }
 
 impl ResolvedSkin {
@@ -283,6 +291,7 @@ impl ResolvedSkin {
             display_name: uuid.to_string(),
             display_icon: None,
             rarity: None,
+            level_label: None,
         }
     }
 }
@@ -666,6 +675,33 @@ fn display_name_with_fallback(name: &str, fallback: &str) -> String {
     }
 }
 
+fn skin_level_label(level_name: &str, skin_name: &str, level_number: usize) -> String {
+    let level_name = level_name.trim();
+    let skin_name = skin_name.trim();
+
+    if let Some(rest) = strip_prefix_ignore_ascii_case(level_name, skin_name) {
+        let rest = rest
+            .trim_start_matches(|ch: char| ch.is_whitespace() || ch == '-' || ch == ':')
+            .trim();
+
+        if !rest.is_empty() {
+            return rest.to_string();
+        }
+    } else if !level_name.is_empty() {
+        return level_name.to_string();
+    }
+
+    format!("Level {level_number}")
+}
+
+fn strip_prefix_ignore_ascii_case<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+    let value_prefix = value.get(..prefix.len())?;
+
+    value_prefix
+        .eq_ignore_ascii_case(prefix)
+        .then_some(&value[prefix.len()..])
+}
+
 #[derive(Debug, Error)]
 pub enum ContentError {
     #[error("Valorant content API HTTP error: {0}")]
@@ -700,6 +736,10 @@ mod tests {
         assert_eq!(
             catalog.resolve("level-uuid").display_name,
             "Prime Vandal Level 4"
+        );
+        assert_eq!(
+            catalog.resolve("level-uuid").level_label.as_deref(),
+            Some("Level 4")
         );
         assert_eq!(
             catalog.resolve("chroma-uuid").display_name,
