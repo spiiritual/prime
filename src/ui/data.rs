@@ -8,8 +8,8 @@ use crate::launch::{
 };
 use crate::riot::client::{ApiCredentials, RiotApi};
 use crate::riot::content::{
-    BundleCatalog, CurrencyCatalog, ResolvedBundle, ResolvedCurrency, ResolvedSkin, ResolvedWeapon,
-    SkinCatalog, ValorantContentApi, WeaponCatalog,
+    AccessoryCatalog, BundleCatalog, CurrencyCatalog, ResolvedAccessory, ResolvedBundle,
+    ResolvedCurrency, ResolvedSkin, ResolvedWeapon, SkinCatalog, ValorantContentApi, WeaponCatalog,
 };
 use crate::riot::launcher_session::{
     CapturedLauncherSession, LauncherSessionError, apply_launcher_session_backup,
@@ -17,8 +17,8 @@ use crate::riot::launcher_session::{
     read_backup_cookies,
 };
 use crate::riot::models::{
-    BonusStoreOffer, PlayerInfoResponse, PlayerLoadoutResponse, StoreBundle, StoreOffer,
-    StorefrontResponse,
+    AccessoryStoreOffer, BonusStoreOffer, PlayerInfoResponse, PlayerLoadoutResponse, StoreBundle,
+    StoreOffer, StorefrontResponse, WalletResponse,
 };
 use crate::storage::StoredState;
 
@@ -261,6 +261,8 @@ pub(super) struct ApiIdentity {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct StoreSummary {
+    pub(super) currency_balances: Vec<CurrencyBalanceDisplay>,
+    pub(super) currency_balance_error: Option<String>,
     pub(super) featured_bundles: Vec<StoreBundleDisplay>,
     pub(super) daily_offers: Vec<StoreOfferDisplay>,
     pub(super) daily_remaining_seconds: i64,
@@ -268,29 +270,89 @@ pub(super) struct StoreSummary {
     pub(super) night_market_remaining_seconds: Option<i64>,
     pub(super) loaded_at: iced::time::Instant,
     pub(super) night_market_offers: Vec<StoreOfferDisplay>,
+    pub(super) accessory_remaining_seconds: Option<i64>,
+    pub(super) accessory_offers: Vec<StoreAccessoryDisplay>,
 }
 
 impl StoreSummary {
+    #[cfg(test)]
     pub(super) fn from_response(
         response: StorefrontResponse,
         skins: &SkinCatalog,
         bundles: &BundleCatalog,
         currencies: &CurrencyCatalog,
     ) -> Self {
-        Self::from_response_at(
+        Self::from_response_with_wallet_and_accessories(
             response,
+            None,
             skins,
             bundles,
             currencies,
+            &AccessoryCatalog::default(),
+        )
+    }
+
+    #[cfg(test)]
+    pub(super) fn from_response_with_wallet(
+        response: StorefrontResponse,
+        wallet: Option<WalletResponse>,
+        skins: &SkinCatalog,
+        bundles: &BundleCatalog,
+        currencies: &CurrencyCatalog,
+    ) -> Self {
+        Self::from_response_with_wallet_and_accessories(
+            response,
+            wallet,
+            skins,
+            bundles,
+            currencies,
+            &AccessoryCatalog::default(),
+        )
+    }
+
+    pub(super) fn from_response_with_accessories(
+        response: StorefrontResponse,
+        skins: &SkinCatalog,
+        bundles: &BundleCatalog,
+        currencies: &CurrencyCatalog,
+        accessories: &AccessoryCatalog,
+    ) -> Self {
+        Self::from_response_with_wallet_and_accessories(
+            response,
+            None,
+            skins,
+            bundles,
+            currencies,
+            accessories,
+        )
+    }
+
+    pub(super) fn from_response_with_wallet_and_accessories(
+        response: StorefrontResponse,
+        wallet: Option<WalletResponse>,
+        skins: &SkinCatalog,
+        bundles: &BundleCatalog,
+        currencies: &CurrencyCatalog,
+        accessories: &AccessoryCatalog,
+    ) -> Self {
+        Self::from_response_at(
+            response,
+            wallet,
+            skins,
+            bundles,
+            currencies,
+            accessories,
             iced::time::Instant::now(),
         )
     }
 
     pub(super) fn from_response_at(
         response: StorefrontResponse,
+        wallet: Option<WalletResponse>,
         skins: &SkinCatalog,
         bundles: &BundleCatalog,
         currencies: &CurrencyCatalog,
+        accessories: &AccessoryCatalog,
         loaded_at: iced::time::Instant,
     ) -> Self {
         let featured_bundles = if response.featured_bundle.bundles.is_empty() {
@@ -334,8 +396,28 @@ impl StoreSummary {
                 store_offer_display(offer_id, matching_offer, 0, skins, currencies)
             })
             .collect();
+        let accessory_remaining_seconds = response
+            .accessory_store
+            .as_ref()
+            .map(|store| store.accessory_store_remaining_duration_in_seconds);
+        let accessory_offers = response
+            .accessory_store
+            .as_ref()
+            .map(|store| {
+                store
+                    .accessory_store_offers
+                    .iter()
+                    .map(|offer| accessory_store_offer_display(offer, accessories, currencies))
+                    .collect()
+            })
+            .unwrap_or_default();
 
         Self {
+            currency_balances: wallet
+                .as_ref()
+                .map(|wallet| currency_balances_from_wallet(wallet, currencies))
+                .unwrap_or_default(),
+            currency_balance_error: None,
             featured_bundles,
             daily_offers,
             daily_remaining_seconds: response
@@ -347,6 +429,8 @@ impl StoreSummary {
             night_market_remaining_seconds,
             loaded_at,
             night_market_offers,
+            accessory_remaining_seconds,
+            accessory_offers,
         }
     }
 
@@ -364,14 +448,23 @@ impl StoreSummary {
             .unwrap_or(0)
     }
 
+    pub(super) fn accessory_remaining_seconds_at(&self, now: iced::time::Instant) -> i64 {
+        self.accessory_remaining_seconds
+            .map(|seconds| remaining_seconds_at(seconds, self.loaded_at, now))
+            .unwrap_or(0)
+    }
+
     pub(super) fn is_expired_at(&self, now: iced::time::Instant) -> bool {
         let section_expired =
             self.daily_remaining_seconds_at(now) == 0 || self.bundle_remaining_seconds_at(now) == 0;
         let night_market_expired = self
             .night_market_remaining_seconds
             .is_some_and(|_| self.night_market_remaining_seconds_at(now) == 0);
+        let accessory_expired = self
+            .accessory_remaining_seconds
+            .is_some_and(|_| self.accessory_remaining_seconds_at(now) == 0);
 
-        section_expired || night_market_expired
+        section_expired || night_market_expired || accessory_expired
     }
 }
 
@@ -422,6 +515,25 @@ impl StoreOfferDisplay {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct StoreAccessoryDisplay {
+    pub(super) accessory: AccessoryDisplay,
+    pub(super) price: Option<OfferPrice>,
+}
+
+impl StoreAccessoryDisplay {
+    #[cfg(test)]
+    pub(super) fn label(&self) -> String {
+        let mut label = self.accessory.display_name.clone();
+
+        if let Some(price) = &self.price {
+            label.push_str(&format!(" ({})", price.label()));
+        }
+
+        label
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct StoreBundleDisplay {
     pub(super) bundle: BundleDisplay,
     pub(super) price: Option<OfferPrice>,
@@ -463,6 +575,22 @@ impl OfferPrice {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct CurrencyBalanceDisplay {
+    pub(super) amount: i64,
+    pub(super) currency: CurrencyDisplay,
+}
+
+impl CurrencyBalanceDisplay {
+    pub(super) fn label(&self) -> String {
+        format!(
+            "{} {}",
+            format_whole_number(self.amount),
+            self.currency.display_name
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CurrencyDisplay {
     pub(super) uuid: String,
     pub(super) display_name: String,
@@ -479,12 +607,14 @@ impl From<ResolvedCurrency> for CurrencyDisplay {
     }
 }
 
+const VALORANT_POINTS_UUID: &str = "85ad13f7-3d1b-5128-9eb2-7cd8ee0b5741";
+const RADIANITE_POINTS_UUID: &str = "e59aa87c-4cbf-517a-5983-6e81511be9b7";
+const KINGDOM_CREDITS_UUID: &str = "85ca954a-41f2-ce94-9b45-8ca3dd39a00d";
+
 pub(super) fn shop_currency_name(display_name: &str) -> String {
-    if display_name.eq_ignore_ascii_case("VALORANT Points") {
-        "VP".to_string()
-    } else {
-        display_name.to_string()
-    }
+    known_shop_currency_name(display_name)
+        .unwrap_or(display_name)
+        .to_string()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -501,6 +631,25 @@ impl From<ResolvedBundle> for BundleDisplay {
             uuid: bundle.uuid,
             display_name: bundle.display_name,
             display_icon: bundle.display_icon,
+            cached_icon: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct AccessoryDisplay {
+    pub(super) uuid: String,
+    pub(super) display_name: String,
+    pub(super) display_icon: Option<String>,
+    pub(super) cached_icon: Option<PathBuf>,
+}
+
+impl From<ResolvedAccessory> for AccessoryDisplay {
+    fn from(accessory: ResolvedAccessory) -> Self {
+        Self {
+            uuid: accessory.uuid,
+            display_name: accessory.display_name,
+            display_icon: accessory.display_icon,
             cached_icon: None,
         }
     }
@@ -558,6 +707,22 @@ pub(super) fn bonus_store_offer_display(
         original_price,
         discount_percent: offer.discount_percent,
     }
+}
+
+pub(super) fn accessory_store_offer_display(
+    offer: &AccessoryStoreOffer,
+    accessories: &AccessoryCatalog,
+    currencies: &CurrencyCatalog,
+) -> StoreAccessoryDisplay {
+    let accessory = offer
+        .offer
+        .rewards
+        .first()
+        .map(|reward| AccessoryDisplay::from(accessories.resolve(&reward.item_id)))
+        .unwrap_or_else(|| AccessoryDisplay::from(accessories.resolve(&offer.offer.offer_id)));
+    let price = offer_price(&offer.offer.cost, currencies);
+
+    StoreAccessoryDisplay { accessory, price }
 }
 
 pub(super) fn store_bundle_display(
@@ -631,7 +796,7 @@ pub(super) fn summed_bundle_item_price(
 
     Some(OfferPrice {
         amount,
-        currency: CurrencyDisplay::from(currencies.resolve(currency_id)),
+        currency: currency_display_for_id(currency_id, currencies),
     })
 }
 
@@ -669,8 +834,121 @@ pub(super) fn offer_price(
 
     Some(OfferPrice {
         amount: *amount,
-        currency: CurrencyDisplay::from(currencies.resolve(currency_id)),
+        currency: currency_display_for_id(currency_id, currencies),
     })
+}
+
+pub(super) fn currency_balances_from_wallet(
+    wallet: &WalletResponse,
+    currencies: &CurrencyCatalog,
+) -> Vec<CurrencyBalanceDisplay> {
+    let mut balances = wallet
+        .balances
+        .iter()
+        .filter_map(|(currency_id, amount)| {
+            let currency = currency_display_for_id(currency_id, currencies);
+
+            shop_currency_rank(&currency.uuid, &currency.display_name).map(|_| {
+                CurrencyBalanceDisplay {
+                    amount: *amount,
+                    currency,
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    balances.sort_by(|left, right| {
+        shop_currency_rank(&left.currency.uuid, &left.currency.display_name)
+            .unwrap_or(usize::MAX)
+            .cmp(
+                &shop_currency_rank(&right.currency.uuid, &right.currency.display_name)
+                    .unwrap_or(usize::MAX),
+            )
+            .then_with(|| left.currency.display_name.cmp(&right.currency.display_name))
+    });
+    balances
+}
+
+pub(super) fn currency_display_for_id(
+    currency_id: &str,
+    currencies: &CurrencyCatalog,
+) -> CurrencyDisplay {
+    let resolved = currencies.resolve(currency_id);
+    let fallback_name = known_shop_currency_name(currency_id);
+    let display_name = if resolved.display_name.eq_ignore_ascii_case(currency_id) {
+        fallback_name
+            .map(str::to_string)
+            .unwrap_or_else(|| shop_currency_name(&resolved.display_name))
+    } else {
+        shop_currency_name(&resolved.display_name)
+    };
+
+    CurrencyDisplay {
+        uuid: resolved.uuid,
+        display_name,
+        display_icon: resolved.display_icon,
+    }
+}
+
+fn known_shop_currency_name(value: &str) -> Option<&'static str> {
+    let value = value.trim();
+
+    if value.eq_ignore_ascii_case(VALORANT_POINTS_UUID)
+        || value.eq_ignore_ascii_case("vp")
+        || value.eq_ignore_ascii_case("valorant points")
+        || value.eq_ignore_ascii_case("valorant point")
+    {
+        Some("VP")
+    } else if value.eq_ignore_ascii_case(RADIANITE_POINTS_UUID)
+        || value.eq_ignore_ascii_case("radianite")
+        || value.eq_ignore_ascii_case("radianite points")
+        || value.eq_ignore_ascii_case("radianite point")
+    {
+        Some("Radianite")
+    } else if value.eq_ignore_ascii_case(KINGDOM_CREDITS_UUID)
+        || value.eq_ignore_ascii_case("kingdom credits")
+        || value.eq_ignore_ascii_case("kingdom credit")
+        || value.eq_ignore_ascii_case("kc")
+    {
+        Some("Kingdom Credits")
+    } else {
+        None
+    }
+}
+
+fn shop_currency_rank(uuid: &str, display_name: &str) -> Option<usize> {
+    let name = known_shop_currency_name(uuid).or_else(|| known_shop_currency_name(display_name))?;
+
+    match name {
+        "VP" => Some(0),
+        "Radianite" => Some(1),
+        "Kingdom Credits" => Some(2),
+        _ => None,
+    }
+}
+
+pub(super) fn format_whole_number(amount: i64) -> String {
+    let negative = amount.is_negative();
+    let magnitude = if negative {
+        -(amount as i128)
+    } else {
+        amount as i128
+    };
+    let digits = magnitude.to_string();
+    let mut formatted = String::with_capacity(digits.len() + digits.len() / 3 + 1);
+
+    for (index, digit) in digits.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            formatted.push(',');
+        }
+        formatted.push(digit);
+    }
+
+    let mut formatted = formatted.chars().rev().collect::<String>();
+    if negative {
+        formatted.insert(0, '-');
+    }
+    formatted
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -816,14 +1094,25 @@ pub(super) async fn fetch_storefront(
         .storefront(&resolved.credentials)
         .await
         .map(|response| {
-            StoreSummary::from_response(
+            StoreSummary::from_response_with_accessories(
                 response,
                 &metadata.skins,
                 &metadata.bundles,
                 &metadata.currencies,
+                &metadata.accessories,
             )
         })
         .map_err(|error| error.to_string())?;
+    match api.wallet(&resolved.credentials).await {
+        Ok(wallet) => {
+            summary.currency_balances =
+                currency_balances_from_wallet(&wallet, &metadata.currencies);
+            summary.currency_balance_error = None;
+        }
+        Err(error) => {
+            summary.currency_balance_error = Some(error.to_string());
+        }
+    }
     cache_store_images(&mut summary, &image_cache).await;
 
     Ok(StorefrontResult {
@@ -893,6 +1182,7 @@ pub(super) struct StoreMetadata {
     pub(super) skins: SkinCatalog,
     pub(super) bundles: BundleCatalog,
     pub(super) currencies: CurrencyCatalog,
+    pub(super) accessories: AccessoryCatalog,
 }
 
 pub(super) async fn fetch_store_metadata() -> StoreMetadata {
@@ -901,6 +1191,7 @@ pub(super) async fn fetch_store_metadata() -> StoreMetadata {
             skins: api.skin_catalog().await.unwrap_or_default(),
             bundles: api.bundle_catalog().await.unwrap_or_default(),
             currencies: api.currency_catalog().await.unwrap_or_default(),
+            accessories: api.accessory_catalog().await.unwrap_or_default(),
         },
         Err(_) => StoreMetadata::default(),
     }
@@ -917,6 +1208,10 @@ pub(super) async fn cache_store_images(summary: &mut StoreSummary, image_cache: 
         .chain(summary.night_market_offers.iter_mut())
     {
         cache_skin_icon(&mut offer.skin, image_cache).await;
+    }
+
+    for offer in &mut summary.accessory_offers {
+        cache_accessory_icon(&mut offer.accessory, image_cache).await;
     }
 }
 
@@ -942,6 +1237,20 @@ pub(super) async fn cache_weapon_icon(weapon: &mut WeaponDisplay, image_cache: &
 
     weapon.cached_icon = image_cache
         .cache_url("weapons", &weapon.uuid, url)
+        .await
+        .ok();
+}
+
+pub(super) async fn cache_accessory_icon(
+    accessory: &mut AccessoryDisplay,
+    image_cache: &ImageCache,
+) {
+    let Some(url) = accessory.display_icon.as_ref() else {
+        return;
+    };
+
+    accessory.cached_icon = image_cache
+        .cache_url("accessories", &accessory.uuid, url)
         .await
         .ok();
 }

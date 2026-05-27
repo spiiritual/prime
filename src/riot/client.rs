@@ -7,11 +7,11 @@ use super::auth::{AuthParseError, COOKIE_REAUTH_URL, RedirectTokens, parse_redir
 use super::endpoints::{
     CLIENT_PLATFORM, ENTITLEMENTS_URL, HEADER_CLIENT_PLATFORM, HEADER_CLIENT_VERSION,
     HEADER_ENTITLEMENTS, PLAYER_INFO_URL, RIOT_GEO_URL, account_xp_url, player_loadout_url,
-    storefront_url,
+    storefront_url, wallet_url,
 };
 use super::models::{
     AccountXpResponse, EntitlementResponse, PlayerInfoResponse, PlayerLoadoutResponse,
-    RiotGeoResponse, StorefrontResponse,
+    RiotGeoResponse, StorefrontResponse, WalletResponse,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -145,6 +145,23 @@ impl RiotApi {
             .post(storefront_url(credentials.shard, &credentials.puuid))
             .headers(valorant_headers(credentials)?)
             .json(&serde_json::json!({}))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await
+            .map_err(RiotApiError::Http)
+    }
+
+    pub async fn wallet(
+        &self,
+        credentials: &ApiCredentials,
+    ) -> Result<WalletResponse, RiotApiError> {
+        credentials.validate()?;
+
+        self.client
+            .get(wallet_url(credentials.shard, &credentials.puuid))
+            .headers(valorant_headers(credentials)?)
             .send()
             .await?
             .error_for_status()?

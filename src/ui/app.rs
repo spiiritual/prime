@@ -442,10 +442,15 @@ impl PrimeApp {
                         let bundle_count = result.summary.featured_bundles.len();
                         let daily_count = result.summary.daily_offers.len();
                         let night_market_count = result.summary.night_market_offers.len();
+                        let balance_status = if result.summary.currency_balance_error.is_some() {
+                            ", but currency balances were unavailable"
+                        } else {
+                            ""
+                        };
 
                         self.status = format!(
-                            "Loaded {} featured bundle(s), {} daily offer(s), and {} night market offer(s)",
-                            bundle_count, daily_count, night_market_count
+                            "Loaded {} featured bundle(s), {} daily offer(s), and {} night market offer(s){}",
+                            bundle_count, daily_count, night_market_count, balance_status
                         );
                         if self.state.selected_account == Some(result.account_id) {
                             self.store_summary = Some(result.summary);

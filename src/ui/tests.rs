@@ -5,14 +5,17 @@ use std::time::Duration;
 use tempfile::tempdir;
 
 use super::data::{
-    ApiIdentity, LoadoutSummary, StoreBundleDisplay, StoreOfferDisplay, StoreSummary,
-    cache_account_api_context, is_pending_launcher_capture_error, non_empty_path,
-    require_launcher_session, weapon_category, weapon_order,
+    ApiIdentity, LoadoutSummary, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
+    StoreSummary, cache_account_api_context, format_whole_number,
+    is_pending_launcher_capture_error, non_empty_path, require_launcher_session, weapon_category,
+    weapon_order,
 };
 use crate::account::{AccountId, AccountProfile, AuthSession, LauncherSessionBackup, Shard};
-use crate::riot::content::{BundleCatalog, CurrencyCatalog, SkinCatalog, WeaponCatalog};
+use crate::riot::content::{
+    AccessoryCatalog, Buddy, BuddyLevel, BundleCatalog, CurrencyCatalog, SkinCatalog, WeaponCatalog,
+};
 use crate::riot::launcher_session::LauncherSessionError;
-use crate::riot::models::{PlayerLoadoutResponse, StorefrontResponse};
+use crate::riot::models::{PlayerLoadoutResponse, StorefrontResponse, WalletResponse};
 use crate::storage::StoredState;
 
 #[test]
@@ -134,6 +137,128 @@ fn store_summary_counts_night_market() {
 }
 
 #[test]
+fn store_summary_orders_currency_balances() {
+    let response: StorefrontResponse = serde_json::from_value(serde_json::json!({
+        "FeaturedBundle": {
+            "Bundle": {
+                "ID": "bundle",
+                "DataAssetID": "asset",
+                "CurrencyID": "vp",
+                "Items": [],
+                "DurationRemainingInSeconds": 10
+            },
+            "Bundles": [],
+            "BundleRemainingDurationInSeconds": 20
+        },
+        "SkinsPanelLayout": {
+            "SingleItemOffers": [],
+            "SingleItemStoreOffers": [],
+            "SingleItemOffersRemainingDurationInSeconds": 30
+        }
+    }))
+    .expect("response");
+    let wallet: WalletResponse = serde_json::from_value(serde_json::json!({
+        "Balances": {
+            "85ca954a-41f2-ce94-9b45-8ca3dd39a00d": 9000,
+            "85ad13f7-3d1b-5128-9eb2-7cd8ee0b5741": 1250,
+            "e59aa87c-4cbf-517a-5983-6e81511be9b7": 40
+        }
+    }))
+    .expect("wallet");
+
+    let summary = StoreSummary::from_response_with_wallet(
+        response,
+        Some(wallet),
+        &SkinCatalog::default(),
+        &BundleCatalog::default(),
+        &CurrencyCatalog::default(),
+    );
+
+    assert_eq!(
+        summary
+            .currency_balances
+            .iter()
+            .map(|balance| balance.label())
+            .collect::<Vec<_>>(),
+        ["1,250 VP", "40 Radianite", "9,000 Kingdom Credits"]
+    );
+}
+
+#[test]
+fn store_summary_includes_accessory_store_offers() {
+    let response: StorefrontResponse = serde_json::from_value(serde_json::json!({
+        "FeaturedBundle": {
+            "Bundle": {
+                "ID": "bundle",
+                "DataAssetID": "asset",
+                "CurrencyID": "vp",
+                "Items": [],
+                "DurationRemainingInSeconds": 10
+            },
+            "Bundles": [],
+            "BundleRemainingDurationInSeconds": 20
+        },
+        "SkinsPanelLayout": {
+            "SingleItemOffers": [],
+            "SingleItemStoreOffers": [],
+            "SingleItemOffersRemainingDurationInSeconds": 30
+        },
+        "AccessoryStore": {
+            "AccessoryStoreOffers": [{
+                "ContractID": "contract",
+                "Offer": {
+                    "OfferID": "offer",
+                    "IsDirectPurchase": true,
+                    "StartDate": "2026-05-25T00:00:00Z",
+                    "Cost": {"kc": 2500},
+                    "Rewards": [{
+                        "ItemTypeID": "dd3bf334-87f3-40bd-b043-682a57a8dc3a",
+                        "ItemID": "buddy-level",
+                        "Quantity": 1
+                    }]
+                }
+            }],
+            "AccessoryStoreRemainingDurationInSeconds": 50,
+            "StorefrontID": "storefront"
+        }
+    }))
+    .expect("response");
+    let accessories = AccessoryCatalog::from_parts(
+        vec![Buddy {
+            uuid: "buddy".to_string(),
+            display_name: "Penguin Buddy".to_string(),
+            display_icon: None,
+            levels: vec![BuddyLevel {
+                uuid: "buddy-level".to_string(),
+                display_name: "Penguin Buddy Level 1".to_string(),
+                display_icon: Some("buddy-icon".to_string()),
+            }],
+        }],
+        vec![],
+        vec![],
+        vec![],
+    );
+
+    let summary = StoreSummary::from_response_with_accessories(
+        response,
+        &SkinCatalog::default(),
+        &BundleCatalog::default(),
+        &CurrencyCatalog::default(),
+        &accessories,
+    );
+
+    assert_eq!(summary.accessory_remaining_seconds, Some(50));
+    assert_eq!(
+        summary
+            .accessory_offers
+            .iter()
+            .map(StoreAccessoryDisplay::label)
+            .collect::<Vec<_>>(),
+        ["Penguin Buddy Level 1 (2500 Kingdom Credits)"]
+    );
+}
+
+#[test]
 fn store_summary_keeps_distinct_featured_bundle_entries_with_shared_asset() {
     let response: StorefrontResponse = serde_json::from_value(serde_json::json!({
         "FeaturedBundle": {
@@ -249,6 +374,8 @@ fn store_summary_keeps_distinct_featured_bundle_entries_with_shared_asset() {
 fn store_summary_expires_at_earliest_shop_section_reset() {
     let loaded_at = iced::time::Instant::now();
     let summary = StoreSummary {
+        currency_balances: vec![],
+        currency_balance_error: None,
         featured_bundles: vec![],
         daily_offers: vec![],
         daily_remaining_seconds: 30,
@@ -256,10 +383,19 @@ fn store_summary_expires_at_earliest_shop_section_reset() {
         night_market_remaining_seconds: None,
         loaded_at,
         night_market_offers: vec![],
+        accessory_remaining_seconds: None,
+        accessory_offers: vec![],
     };
 
     assert!(!summary.is_expired_at(loaded_at + Duration::from_secs(19)));
     assert!(summary.is_expired_at(loaded_at + Duration::from_secs(20)));
+}
+
+#[test]
+fn format_whole_number_groups_thousands() {
+    assert_eq!(format_whole_number(0), "0");
+    assert_eq!(format_whole_number(1000), "1,000");
+    assert_eq!(format_whole_number(-1250000), "-1,250,000");
 }
 
 #[test]

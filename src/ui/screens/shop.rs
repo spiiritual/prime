@@ -2,16 +2,17 @@ use iced::widget::{column, container, rich_text, span, stack, text};
 use iced::{Color, Element, Length, Theme, alignment};
 
 use super::super::components::{asset_background_image, asset_image};
-use super::super::data::{OfferPrice, StoreBundleDisplay, StoreOfferDisplay};
+use super::super::data::{
+    OfferPrice, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
+};
 use super::super::{Message, PrimeApp};
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
-    let loading_label = if app.store_loading {
-        "Loading shop..."
-    } else {
-        "Shop loads automatically and updates when the reset timer expires."
-    };
-    let mut content = column![text(loading_label)].spacing(12).width(Length::Fill);
+    let mut content = column![].spacing(12).width(Length::Fill);
+
+    if app.store_loading {
+        content = content.push(text("Loading shop..."));
+    }
 
     if let Some(summary) = &app.store_summary {
         content = content
@@ -34,6 +35,15 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
                 )))
                 .push(offer_row(&summary.night_market_offers));
         }
+
+        if summary.accessory_remaining_seconds.is_some() || !summary.accessory_offers.is_empty() {
+            content = content
+                .push(text(format!(
+                    "Accessories reset in {}",
+                    format_duration(summary.accessory_remaining_seconds_at(app.now))
+                )))
+                .push(accessory_row(&summary.accessory_offers));
+        }
     }
 
     container(content)
@@ -51,6 +61,20 @@ fn offer_row<'a>(offers: &'a [StoreOfferDisplay]) -> Element<'a, Message> {
 
     for offer in offers {
         cards = cards.push(store_offer_card(offer));
+    }
+
+    cards.into()
+}
+
+fn accessory_row<'a>(offers: &'a [StoreAccessoryDisplay]) -> Element<'a, Message> {
+    if offers.is_empty() {
+        return text("No accessories available").into();
+    }
+
+    let mut cards = iced::widget::Row::new().spacing(10).width(Length::Fill);
+
+    for offer in offers {
+        cards = cards.push(store_accessory_card(offer));
     }
 
     cards.into()
@@ -108,6 +132,26 @@ fn store_bundle_card(bundle: &StoreBundleDisplay) -> Element<'_, Message> {
     .clip(true)
     .style(move |theme| rarity_card_style(theme, rarity_for_style.as_deref()))
     .into()
+}
+
+fn store_accessory_card(offer: &StoreAccessoryDisplay) -> Element<'_, Message> {
+    let price = offer
+        .price
+        .as_ref()
+        .map(OfferPrice::label)
+        .unwrap_or_else(|| "Price unavailable".to_string());
+    let details = column![
+        asset_image(offer.accessory.cached_icon.as_ref(), 96.0),
+        text(&offer.accessory.display_name).size(16),
+        text(price).size(14),
+    ]
+    .spacing(6);
+
+    container(details)
+        .padding(10)
+        .width(Length::Fill)
+        .style(iced::widget::container::bordered_box)
+        .into()
 }
 
 fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {

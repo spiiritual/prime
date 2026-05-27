@@ -18,6 +18,10 @@ pub fn storefront_url(shard: Shard, puuid: &str) -> String {
     format!("{}/store/v3/storefront/{puuid}", pd_base_url(shard))
 }
 
+pub fn wallet_url(shard: Shard, puuid: &str) -> String {
+    format!("{}/store/v1/wallet/{puuid}", pd_base_url(shard))
+}
+
 pub fn player_loadout_url(shard: Shard, puuid: &str) -> String {
     format!(
         "{}/personalization/v2/players/{puuid}/playerloadout",
@@ -38,6 +42,14 @@ mod tests {
         assert_eq!(
             storefront_url(Shard::Na, "puuid"),
             "https://pd.na.a.pvp.net/store/v3/storefront/puuid"
+        );
+    }
+
+    #[test]
+    fn builds_documented_wallet_url() {
+        assert_eq!(
+            wallet_url(Shard::Na, "puuid"),
+            "https://pd.na.a.pvp.net/store/v1/wallet/puuid"
         );
     }
 

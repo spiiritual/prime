@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 use thiserror::Error;
 
 pub const WEAPONS_URL: &str = "https://valorant-api.com/v1/weapons";
@@ -8,6 +8,10 @@ pub const WEAPON_SKINS_URL: &str = "https://valorant-api.com/v1/weapons/skins";
 pub const BUNDLES_URL: &str = "https://valorant-api.com/v1/bundles";
 pub const CONTENT_TIERS_URL: &str = "https://valorant-api.com/v1/contenttiers";
 pub const CURRENCIES_URL: &str = "https://valorant-api.com/v1/currencies";
+pub const BUDDIES_URL: &str = "https://valorant-api.com/v1/buddies";
+pub const SPRAYS_URL: &str = "https://valorant-api.com/v1/sprays";
+pub const PLAYER_CARDS_URL: &str = "https://valorant-api.com/v1/playercards";
+pub const PLAYER_TITLES_URL: &str = "https://valorant-api.com/v1/playertitles";
 pub const VERSION_URL: &str = "https://valorant-api.com/v1/version";
 
 #[derive(Clone)]
@@ -88,6 +92,32 @@ impl ValorantContentApi {
         Ok(ContentTierCatalog::from_tiers(response.data))
     }
 
+    pub async fn accessory_catalog(&self) -> Result<AccessoryCatalog, ContentError> {
+        let buddies = self
+            .content_data::<Vec<Buddy>>(BUDDIES_URL)
+            .await
+            .unwrap_or_default();
+        let sprays = self
+            .content_data::<Vec<Spray>>(SPRAYS_URL)
+            .await
+            .unwrap_or_default();
+        let player_cards = self
+            .content_data::<Vec<PlayerCard>>(PLAYER_CARDS_URL)
+            .await
+            .unwrap_or_default();
+        let player_titles = self
+            .content_data::<Vec<PlayerTitle>>(PLAYER_TITLES_URL)
+            .await
+            .unwrap_or_default();
+
+        Ok(AccessoryCatalog::from_parts(
+            buddies,
+            sprays,
+            player_cards,
+            player_titles,
+        ))
+    }
+
     pub async fn client_version(&self) -> Result<String, ContentError> {
         let response: ApiResponse<ValorantVersion> = self
             .client
@@ -99,6 +129,22 @@ impl ValorantContentApi {
             .await?;
 
         Ok(response.data.riot_client_version)
+    }
+
+    async fn content_data<T>(&self, url: &str) -> Result<T, ContentError>
+    where
+        T: DeserializeOwned,
+    {
+        let response: ApiResponse<T> = self
+            .client
+            .get(url)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+
+        Ok(response.data)
     }
 }
 
@@ -362,6 +408,111 @@ impl ResolvedBundle {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct AccessoryCatalog {
+    by_uuid: HashMap<String, ResolvedAccessory>,
+}
+
+impl AccessoryCatalog {
+    pub fn from_parts(
+        buddies: Vec<Buddy>,
+        sprays: Vec<Spray>,
+        player_cards: Vec<PlayerCard>,
+        player_titles: Vec<PlayerTitle>,
+    ) -> Self {
+        let mut by_uuid = HashMap::new();
+
+        for buddy in buddies {
+            let buddy_icon = buddy.display_icon.clone();
+            by_uuid.insert(
+                normalize_uuid(&buddy.uuid),
+                ResolvedAccessory {
+                    uuid: buddy.uuid.clone(),
+                    display_name: buddy.display_name.clone(),
+                    display_icon: buddy_icon.clone(),
+                },
+            );
+
+            for level in buddy.levels {
+                by_uuid.insert(
+                    normalize_uuid(&level.uuid),
+                    ResolvedAccessory {
+                        uuid: level.uuid,
+                        display_name: display_name_with_fallback(
+                            &level.display_name,
+                            &buddy.display_name,
+                        ),
+                        display_icon: level.display_icon.or_else(|| buddy_icon.clone()),
+                    },
+                );
+            }
+        }
+
+        for spray in sprays {
+            by_uuid.insert(
+                normalize_uuid(&spray.uuid),
+                ResolvedAccessory {
+                    uuid: spray.uuid,
+                    display_name: spray.display_name,
+                    display_icon: spray
+                        .full_transparent_icon
+                        .or(spray.full_icon)
+                        .or(spray.display_icon),
+                },
+            );
+        }
+
+        for card in player_cards {
+            by_uuid.insert(
+                normalize_uuid(&card.uuid),
+                ResolvedAccessory {
+                    uuid: card.uuid,
+                    display_name: card.display_name,
+                    display_icon: card.display_icon.or(card.small_art).or(card.large_art),
+                },
+            );
+        }
+
+        for title in player_titles {
+            let fallback = title.title_text.as_deref().unwrap_or(&title.uuid);
+            by_uuid.insert(
+                normalize_uuid(&title.uuid),
+                ResolvedAccessory {
+                    uuid: title.uuid.clone(),
+                    display_name: display_name_with_fallback(&title.display_name, fallback),
+                    display_icon: None,
+                },
+            );
+        }
+
+        Self { by_uuid }
+    }
+
+    pub fn resolve(&self, uuid: &str) -> ResolvedAccessory {
+        self.by_uuid
+            .get(&normalize_uuid(uuid))
+            .cloned()
+            .unwrap_or_else(|| ResolvedAccessory::unknown(uuid))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedAccessory {
+    pub uuid: String,
+    pub display_name: String,
+    pub display_icon: Option<String>,
+}
+
+impl ResolvedAccessory {
+    pub fn unknown(uuid: &str) -> Self {
+        Self {
+            uuid: uuid.to_string(),
+            display_name: uuid.to_string(),
+            display_icon: None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 struct ApiResponse<T> {
     data: T,
@@ -444,6 +595,61 @@ pub struct Bundle {
     pub display_icon2: Option<String>,
     #[serde(rename = "verticalPromoImage")]
     pub vertical_promo_image: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct Buddy {
+    pub uuid: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    #[serde(rename = "displayIcon")]
+    pub display_icon: Option<String>,
+    #[serde(default)]
+    pub levels: Vec<BuddyLevel>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct BuddyLevel {
+    pub uuid: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    #[serde(rename = "displayIcon")]
+    pub display_icon: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct Spray {
+    pub uuid: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    #[serde(rename = "displayIcon")]
+    pub display_icon: Option<String>,
+    #[serde(rename = "fullIcon")]
+    pub full_icon: Option<String>,
+    #[serde(rename = "fullTransparentIcon")]
+    pub full_transparent_icon: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct PlayerCard {
+    pub uuid: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    #[serde(rename = "displayIcon")]
+    pub display_icon: Option<String>,
+    #[serde(rename = "smallArt")]
+    pub small_art: Option<String>,
+    #[serde(rename = "largeArt")]
+    pub large_art: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct PlayerTitle {
+    pub uuid: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    #[serde(rename = "titleText")]
+    pub title_text: Option<String>,
 }
 
 fn normalize_uuid(uuid: &str) -> String {
@@ -606,6 +812,54 @@ mod tests {
         assert_eq!(bundle.display_name, "Give Back Bundle");
         assert_eq!(bundle.display_icon.as_deref(), Some("vertical-promo"));
         assert_eq!(catalog.resolve("missing").display_name, "missing");
+    }
+
+    #[test]
+    fn resolves_accessory_ids_to_display_names_and_icons() {
+        let catalog = AccessoryCatalog::from_parts(
+            vec![Buddy {
+                uuid: "buddy-uuid".to_string(),
+                display_name: "Penguin Buddy".to_string(),
+                display_icon: Some("buddy-icon".to_string()),
+                levels: vec![BuddyLevel {
+                    uuid: "buddy-level-uuid".to_string(),
+                    display_name: "Penguin Buddy Level 1".to_string(),
+                    display_icon: None,
+                }],
+            }],
+            vec![Spray {
+                uuid: "spray-uuid".to_string(),
+                display_name: "Penguin Spray".to_string(),
+                display_icon: None,
+                full_icon: Some("spray-icon".to_string()),
+                full_transparent_icon: None,
+            }],
+            vec![PlayerCard {
+                uuid: "card-uuid".to_string(),
+                display_name: "Penguin Card".to_string(),
+                display_icon: Some("card-icon".to_string()),
+                small_art: None,
+                large_art: None,
+            }],
+            vec![PlayerTitle {
+                uuid: "title-uuid".to_string(),
+                display_name: "Penguin".to_string(),
+                title_text: Some("Penguin".to_string()),
+            }],
+        );
+
+        let buddy = catalog.resolve("BUDDY-LEVEL-UUID");
+        let spray = catalog.resolve("spray-uuid");
+        let card = catalog.resolve("card-uuid");
+        let title = catalog.resolve("title-uuid");
+        let unknown = catalog.resolve("missing");
+
+        assert_eq!(buddy.display_name, "Penguin Buddy Level 1");
+        assert_eq!(buddy.display_icon.as_deref(), Some("buddy-icon"));
+        assert_eq!(spray.display_icon.as_deref(), Some("spray-icon"));
+        assert_eq!(card.display_name, "Penguin Card");
+        assert_eq!(title.display_name, "Penguin");
+        assert_eq!(unknown.display_name, "missing");
     }
 
     #[test]

@@ -57,6 +57,15 @@ pub struct StorefrontResponse {
     pub skins_panel_layout: SkinsPanelLayout,
     #[serde(default)]
     pub bonus_store: Option<BonusStore>,
+    #[serde(default)]
+    pub accessory_store: Option<AccessoryStore>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct WalletResponse {
+    #[serde(default)]
+    pub balances: HashMap<String, i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -162,6 +171,21 @@ pub struct BonusStoreOffer {
     #[serde(default)]
     pub discount_costs: HashMap<String, i64>,
     pub is_seen: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct AccessoryStore {
+    #[serde(default)]
+    pub accessory_store_offers: Vec<AccessoryStoreOffer>,
+    #[serde(default)]
+    pub accessory_store_remaining_duration_in_seconds: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct AccessoryStoreOffer {
+    pub offer: StoreOffer,
 }
 
 fn deserialize_discount_percent<'de, D>(deserializer: D) -> Result<i64, D::Error>
@@ -296,6 +320,78 @@ mod tests {
         assert_eq!(
             storefront.skins_panel_layout.single_item_store_offers[0].cost["vp"],
             1775
+        );
+    }
+
+    #[test]
+    fn deserializes_wallet_balances() {
+        let json = serde_json::json!({
+            "Balances": {
+                "85ad13f7-3d1b-5128-9eb2-7cd8ee0b5741": 1250,
+                "e59aa87c-4cbf-517a-5983-6e81511be9b7": 40
+            }
+        });
+
+        let wallet: WalletResponse = serde_json::from_value(json).expect("wallet response");
+
+        assert_eq!(
+            wallet.balances["85ad13f7-3d1b-5128-9eb2-7cd8ee0b5741"],
+            1250
+        );
+        assert_eq!(wallet.balances["e59aa87c-4cbf-517a-5983-6e81511be9b7"], 40);
+    }
+
+    #[test]
+    fn deserializes_accessory_storefront_offers() {
+        let json = serde_json::json!({
+            "FeaturedBundle": {
+                "Bundle": {
+                    "ID": "bundle",
+                    "DataAssetID": "asset",
+                    "CurrencyID": "vp",
+                    "Items": [],
+                    "DurationRemainingInSeconds": 10
+                },
+                "Bundles": [],
+                "BundleRemainingDurationInSeconds": 20
+            },
+            "SkinsPanelLayout": {
+                "SingleItemOffers": [],
+                "SingleItemStoreOffers": [],
+                "SingleItemOffersRemainingDurationInSeconds": 86400
+            },
+            "AccessoryStore": {
+                "AccessoryStoreOffers": [{
+                    "ContractID": "contract",
+                    "Offer": {
+                        "OfferID": "accessory-offer",
+                        "IsDirectPurchase": true,
+                        "StartDate": "2026-05-25T00:00:00Z",
+                        "Cost": {"kc": 2500},
+                        "Rewards": [{
+                            "ItemTypeID": "dd3bf334-87f3-40bd-b043-682a57a8dc3a",
+                            "ItemID": "buddy",
+                            "Quantity": 1
+                        }]
+                    }
+                }],
+                "AccessoryStoreRemainingDurationInSeconds": 604800,
+                "StorefrontID": "storefront"
+            }
+        });
+
+        let storefront: StorefrontResponse =
+            serde_json::from_value(json).expect("storefront response");
+        let accessory_store = storefront.accessory_store.expect("accessory store");
+
+        assert_eq!(accessory_store.accessory_store_offers.len(), 1);
+        assert_eq!(
+            accessory_store.accessory_store_offers[0].offer.offer_id,
+            "accessory-offer"
+        );
+        assert_eq!(
+            accessory_store.accessory_store_remaining_duration_in_seconds,
+            604800
         );
     }
 

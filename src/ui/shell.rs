@@ -1,6 +1,7 @@
 use iced::widget::{button, column, container, row, scrollable, text};
-use iced::{Element, Length, Padding};
+use iced::{Element, Length, Padding, alignment};
 
+use super::components::currency_balance_display;
 use super::{Message, PrimeApp, Tab, screens};
 
 impl PrimeApp {
@@ -72,10 +73,7 @@ impl PrimeApp {
             .width(Length::Fill);
 
         column![
-            container(text(self.active_tab.to_string()).size(30))
-                .padding(14)
-                .width(Length::Fill)
-                .style(iced::widget::container::bordered_box),
+            self.main_header(),
             container(scrollable(scroll_body))
                 .padding(16)
                 .width(Length::Fill)
@@ -88,6 +86,36 @@ impl PrimeApp {
         ]
         .spacing(12)
         .into()
+    }
+
+    fn main_header(&self) -> Element<'_, Message> {
+        let title = text(self.active_tab.to_string()).size(30);
+
+        let header: Element<_> = if self.active_tab == Tab::Shop {
+            row![
+                container(title).width(Length::Fill),
+                self.shop_header_currency()
+            ]
+            .spacing(12)
+            .align_y(alignment::Vertical::Center)
+            .into()
+        } else {
+            title.into()
+        };
+
+        container(header)
+            .padding(14)
+            .width(Length::Fill)
+            .style(iced::widget::container::bordered_box)
+            .into()
+    }
+
+    fn shop_header_currency(&self) -> Element<'_, Message> {
+        if let Some(summary) = &self.store_summary {
+            currency_balance_display(summary)
+        } else {
+            text("").into()
+        }
     }
 
     fn tab_button(&self, tab: Tab) -> Element<'_, Message> {

@@ -8,6 +8,7 @@ use iced::widget::{container, image, text};
 use iced::{ContentFit, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
 
 use super::Message;
+use super::data::{CurrencyBalanceDisplay, StoreSummary};
 
 // Keeps popovers in the overlay layer so controls are not clipped by their parent card.
 pub(super) fn anchored_popover<'a>(
@@ -334,4 +335,34 @@ pub(super) fn asset_background_image(path: Option<&PathBuf>, height: f32) -> Ele
             .style(iced::widget::container::rounded_box)
             .into(),
     }
+}
+
+pub(super) fn currency_balance_display(summary: &StoreSummary) -> Element<'_, Message> {
+    if summary.currency_balances.is_empty() {
+        let label = if summary.currency_balance_error.is_some() {
+            "Currency balances unavailable"
+        } else {
+            "No currency balances returned"
+        };
+        text(label).size(14).into()
+    } else {
+        currency_balance_row(&summary.currency_balances)
+    }
+}
+
+fn currency_balance_row<'a>(balances: &'a [CurrencyBalanceDisplay]) -> Element<'a, Message> {
+    let mut row = iced::widget::Row::new().spacing(10);
+
+    for balance in balances {
+        row = row.push(currency_balance_chip(balance));
+    }
+
+    row.into()
+}
+
+fn currency_balance_chip(balance: &CurrencyBalanceDisplay) -> Element<'_, Message> {
+    container(text(balance.label()).size(16))
+        .padding([6, 10])
+        .style(iced::widget::container::bordered_box)
+        .into()
 }
