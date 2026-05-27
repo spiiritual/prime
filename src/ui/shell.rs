@@ -203,7 +203,8 @@ impl PrimeApp {
     }
 
     fn tab_button(&self, tab: Tab) -> Element<'_, Message> {
-        let label = if self.active_tab == tab {
+        let is_selected = self.active_tab == tab;
+        let label = if is_selected {
             format!("[{}]", tab)
         } else {
             tab.to_string()
@@ -211,7 +212,8 @@ impl PrimeApp {
 
         button(text(label))
             .width(Length::Fill)
-            .on_press(Message::TabSelected(tab))
+            .style(move |theme, status| sidebar_tab_button_style(theme, status, is_selected))
+            .on_press_maybe((!is_selected).then_some(Message::TabSelected(tab)))
             .into()
     }
 }
@@ -255,6 +257,21 @@ fn account_badge_button_style(
     } else {
         iced::widget::button::primary(theme, status)
     }
+}
+
+fn sidebar_tab_button_style(
+    theme: &Theme,
+    status: iced::widget::button::Status,
+    is_selected: bool,
+) -> iced::widget::button::Style {
+    if !is_selected {
+        return iced::widget::button::primary(theme, status);
+    }
+
+    let mut style = iced::widget::button::secondary(theme, iced::widget::button::Status::Disabled);
+    style.background = Some(Color::from_rgb8(68, 72, 78).into());
+    style.text_color = Color::from_rgb8(180, 184, 190);
+    style
 }
 
 fn account_switcher_item_style(
