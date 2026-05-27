@@ -22,9 +22,35 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
             app.image_cache.path().display()
         )),
         button("Delete image cache").on_press(Message::ClearImageCache),
+        app_update_controls(app),
         token_import_controls(app)
     ]
     .spacing(12)
+    .into()
+}
+
+fn app_update_controls(app: &PrimeApp) -> Element<'_, Message> {
+    let mut check_button = button("Check for updates");
+
+    if !app.app_update_status.is_busy() {
+        check_button = check_button.on_press(Message::CheckForAppUpdate);
+    }
+
+    let mut controls = row![check_button].spacing(10);
+
+    if app.app_update_status.pending_update().is_some() {
+        controls = controls.push(button("Download update").on_press(Message::DownloadAppUpdate));
+    }
+
+    column![
+        text(format!(
+            "Prime version: {}",
+            crate::updater::CURRENT_VERSION
+        )),
+        text(app.app_update_status.label()),
+        controls
+    ]
+    .spacing(8)
     .into()
 }
 

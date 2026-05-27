@@ -13,6 +13,7 @@ use iced::{Size, Subscription, Theme, window};
 use crate::account::{AccountId, Shard};
 use crate::image_cache::ImageCache;
 use crate::storage::{AccountRepository, StoredState};
+use crate::updater::AvailableUpdate;
 
 use data::{
     AccountRanksResult, CapturedAccountDraft, LoadoutResult, LoadoutSummary,
@@ -64,6 +65,7 @@ fn loading_indicator_active(app: &PrimeApp) -> bool {
         || app.loadout_loading
         || app.account_ranks_loading
         || app.launching_account.is_some()
+        || app.app_update_status.is_busy()
         || loading_status_active(&app.status)
 }
 
@@ -73,6 +75,9 @@ fn loading_status_active(status: &str) -> bool {
         || status.starts_with("Opening Riot Client")
         || status.starts_with("Clearing ")
         || status.starts_with("Launching ")
+        || status.starts_with("Checking for Prime updates")
+        || status.starts_with("Downloading Prime ")
+        || status.starts_with("Preparing to restart")
 }
 
 fn status_bar_visible(status: &str) -> bool {
@@ -87,6 +92,8 @@ fn status_message_is_error(status: &str) -> bool {
         "Profile refresh failed",
         "Store check failed",
         "Loadout check failed",
+        "Update check failed",
+        "Update failed",
         "Rank refresh failed",
         "Captured account rejected",
         "Captured identity rejected",
@@ -130,9 +137,60 @@ struct PrimeApp {
     loadout_loading: bool,
     account_ranks_loading: bool,
     launching_account: Option<AccountId>,
+    app_update_status: AppUpdateStatus,
     image_cache_size_bytes: u64,
     loading_frame: usize,
     now: iced::time::Instant,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum AppUpdateStatus {
+    Checking,
+    UpToDate,
+    Available(AvailableUpdate),
+    Dismissed(AvailableUpdate),
+    Downloading(AvailableUpdate),
+    Installing,
+    Failed(String),
+}
+
+impl AppUpdateStatus {
+    fn is_busy(&self) -> bool {
+        matches!(
+            self,
+            Self::Checking | Self::Downloading(_) | Self::Installing
+        )
+    }
+
+    fn prompt_update(&self) -> Option<&AvailableUpdate> {
+        match self {
+            Self::Available(update) => Some(update),
+            _ => None,
+        }
+    }
+
+    fn pending_update(&self) -> Option<&AvailableUpdate> {
+        match self {
+            Self::Available(update) | Self::Dismissed(update) => Some(update),
+            _ => None,
+        }
+    }
+
+    fn label(&self) -> String {
+        match self {
+            Self::Checking => "Checking for Prime updates".to_string(),
+            Self::UpToDate => {
+                format!("Prime is up to date ({})", crate::updater::CURRENT_VERSION)
+            }
+            Self::Available(update) | Self::Dismissed(update) => format!(
+                "Prime {} is available (installed: {})",
+                update.latest_version, update.current_version
+            ),
+            Self::Downloading(update) => format!("Downloading Prime {}", update.latest_version),
+            Self::Installing => "Preparing to restart and install the update".to_string(),
+            Self::Failed(error) => format!("Update check failed: {error}"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -196,4 +254,12 @@ enum Message {
     ImageCacheCleared(Result<(), String>),
     LaunchAccount(AccountId),
     LaunchFinished(Result<(), String>),
+    CheckForAppUpdate,
+    AppUpdateChecked {
+        user_requested: bool,
+        result: Result<Option<AvailableUpdate>, String>,
+    },
+    DismissAppUpdate,
+    DownloadAppUpdate,
+    AppUpdatePrepared(Result<(), String>),
 }

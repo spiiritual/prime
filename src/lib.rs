@@ -4,3 +4,4 @@ pub mod launch;
 pub mod riot;
 pub mod storage;
 pub mod ui;
+pub mod updater;

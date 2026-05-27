@@ -6,13 +6,14 @@ use crate::launch::LaunchConfig;
 use crate::riot::auth::parse_redirect_tokens;
 use crate::riot::launcher_session::CapturedLauncherSession;
 use crate::storage::{AccountRepository, StoredState};
+use crate::updater::{check_for_update, download_and_prepare_update};
 
 use super::data::{
     cache_account_api_context, fetch_account_ranks, fetch_current_client_version, fetch_loadout,
     fetch_profile_identity, fetch_storefront, launch_account, non_empty_path,
     start_account_capture, start_launcher_session_login,
 };
-use super::{Message, PrimeApp, Tab};
+use super::{AppUpdateStatus, Message, PrimeApp, Tab};
 
 impl PrimeApp {
     pub(super) fn boot() -> (Self, Task<Message>) {
@@ -44,6 +45,7 @@ impl PrimeApp {
                 loadout_loading: false,
                 account_ranks_loading: false,
                 launching_account: None,
+                app_update_status: AppUpdateStatus::Checking,
                 image_cache_size_bytes: 0,
                 loading_frame: 0,
                 now: iced::time::Instant::now(),
@@ -54,6 +56,10 @@ impl PrimeApp {
                     Message::Loaded,
                 ),
                 Task::perform(fetch_current_client_version(), Message::ClientVersionLoaded),
+                Task::perform(check_for_update(), |result| Message::AppUpdateChecked {
+                    user_requested: false,
+                    result: result.map_err(|error| error.to_string()),
+                }),
                 Task::perform(
                     async move {
                         cache_for_size
@@ -683,6 +689,83 @@ impl PrimeApp {
                 Err(error) => {
                     self.launching_account = None;
                     self.status = format!("Launch failed: {error}");
+                    Task::none()
+                }
+            },
+            Message::CheckForAppUpdate => {
+                if self.app_update_status.is_busy() {
+                    return Task::none();
+                }
+
+                self.app_update_status = AppUpdateStatus::Checking;
+                self.status = "Checking for Prime updates".to_string();
+                Task::perform(check_for_update(), |result| Message::AppUpdateChecked {
+                    user_requested: true,
+                    result: result.map_err(|error| error.to_string()),
+                })
+            }
+            Message::AppUpdateChecked {
+                user_requested,
+                result,
+            } => {
+                match result {
+                    Ok(Some(update)) => {
+                        self.status = format!(
+                            "Prime {} is available; download it when ready",
+                            update.latest_version
+                        );
+                        self.app_update_status = AppUpdateStatus::Available(update);
+                    }
+                    Ok(None) => {
+                        self.app_update_status = AppUpdateStatus::UpToDate;
+
+                        if user_requested {
+                            self.status = format!(
+                                "Prime is up to date ({})",
+                                crate::updater::CURRENT_VERSION
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        self.app_update_status = AppUpdateStatus::Failed(error.clone());
+
+                        if user_requested {
+                            self.status = format!("Update check failed: {error}");
+                        }
+                    }
+                }
+
+                Task::none()
+            }
+            Message::DismissAppUpdate => {
+                if let Some(update) = self.app_update_status.prompt_update().cloned() {
+                    self.app_update_status = AppUpdateStatus::Dismissed(update);
+                    self.status = "Update postponed".to_string();
+                }
+
+                Task::none()
+            }
+            Message::DownloadAppUpdate => {
+                let Some(update) = self.app_update_status.pending_update().cloned() else {
+                    self.status = "No Prime update is available to download".to_string();
+                    return Task::none();
+                };
+
+                self.status = format!("Downloading Prime {}", update.latest_version);
+                self.app_update_status = AppUpdateStatus::Downloading(update.clone());
+                Task::perform(download_and_prepare_update(update), |result| {
+                    Message::AppUpdatePrepared(result.map_err(|error| error.to_string()))
+                })
+            }
+            Message::AppUpdatePrepared(result) => match result {
+                Ok(()) => {
+                    self.app_update_status = AppUpdateStatus::Installing;
+                    self.status = "Preparing to restart and install the update".to_string();
+                    iced::exit()
+                }
+                Err(error) => {
+                    self.app_update_status = AppUpdateStatus::Failed(error.clone());
+                    self.status = format!("Update failed: {error}");
                     Task::none()
                 }
             },

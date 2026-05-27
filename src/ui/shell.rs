@@ -2,6 +2,7 @@ use iced::widget::{button, column, container, opaque, row, scrollable, space, st
 use iced::{Color, Element, Length, Padding, Theme, alignment};
 
 use super::components::{currency_balance_display, loading_indicator};
+use super::data::format_bytes;
 use super::{Message, PrimeApp, Tab, screens};
 use super::{loading_indicator_active, status_bar_visible};
 
@@ -23,6 +24,11 @@ impl PrimeApp {
 
         if self.show_add_account_prompt {
             stack![content, add_account_prompt_overlay()]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else if let Some(update) = self.app_update_status.prompt_update() {
+            stack![content, app_update_prompt_overlay(update)]
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
@@ -211,4 +217,48 @@ fn add_account_prompt_scrim_style(_: &Theme) -> iced::widget::container::Style {
         background: Some(Color::from_rgba8(8, 10, 14, 0.68).into()),
         ..Default::default()
     }
+}
+
+fn app_update_prompt_overlay(update: &crate::updater::AvailableUpdate) -> Element<'_, Message> {
+    let prompt = container(
+        column![
+            column![
+                text(format!("Prime {} is available", update.latest_version)).size(20),
+                text(format!(
+                    "You are running Prime {}. Download {} from GitHub and restart to install it.",
+                    update.current_version,
+                    update.display_name()
+                ))
+                .size(14),
+                text(format!(
+                    "Asset: {} ({})",
+                    update.asset.name,
+                    format_bytes(update.asset.size_bytes)
+                ))
+                .size(14)
+            ]
+            .spacing(8)
+            .width(Length::Fill),
+            row![
+                space().width(Length::Fill),
+                button("Later").on_press(Message::DismissAppUpdate),
+                button("Download and restart").on_press(Message::DownloadAppUpdate)
+            ]
+            .spacing(10)
+        ]
+        .spacing(18),
+    )
+    .padding(24)
+    .width(720)
+    .style(add_account_prompt_style);
+
+    opaque(
+        container(prompt)
+            .padding(14)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center)
+            .style(add_account_prompt_scrim_style),
+    )
 }
