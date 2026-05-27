@@ -351,10 +351,8 @@ impl PrimeApp {
                 Task::perform(
                     async move {
                         export_account(&account)
-                            .map(|payload| super::AccountExportOutput {
-                                account_id,
-                                display_name,
-                                payload,
+                            .map(|payload| {
+                                super::AccountExportOutput::new(account_id, display_name, payload)
                             })
                             .map_err(|error| error.to_string())
                     },
@@ -371,13 +369,6 @@ impl PrimeApp {
                     Err(error) => {
                         self.status = format!("Could not export account: {error}");
                     }
-                }
-
-                Task::none()
-            }
-            Message::ExportAccountPayloadChanged(value) => {
-                if let Some(export) = &mut self.exported_account {
-                    export.payload = value;
                 }
 
                 Task::none()

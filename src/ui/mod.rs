@@ -173,6 +173,40 @@ struct AccountExportOutput {
     account_id: AccountId,
     display_name: String,
     payload: String,
+    masked_payload: String,
+}
+
+impl AccountExportOutput {
+    fn new(account_id: AccountId, display_name: String, payload: String) -> Self {
+        let masked_payload = masked_account_export_payload(&payload);
+
+        Self {
+            account_id,
+            display_name,
+            payload,
+            masked_payload,
+        }
+    }
+}
+
+fn masked_account_export_payload(payload: &str) -> String {
+    const VISIBLE_CHARS: usize = 18;
+    const MASK_CHARS: usize = 24;
+
+    let payload = payload.trim();
+    let char_count = payload.chars().count();
+
+    if char_count <= VISIBLE_CHARS * 2 {
+        return "*".repeat(char_count);
+    }
+
+    let prefix = payload.chars().take(VISIBLE_CHARS).collect::<String>();
+    let suffix = payload
+        .chars()
+        .skip(char_count - VISIBLE_CHARS)
+        .collect::<String>();
+
+    format!("{prefix}...{}...{suffix}", "*".repeat(MASK_CHARS))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -311,7 +345,6 @@ enum Message {
     ToggleAccountMenu(AccountId),
     RequestExportAccount(AccountId),
     AccountExportPrepared(Result<AccountExportOutput, String>),
-    ExportAccountPayloadChanged(String),
     CopyAccountExport,
     CloseAccountExport,
     OpenImportAccount,

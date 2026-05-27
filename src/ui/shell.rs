@@ -1,11 +1,13 @@
-use iced::widget::{button, column, container, opaque, row, scrollable, space, stack, text};
+use iced::widget::{
+    button, column, container, opaque, row, scrollable, space, stack, text, text_input,
+};
 use iced::{Color, Element, Length, Padding, Theme, alignment};
 
 use crate::account::AccountProfile;
 
 use super::components::{anchored_popover, currency_balance_display, loading_indicator};
 use super::data::format_bytes;
-use super::{MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, Tab, screens};
+use super::{AccountExportOutput, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, Tab, screens};
 use super::{loading_indicator_active, status_bar_visible};
 
 const SIDEBAR_WIDTH: f32 = 210.0;
@@ -31,6 +33,16 @@ impl PrimeApp {
 
         if self.show_add_account_prompt {
             stack![content, add_account_prompt_overlay()]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else if self.show_import_account_prompt {
+            stack![content, import_account_prompt_overlay(self)]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else if let Some(export) = &self.exported_account {
+            stack![content, export_account_prompt_overlay(export)]
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
@@ -346,6 +358,106 @@ fn add_account_prompt_scrim_style(_: &Theme) -> iced::widget::container::Style {
         background: Some(Color::from_rgba8(8, 10, 14, 0.68).into()),
         ..Default::default()
     }
+}
+
+fn import_account_prompt_overlay(app: &PrimeApp) -> Element<'_, Message> {
+    let import_ready =
+        !app.import_account_in_progress && !app.import_account_input.trim().is_empty();
+    let mut import_input =
+        text_input("Paste account export", &app.import_account_input).width(Length::Fill);
+
+    if !app.import_account_in_progress {
+        import_input = import_input.on_input(Message::ImportAccountInputChanged);
+
+        if import_ready {
+            import_input = import_input.on_submit(Message::ConfirmImportAccount);
+        }
+    }
+
+    let prompt = container(
+        column![
+            column![
+                text("Import account").size(20),
+                text("Paste an account export from another Prime install.").size(14)
+            ]
+            .spacing(8)
+            .width(Length::Fill),
+            import_input,
+            row![
+                space().width(Length::Fill),
+                button("Cancel").on_press_maybe(
+                    (!app.import_account_in_progress).then_some(Message::CancelImportAccount)
+                ),
+                button(if app.import_account_in_progress {
+                    "Importing..."
+                } else {
+                    "Import"
+                })
+                .on_press_maybe(import_ready.then_some(Message::ConfirmImportAccount))
+            ]
+            .spacing(10)
+        ]
+        .spacing(18),
+    )
+    .padding(24)
+    .width(720)
+    .style(add_account_prompt_style);
+
+    opaque(
+        container(prompt)
+            .padding(14)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center)
+            .style(add_account_prompt_scrim_style),
+    )
+}
+
+fn export_account_prompt_overlay(export: &AccountExportOutput) -> Element<'_, Message> {
+    let token_row = row![
+        text_input("Account export", &export.masked_payload)
+            .width(Length::Fill)
+            .size(13),
+        button("Copy").on_press(Message::CopyAccountExport)
+    ]
+    .spacing(10)
+    .align_y(alignment::Vertical::Center);
+
+    let prompt = container(
+        column![
+            column![
+                text(format!("Export {}", export.display_name)).size(20),
+                text("Keep this export private; it includes captured Riot Client session data.")
+                    .size(14),
+                text(
+                    "Warning: this is like sharing the account password and grants full access to the account."
+                )
+                .size(14)
+                .width(Length::Fill)
+                .color(Color::from_rgb8(255, 112, 112))
+            ]
+            .spacing(8)
+            .width(Length::Fill),
+            token_row,
+            row![space().width(Length::Fill), button("Close").on_press(Message::CloseAccountExport)]
+                .spacing(10)
+        ]
+        .spacing(18),
+    )
+    .padding(24)
+    .width(760)
+    .style(add_account_prompt_style);
+
+    opaque(
+        container(prompt)
+            .padding(14)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center)
+            .style(add_account_prompt_scrim_style),
+    )
 }
 
 fn app_update_prompt_overlay(update: &crate::updater::AvailableUpdate) -> Element<'_, Message> {

@@ -11,7 +11,7 @@ use super::data::{
     non_empty_path, rank_name_for_competitive_tier, require_launcher_session, weapon_category,
     weapon_order,
 };
-use super::{loading_status_active, status_bar_visible};
+use super::{loading_status_active, masked_account_export_payload, status_bar_visible};
 use crate::account::{AccountId, AccountProfile, AuthSession, LauncherSessionBackup, Shard};
 use crate::riot::content::{
     AccessoryCatalog, Buddy, BuddyLevel, BundleCatalog, ContractCatalog, ContractChapter,
@@ -534,6 +534,17 @@ fn loading_status_detection_still_tracks_hidden_progress_messages() {
     assert!(!loading_status_active(
         "Failed to load accounts: disk error"
     ));
+}
+
+#[test]
+fn account_export_payload_display_is_partially_masked() {
+    let payload = format!("{}{}{}", "a".repeat(18), "b".repeat(30), "c".repeat(18));
+    let masked = masked_account_export_payload(&payload);
+
+    assert!(masked.starts_with(&"a".repeat(18)));
+    assert!(masked.ends_with(&"c".repeat(18)));
+    assert!(masked.contains(&"*".repeat(24)));
+    assert!(!masked.contains(&"b".repeat(30)));
 }
 
 #[test]
