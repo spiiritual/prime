@@ -11,9 +11,9 @@ use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{check_for_update, download_and_prepare_update};
 
 use super::data::{
-    cache_account_api_context, fetch_account_ranks, fetch_current_client_version, fetch_loadout,
-    fetch_profile_identity, fetch_storefront, launch_account, non_empty_path,
-    start_account_capture, start_launcher_session_login,
+    cache_account_api_context, check_riot_client_window_visible, fetch_account_ranks,
+    fetch_current_client_version, fetch_loadout, fetch_profile_identity, fetch_storefront,
+    launch_account, non_empty_path, start_account_capture, start_launcher_session_login,
 };
 use super::{
     AppUpdateStatus, LoadoutTab, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, Tab, TabScrollOffsets,
@@ -56,6 +56,7 @@ impl PrimeApp {
                 loadout_loading: false,
                 account_ranks_loading: false,
                 launching_account: None,
+                launch_progress_checking: false,
                 app_update_status: AppUpdateStatus::Checking,
                 image_cache_size_bytes: 0,
                 loading_frame: 0,
@@ -938,6 +939,7 @@ impl PrimeApp {
                 self.store_summary = None;
                 self.loadout_summary = None;
                 self.launching_account = Some(id);
+                self.launch_progress_checking = false;
                 self.status = format!("Launching {summary}");
 
                 Task::batch([
@@ -948,20 +950,40 @@ impl PrimeApp {
                     ),
                 ])
             }
+            Message::LaunchProgressTick => {
+                if self.launching_account.is_none() || self.launch_progress_checking {
+                    return Task::none();
+                }
+
+                self.launch_progress_checking = true;
+                Task::perform(
+                    check_riot_client_window_visible(),
+                    Message::LaunchProgressChecked,
+                )
+            }
+            Message::LaunchProgressChecked(result) => {
+                self.launch_progress_checking = false;
+
+                if self.launching_account.is_none() {
+                    return Task::none();
+                }
+
+                if matches!(result, Ok(true)) {
+                    self.status = "Riot Client is open; waiting for VALORANT".to_string();
+                }
+
+                Task::none()
+            }
             Message::LaunchFinished(result) => match result {
                 Ok(LaunchTargetProcess::Valorant) => {
                     self.launching_account = None;
-                    self.status = "VALORANT process detected".to_string();
-                    Task::none()
-                }
-                Ok(LaunchTargetProcess::RiotClient) => {
-                    self.launching_account = None;
-                    self.status =
-                        "Riot Client process detected; VALORANT may still be updating".to_string();
+                    self.launch_progress_checking = false;
+                    self.status = "VALORANT window detected".to_string();
                     Task::none()
                 }
                 Err(error) => {
                     self.launching_account = None;
+                    self.launch_progress_checking = false;
                     self.status = format!("Launch failed: {error}");
                     Task::none()
                 }

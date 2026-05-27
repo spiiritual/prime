@@ -9,7 +9,7 @@ use crate::account::{
 use crate::image_cache::ImageCache;
 use crate::launch::{
     LaunchConfig, LaunchTargetProcess, close_riot_processes, launch_riot_login_capture,
-    launch_target_process_is_running, launch_valorant,
+    launch_target_window_is_visible, launch_valorant, riot_client_window_is_visible,
 };
 use crate::riot::client::{ApiCredentials, RiotApi};
 use crate::riot::content::{
@@ -36,7 +36,7 @@ pub(super) async fn launch_account(
     let backup = require_launcher_session(backup)?;
 
     prepare_account_launch(config, backup).await?;
-    wait_for_launch_target_process(VALORANT_OPEN_TIMEOUT, VALORANT_OPEN_POLL_INTERVAL).await
+    wait_for_launch_target_window(VALORANT_OPEN_TIMEOUT, VALORANT_OPEN_POLL_INTERVAL).await
 }
 
 async fn prepare_account_launch(
@@ -78,30 +78,37 @@ pub(super) const VALORANT_OPEN_TIMEOUT: Duration = Duration::from_secs(300);
 pub(super) const VALORANT_OPEN_POLL_INTERVAL: Duration = Duration::from_secs(1);
 pub(super) const SHOP_RESET_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
-pub(super) async fn wait_for_launch_target_process(
+pub(super) async fn wait_for_launch_target_window(
     timeout: Duration,
     poll_interval: Duration,
 ) -> Result<LaunchTargetProcess, String> {
     let started = std::time::Instant::now();
 
     while started.elapsed() < timeout {
-        if let Some(process) = check_launch_target_process().await? {
-            return Ok(process);
+        if let Some(target) = check_launch_target_window().await? {
+            return Ok(target);
         }
 
         tokio::time::sleep(poll_interval).await;
     }
 
     Err(
-        "sent VALORANT launch request to Riot Client, but neither Riot Client nor VALORANT was detected"
+        "sent VALORANT launch request to Riot Client, but a visible VALORANT window was not detected"
             .to_string(),
     )
 }
 
-async fn check_launch_target_process() -> Result<Option<LaunchTargetProcess>, String> {
-    tokio::task::spawn_blocking(launch_target_process_is_running)
+async fn check_launch_target_window() -> Result<Option<LaunchTargetProcess>, String> {
+    tokio::task::spawn_blocking(launch_target_window_is_visible)
         .await
-        .map_err(|error| format!("failed to join VALORANT process check task: {error}"))?
+        .map_err(|error| format!("failed to join VALORANT window check task: {error}"))?
+        .map_err(|error| error.to_string())
+}
+
+pub(super) async fn check_riot_client_window_visible() -> Result<bool, String> {
+    tokio::task::spawn_blocking(riot_client_window_is_visible)
+        .await
+        .map_err(|error| format!("failed to join Riot Client window check task: {error}"))?
         .map_err(|error| error.to_string())
 }
 

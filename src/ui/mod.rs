@@ -23,6 +23,7 @@ use data::{
 };
 
 const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
+const LAUNCH_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const MAIN_PANEL_SCROLLABLE_ID: &str = "main-panel-scrollable";
 
 pub fn run() -> iced::Result {
@@ -63,6 +64,12 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
 
     if loading_indicator_active(app) {
         subscriptions.push(iced::time::every(LOADING_TICK_INTERVAL).map(|_| Message::LoadingTick));
+    }
+
+    if app.launching_account.is_some() {
+        subscriptions.push(
+            iced::time::every(LAUNCH_PROGRESS_CHECK_INTERVAL).map(|_| Message::LaunchProgressTick),
+        );
     }
 
     Subscription::batch(subscriptions)
@@ -154,6 +161,7 @@ struct PrimeApp {
     loadout_loading: bool,
     account_ranks_loading: bool,
     launching_account: Option<AccountId>,
+    launch_progress_checking: bool,
     app_update_status: AppUpdateStatus,
     image_cache_size_bytes: u64,
     loading_frame: usize,
@@ -336,6 +344,8 @@ enum Message {
     ClearImageCache,
     ImageCacheCleared(Result<(), String>),
     LaunchAccount(AccountId),
+    LaunchProgressTick,
+    LaunchProgressChecked(Result<bool, String>),
     LaunchFinished(Result<LaunchTargetProcess, String>),
     CheckForAppUpdate,
     AppUpdateChecked {

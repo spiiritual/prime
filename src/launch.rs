@@ -14,11 +14,12 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub const VALORANT_PROCESS_IMAGES: [&str; 2] = ["VALORANT-Win64-Shipping.exe", "VALORANT.exe"];
 pub const RIOT_CLIENT_PROCESS_IMAGE: &str = "RiotClientServices.exe";
+const RIOT_CLIENT_WINDOW_PROCESS_IMAGES: [&str; 2] =
+    ["RiotClientUx.exe", RIOT_CLIENT_PROCESS_IMAGE];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LaunchTargetProcess {
     Valorant,
-    RiotClient,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -135,16 +136,57 @@ pub fn valorant_process_is_running() -> Result<bool, LaunchError> {
     Ok(false)
 }
 
-pub fn launch_target_process_is_running() -> Result<Option<LaunchTargetProcess>, LaunchError> {
-    if valorant_process_is_running()? {
+pub fn launch_target_window_is_visible() -> Result<Option<LaunchTargetProcess>, LaunchError> {
+    if valorant_window_is_visible()? {
         return Ok(Some(LaunchTargetProcess::Valorant));
     }
 
-    if process_is_running(RIOT_CLIENT_PROCESS_IMAGE)? {
-        return Ok(Some(LaunchTargetProcess::RiotClient));
+    Ok(None)
+}
+
+#[cfg(windows)]
+pub fn valorant_window_is_visible() -> Result<bool, LaunchError> {
+    visible_window_belongs_to_process_image(&VALORANT_PROCESS_IMAGES)
+}
+
+#[cfg(not(windows))]
+pub fn valorant_window_is_visible() -> Result<bool, LaunchError> {
+    Ok(false)
+}
+
+#[cfg(windows)]
+pub fn riot_client_window_is_visible() -> Result<bool, LaunchError> {
+    visible_window_belongs_to_process_image(&RIOT_CLIENT_WINDOW_PROCESS_IMAGES)
+}
+
+#[cfg(not(windows))]
+pub fn riot_client_window_is_visible() -> Result<bool, LaunchError> {
+    Ok(false)
+}
+
+#[cfg(windows)]
+fn visible_window_belongs_to_process_image(image_names: &[&str]) -> Result<bool, LaunchError> {
+    let visible_process_ids = visible_top_level_window_process_ids();
+
+    if visible_process_ids.is_empty() {
+        return Ok(false);
     }
 
-    Ok(None)
+    let mut command = Command::new("tasklist");
+    configure_no_console_window(&mut command);
+
+    let output = command
+        .args(["/FO", "CSV", "/NH"])
+        .stderr(Stdio::null())
+        .output()
+        .map_err(LaunchError::ListProcesses)?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    Ok(tasklist_contains_pid_with_image(
+        &stdout,
+        &visible_process_ids,
+        image_names,
+    ))
 }
 
 #[cfg(windows)]
@@ -188,6 +230,113 @@ fn tasklist_image_name(line: &str) -> Option<&str> {
     }
 
     line.split_whitespace().next()
+}
+
+fn tasklist_contains_pid_with_image(
+    output: &str,
+    process_ids: &[u32],
+    image_names: &[&str],
+) -> bool {
+    output.lines().any(|line| {
+        tasklist_process_info(line).is_some_and(|process| {
+            process_ids.contains(&process.process_id)
+                && image_names
+                    .iter()
+                    .any(|image| process.image_name.eq_ignore_ascii_case(image))
+        })
+    })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TasklistProcessInfo {
+    image_name: String,
+    process_id: u32,
+}
+
+fn tasklist_process_info(line: &str) -> Option<TasklistProcessInfo> {
+    let (image_name, process_id) = tasklist_first_two_fields(line)?;
+    let process_id = process_id.trim().parse::<u32>().ok()?;
+
+    Some(TasklistProcessInfo {
+        image_name: image_name.to_string(),
+        process_id,
+    })
+}
+
+fn tasklist_first_two_fields(line: &str) -> Option<(&str, &str)> {
+    let line = line.trim();
+
+    if let Some(rest) = line.strip_prefix('"') {
+        let (image_name, rest) = rest.split_once('"')?;
+        let process_id = rest.strip_prefix(',')?.trim_start();
+
+        if let Some(process_id) = process_id.strip_prefix('"') {
+            return process_id
+                .split_once('"')
+                .map(|(process_id, _)| (image_name, process_id));
+        }
+
+        return process_id
+            .split_once(',')
+            .map(|(process_id, _)| (image_name, process_id));
+    }
+
+    let mut fields = line.split_whitespace();
+    Some((fields.next()?, fields.next()?))
+}
+
+#[cfg(windows)]
+fn visible_top_level_window_process_ids() -> Vec<u32> {
+    mod user32 {
+        use std::ffi::c_void;
+
+        pub type Bool = i32;
+        pub type Hwnd = *mut c_void;
+        pub type Lparam = isize;
+
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            pub fn EnumWindows(
+                enum_func: Option<unsafe extern "system" fn(Hwnd, Lparam) -> Bool>,
+                lparam: Lparam,
+            ) -> Bool;
+            pub fn IsWindowVisible(hwnd: Hwnd) -> Bool;
+            pub fn GetWindowThreadProcessId(hwnd: Hwnd, process_id: *mut u32) -> u32;
+        }
+    }
+
+    unsafe extern "system" fn collect_visible_window_process_id(
+        hwnd: user32::Hwnd,
+        lparam: user32::Lparam,
+    ) -> user32::Bool {
+        if unsafe { user32::IsWindowVisible(hwnd) } == 0 {
+            return 1;
+        }
+
+        let process_ids = unsafe { &mut *(lparam as *mut Vec<u32>) };
+        let mut process_id = 0;
+        unsafe {
+            user32::GetWindowThreadProcessId(hwnd, &mut process_id);
+        }
+
+        if process_id != 0 {
+            process_ids.push(process_id);
+        }
+
+        1
+    }
+
+    let mut process_ids = Vec::new();
+    unsafe {
+        user32::EnumWindows(
+            Some(collect_visible_window_process_id),
+            (&mut process_ids as *mut Vec<u32>) as user32::Lparam,
+        );
+    }
+
+    process_ids.sort_unstable();
+    process_ids.dedup();
+    process_ids
 }
 
 pub fn default_riot_client_candidates() -> Vec<PathBuf> {
@@ -256,7 +405,7 @@ pub enum LaunchError {
     Spawn(std::io::Error),
     #[error("failed to close Riot process before switching accounts: {0}")]
     CloseProcess(std::io::Error),
-    #[error("failed to check whether VALORANT is running: {0}")]
+    #[error("failed to check running processes: {0}")]
     ListProcesses(std::io::Error),
 }
 
@@ -350,5 +499,76 @@ mod tests {
         let output = "VALORANT.exe   1234 Console  1  120,000 K";
 
         assert!(tasklist_contains_image(output, "VALORANT.exe"));
+    }
+
+    #[test]
+    fn tasklist_process_info_parses_csv_pid() {
+        let output = r#""RiotClientUx.exe","1234","Console","1","120,000 K""#;
+
+        assert_eq!(
+            tasklist_process_info(output),
+            Some(TasklistProcessInfo {
+                image_name: "RiotClientUx.exe".to_string(),
+                process_id: 1234,
+            })
+        );
+    }
+
+    #[test]
+    fn tasklist_process_info_supports_table_fallback() {
+        let output = "RiotClientUx.exe   1234 Console  1  120,000 K";
+
+        assert_eq!(
+            tasklist_process_info(output),
+            Some(TasklistProcessInfo {
+                image_name: "RiotClientUx.exe".to_string(),
+                process_id: 1234,
+            })
+        );
+    }
+
+    #[test]
+    fn riot_client_visible_window_match_requires_visible_pid() {
+        let output = r#""RiotClientUx.exe","1234","Console","1","120,000 K"
+"VALORANT.exe","5678","Console","1","120,000 K""#;
+
+        assert!(tasklist_contains_pid_with_image(
+            output,
+            &[1234],
+            &RIOT_CLIENT_WINDOW_PROCESS_IMAGES
+        ));
+        assert!(!tasklist_contains_pid_with_image(
+            output,
+            &[5678],
+            &RIOT_CLIENT_WINDOW_PROCESS_IMAGES
+        ));
+    }
+
+    #[test]
+    fn valorant_visible_window_match_requires_visible_pid() {
+        let output = r#""VALORANT-Win64-Shipping.exe","1234","Console","1","120,000 K"
+"RiotClientUx.exe","5678","Console","1","120,000 K""#;
+
+        assert!(tasklist_contains_pid_with_image(
+            output,
+            &[1234],
+            &VALORANT_PROCESS_IMAGES
+        ));
+        assert!(!tasklist_contains_pid_with_image(
+            output,
+            &[5678],
+            &VALORANT_PROCESS_IMAGES
+        ));
+    }
+
+    #[test]
+    fn riot_client_visible_window_match_supports_service_process() {
+        let output = r#""RiotClientServices.exe","1234","Console","1","120,000 K""#;
+
+        assert!(tasklist_contains_pid_with_image(
+            output,
+            &[1234],
+            &RIOT_CLIENT_WINDOW_PROCESS_IMAGES
+        ));
     }
 }
