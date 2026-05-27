@@ -4,7 +4,22 @@ use std::{env, fs};
 
 use thiserror::Error;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+use std::process::Stdio;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 pub const VALORANT_PROCESS_IMAGES: [&str; 2] = ["VALORANT-Win64-Shipping.exe", "VALORANT.exe"];
+pub const RIOT_CLIENT_PROCESS_IMAGE: &str = "RiotClientServices.exe";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LaunchTargetProcess {
+    Valorant,
+    RiotClient,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LaunchConfig {
@@ -66,7 +81,10 @@ pub fn launch_riot_login_capture(config: &LaunchConfig) -> Result<(), LaunchErro
 }
 
 fn spawn_launch_plan(plan: &LaunchPlan) -> Result<(), LaunchError> {
-    Command::new(&plan.executable)
+    let mut command = Command::new(&plan.executable);
+    configure_no_console_window(&mut command);
+
+    command
         .args(&plan.args)
         .spawn()
         .map_err(LaunchError::Spawn)?;
@@ -89,10 +107,16 @@ pub fn close_riot_processes() -> Result<(), LaunchError> {
     {
         for image in VALORANT_PROCESS_IMAGES
             .into_iter()
-            .chain(["RiotClientServices.exe"])
+            .chain([RIOT_CLIENT_PROCESS_IMAGE])
         {
-            let _ = Command::new("taskkill")
+            let mut command = Command::new("taskkill");
+            configure_no_console_window(&mut command);
+
+            let _ = command
                 .args(["/F", "/IM", image])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
                 .output()
                 .map_err(LaunchError::CloseProcess)?;
         }
@@ -111,11 +135,27 @@ pub fn valorant_process_is_running() -> Result<bool, LaunchError> {
     Ok(false)
 }
 
+pub fn launch_target_process_is_running() -> Result<Option<LaunchTargetProcess>, LaunchError> {
+    if valorant_process_is_running()? {
+        return Ok(Some(LaunchTargetProcess::Valorant));
+    }
+
+    if process_is_running(RIOT_CLIENT_PROCESS_IMAGE)? {
+        return Ok(Some(LaunchTargetProcess::RiotClient));
+    }
+
+    Ok(None)
+}
+
 #[cfg(windows)]
 fn process_is_running(image_name: &str) -> Result<bool, LaunchError> {
     let filter = format!("IMAGENAME eq {image_name}");
-    let output = Command::new("tasklist")
+    let mut command = Command::new("tasklist");
+    configure_no_console_window(&mut command);
+
+    let output = command
         .args(["/FI", &filter, "/FO", "CSV", "/NH"])
+        .stderr(Stdio::null())
         .output()
         .map_err(LaunchError::ListProcesses)?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -126,6 +166,11 @@ fn process_is_running(image_name: &str) -> Result<bool, LaunchError> {
 #[cfg(not(windows))]
 fn process_is_running(_: &str) -> Result<bool, LaunchError> {
     Ok(false)
+}
+
+fn configure_no_console_window(command: &mut Command) {
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
 }
 
 fn tasklist_contains_image(output: &str, image_name: &str) -> bool {

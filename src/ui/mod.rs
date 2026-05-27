@@ -13,6 +13,7 @@ use iced::{Size, Subscription, Theme, window};
 
 use crate::account::{AccountId, Shard};
 use crate::image_cache::ImageCache;
+use crate::launch::LaunchTargetProcess;
 use crate::storage::{AccountRepository, StoredState};
 use crate::updater::AvailableUpdate;
 
@@ -82,6 +83,8 @@ fn loading_status_active(status: &str) -> bool {
         || status.starts_with("Opening Riot Client")
         || status.starts_with("Clearing ")
         || status.starts_with("Launching ")
+        || status.starts_with("Exporting ")
+        || status.starts_with("Importing ")
         || status.starts_with("Checking for Prime updates")
         || status.starts_with("Downloading Prime ")
         || status.starts_with("Preparing to restart")
@@ -139,6 +142,10 @@ struct PrimeApp {
     account_switcher_open: bool,
     open_account_menu: Option<AccountId>,
     show_add_account_prompt: bool,
+    show_import_account_prompt: bool,
+    import_account_input: String,
+    import_account_in_progress: bool,
+    exported_account: Option<AccountExportOutput>,
     confirm_delete_account: Option<AccountId>,
     pending_account: Option<CapturedAccountDraft>,
     store_summary: Option<StoreSummary>,
@@ -151,6 +158,13 @@ struct PrimeApp {
     image_cache_size_bytes: u64,
     loading_frame: usize,
     now: iced::time::Instant,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AccountExportOutput {
+    account_id: AccountId,
+    display_name: String,
+    payload: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -287,6 +301,16 @@ enum Message {
     ConfirmCapturedAccount,
     CancelCapturedAccount,
     ToggleAccountMenu(AccountId),
+    RequestExportAccount(AccountId),
+    AccountExportPrepared(Result<AccountExportOutput, String>),
+    ExportAccountPayloadChanged(String),
+    CopyAccountExport,
+    CloseAccountExport,
+    OpenImportAccount,
+    ImportAccountInputChanged(String),
+    CancelImportAccount,
+    ConfirmImportAccount,
+    AccountImported(Result<crate::account_transfer::ImportedAccount, String>),
     RequestDeleteAccount(AccountId),
     CancelDeleteAccount,
     ConfirmDeleteAccount(AccountId),
@@ -312,7 +336,7 @@ enum Message {
     ClearImageCache,
     ImageCacheCleared(Result<(), String>),
     LaunchAccount(AccountId),
-    LaunchFinished(Result<(), String>),
+    LaunchFinished(Result<LaunchTargetProcess, String>),
     CheckForAppUpdate,
     AppUpdateChecked {
         user_requested: bool,

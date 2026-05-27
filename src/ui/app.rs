@@ -1,9 +1,10 @@
-use iced::Task;
 use iced::widget::operation;
+use iced::{Task, clipboard};
 
 use crate::account::{AccountId, AccountProfile, Shard};
+use crate::account_transfer::{export_account, import_account};
 use crate::image_cache::ImageCache;
-use crate::launch::LaunchConfig;
+use crate::launch::{LaunchConfig, LaunchTargetProcess};
 use crate::riot::auth::parse_redirect_tokens;
 use crate::riot::launcher_session::CapturedLauncherSession;
 use crate::storage::{AccountRepository, StoredState};
@@ -43,6 +44,10 @@ impl PrimeApp {
                 account_switcher_open: false,
                 open_account_menu: None,
                 show_add_account_prompt: false,
+                show_import_account_prompt: false,
+                import_account_input: String::new(),
+                import_account_in_progress: false,
+                exported_account: None,
                 confirm_delete_account: None,
                 pending_account: None,
                 store_summary: None,
@@ -114,6 +119,8 @@ impl PrimeApp {
                 self.account_switcher_open = false;
                 self.open_account_menu = None;
                 self.show_add_account_prompt = false;
+                self.show_import_account_prompt = false;
+                self.exported_account = None;
                 self.confirm_delete_account = None;
                 Task::batch([
                     self.load_active_tab(),
@@ -138,6 +145,8 @@ impl PrimeApp {
                     self.account_switcher_open = !self.account_switcher_open;
                     self.open_account_menu = None;
                     self.show_add_account_prompt = false;
+                    self.show_import_account_prompt = false;
+                    self.exported_account = None;
                     self.confirm_delete_account = None;
                 }
 
@@ -153,6 +162,8 @@ impl PrimeApp {
                 self.account_switcher_open = false;
                 self.open_account_menu = None;
                 self.show_add_account_prompt = false;
+                self.show_import_account_prompt = false;
+                self.exported_account = None;
                 self.confirm_delete_account = None;
                 self.store_summary = None;
                 self.loadout_summary = None;
@@ -177,6 +188,8 @@ impl PrimeApp {
             }
             Message::AddAccount => {
                 self.show_add_account_prompt = true;
+                self.show_import_account_prompt = false;
+                self.exported_account = None;
                 self.account_switcher_open = false;
                 self.open_account_menu = None;
                 self.confirm_delete_account = None;
@@ -194,6 +207,8 @@ impl PrimeApp {
                 };
                 let backup_root = self.repo.launcher_backups_dir();
                 self.show_add_account_prompt = false;
+                self.show_import_account_prompt = false;
+                self.exported_account = None;
                 self.pending_account = None;
                 self.account_switcher_open = false;
                 self.open_account_menu = None;
@@ -284,6 +299,8 @@ impl PrimeApp {
                 self.account_switcher_open = false;
                 self.open_account_menu = None;
                 self.show_add_account_prompt = false;
+                self.show_import_account_prompt = false;
+                self.exported_account = None;
                 self.confirm_delete_account = None;
                 self.new_display_name.clear();
                 self.new_username.clear();
@@ -305,16 +322,193 @@ impl PrimeApp {
 
                 Task::none()
             }
+            Message::RequestExportAccount(id) => {
+                let Some(account) = self
+                    .state
+                    .accounts
+                    .iter()
+                    .find(|account| account.id == id)
+                    .cloned()
+                else {
+                    self.open_account_menu = None;
+                    self.account_switcher_open = false;
+                    self.status = "Account profile no longer exists".to_string();
+                    return Task::none();
+                };
+
+                let account_id = account.id;
+                let display_name = account.display_name.clone();
+                let summary = account.summary();
+                self.account_switcher_open = false;
+                self.open_account_menu = None;
+                self.show_add_account_prompt = false;
+                self.show_import_account_prompt = false;
+                self.confirm_delete_account = None;
+                self.exported_account = None;
+                self.status = format!("Exporting {summary}");
+
+                Task::perform(
+                    async move {
+                        export_account(&account)
+                            .map(|payload| super::AccountExportOutput {
+                                account_id,
+                                display_name,
+                                payload,
+                            })
+                            .map_err(|error| error.to_string())
+                    },
+                    Message::AccountExportPrepared,
+                )
+            }
+            Message::AccountExportPrepared(result) => {
+                match result {
+                    Ok(export) => {
+                        self.status =
+                            format!("Prepared account export for {}", export.display_name);
+                        self.exported_account = Some(export);
+                    }
+                    Err(error) => {
+                        self.status = format!("Could not export account: {error}");
+                    }
+                }
+
+                Task::none()
+            }
+            Message::ExportAccountPayloadChanged(value) => {
+                if let Some(export) = &mut self.exported_account {
+                    export.payload = value;
+                }
+
+                Task::none()
+            }
+            Message::CopyAccountExport => {
+                let Some(export) = &self.exported_account else {
+                    self.status = "Could not export account: no export is ready".to_string();
+                    return Task::none();
+                };
+
+                self.status = format!("Copied account export for {}", export.display_name);
+                clipboard::write(export.payload.clone())
+            }
+            Message::CloseAccountExport => {
+                self.exported_account = None;
+                Task::none()
+            }
+            Message::OpenImportAccount => {
+                self.show_import_account_prompt = true;
+                self.show_add_account_prompt = false;
+                self.exported_account = None;
+                self.account_switcher_open = false;
+                self.open_account_menu = None;
+                self.confirm_delete_account = None;
+                self.status = "Paste an account export to import it".to_string();
+                Task::none()
+            }
+            Message::ImportAccountInputChanged(value) => {
+                if self.import_account_in_progress {
+                    return Task::none();
+                }
+
+                self.import_account_input = value;
+                Task::none()
+            }
+            Message::CancelImportAccount => {
+                if self.import_account_in_progress {
+                    self.status = "Importing account".to_string();
+                    return Task::none();
+                }
+
+                self.show_import_account_prompt = false;
+                self.import_account_input.clear();
+                self.status = "Canceled account import".to_string();
+                Task::none()
+            }
+            Message::ConfirmImportAccount => {
+                if self.import_account_in_progress {
+                    return Task::none();
+                }
+
+                if self.import_account_input.trim().is_empty() {
+                    self.status =
+                        "Could not import account: paste an account export first".to_string();
+                    return Task::none();
+                }
+
+                let input = self.import_account_input.clone();
+                let backup_root = self.repo.launcher_backups_dir();
+                let existing_ids = self
+                    .state
+                    .accounts
+                    .iter()
+                    .map(|account| account.id)
+                    .collect::<Vec<_>>();
+
+                self.import_account_in_progress = true;
+                self.status = "Importing account".to_string();
+
+                Task::perform(
+                    async move {
+                        import_account(&input, backup_root, &existing_ids)
+                            .map_err(|error| error.to_string())
+                    },
+                    Message::AccountImported,
+                )
+            }
+            Message::AccountImported(result) => {
+                self.import_account_in_progress = false;
+
+                match result {
+                    Ok(imported) => {
+                        let account_id = imported.account.id;
+                        let summary = imported.account.summary();
+                        let id_note = if imported.id_changed {
+                            " with a new local ID"
+                        } else {
+                            ""
+                        };
+
+                        if self
+                            .state
+                            .accounts
+                            .iter()
+                            .any(|account| account.id == account_id)
+                        {
+                            self.status =
+                                "Could not import account: imported account ID already exists"
+                                    .to_string();
+                            return Task::none();
+                        }
+
+                        self.state.push_account(imported.account);
+                        self.state.select_account(account_id);
+                        self.show_import_account_prompt = false;
+                        self.import_account_input.clear();
+                        self.store_summary = None;
+                        self.loadout_summary = None;
+                        self.status = format!("Imported {summary}{id_note}");
+                        return Task::batch([self.save_task(), self.load_active_tab()]);
+                    }
+                    Err(error) => {
+                        self.status = format!("Could not import account: {error}");
+                    }
+                }
+
+                Task::none()
+            }
             Message::RequestDeleteAccount(id) => {
                 if self.state.accounts.iter().any(|account| account.id == id) {
                     self.account_switcher_open = false;
                     self.open_account_menu = None;
                     self.show_add_account_prompt = false;
+                    self.show_import_account_prompt = false;
+                    self.exported_account = None;
                     self.confirm_delete_account = Some(id);
                 } else {
                     self.account_switcher_open = false;
                     self.open_account_menu = None;
                     self.show_add_account_prompt = false;
+                    self.show_import_account_prompt = false;
+                    self.exported_account = None;
                     self.confirm_delete_account = None;
                     self.status = "Account profile no longer exists".to_string();
                 }
@@ -343,6 +537,13 @@ impl PrimeApp {
                 self.state.remove_account(id);
                 self.account_switcher_open = false;
                 self.open_account_menu = None;
+                if self
+                    .exported_account
+                    .as_ref()
+                    .is_some_and(|export| export.account_id == id)
+                {
+                    self.exported_account = None;
+                }
                 self.confirm_delete_account = None;
 
                 if was_selected {
@@ -424,6 +625,8 @@ impl PrimeApp {
                 let summary = account.summary();
                 self.account_switcher_open = false;
                 self.open_account_menu = None;
+                self.show_import_account_prompt = false;
+                self.exported_account = None;
                 self.confirm_delete_account = None;
                 self.status = format!(
                     "Opening Riot Client and waiting for remembered login capture for {summary}"
@@ -463,6 +666,8 @@ impl PrimeApp {
                 let summary = account.summary();
                 self.account_switcher_open = false;
                 self.open_account_menu = None;
+                self.show_import_account_prompt = false;
+                self.exported_account = None;
                 self.confirm_delete_account = None;
                 self.status = format!("Refreshing Riot profile identity for {summary}");
                 Task::perform(
@@ -727,6 +932,8 @@ impl PrimeApp {
                 self.state.select_account(id);
                 self.account_switcher_open = false;
                 self.open_account_menu = None;
+                self.show_import_account_prompt = false;
+                self.exported_account = None;
                 self.confirm_delete_account = None;
                 self.store_summary = None;
                 self.loadout_summary = None;
@@ -742,9 +949,15 @@ impl PrimeApp {
                 ])
             }
             Message::LaunchFinished(result) => match result {
-                Ok(()) => {
+                Ok(LaunchTargetProcess::Valorant) => {
                     self.launching_account = None;
                     self.status = "VALORANT process detected".to_string();
+                    Task::none()
+                }
+                Ok(LaunchTargetProcess::RiotClient) => {
+                    self.launching_account = None;
+                    self.status =
+                        "Riot Client process detected; VALORANT may still be updating".to_string();
                     Task::none()
                 }
                 Err(error) => {

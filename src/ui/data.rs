@@ -8,8 +8,8 @@ use crate::account::{
 };
 use crate::image_cache::ImageCache;
 use crate::launch::{
-    LaunchConfig, close_riot_processes, launch_riot_login_capture, launch_valorant,
-    valorant_process_is_running,
+    LaunchConfig, LaunchTargetProcess, close_riot_processes, launch_riot_login_capture,
+    launch_target_process_is_running, launch_valorant,
 };
 use crate::riot::client::{ApiCredentials, RiotApi};
 use crate::riot::content::{
@@ -32,14 +32,24 @@ use crate::storage::StoredState;
 pub(super) async fn launch_account(
     config: LaunchConfig,
     backup: Option<LauncherSessionBackup>,
-) -> Result<(), String> {
+) -> Result<LaunchTargetProcess, String> {
     let backup = require_launcher_session(backup)?;
 
-    close_riot_processes().map_err(|error| error.to_string())?;
-    apply_launcher_session_backup(&backup).map_err(|error| error.to_string())?;
+    prepare_account_launch(config, backup).await?;
+    wait_for_launch_target_process(VALORANT_OPEN_TIMEOUT, VALORANT_OPEN_POLL_INTERVAL).await
+}
 
-    launch_valorant(&config).map_err(|error| error.to_string())?;
-    wait_for_valorant_process(VALORANT_OPEN_TIMEOUT, VALORANT_OPEN_POLL_INTERVAL).await
+async fn prepare_account_launch(
+    config: LaunchConfig,
+    backup: LauncherSessionBackup,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        close_riot_processes().map_err(|error| error.to_string())?;
+        apply_launcher_session_backup(&backup).map_err(|error| error.to_string())?;
+        launch_valorant(&config).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| format!("failed to join VALORANT launch preparation task: {error}"))?
 }
 
 pub(super) fn require_launcher_session(
@@ -68,24 +78,31 @@ pub(super) const VALORANT_OPEN_TIMEOUT: Duration = Duration::from_secs(300);
 pub(super) const VALORANT_OPEN_POLL_INTERVAL: Duration = Duration::from_secs(1);
 pub(super) const SHOP_RESET_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
-pub(super) async fn wait_for_valorant_process(
+pub(super) async fn wait_for_launch_target_process(
     timeout: Duration,
     poll_interval: Duration,
-) -> Result<(), String> {
+) -> Result<LaunchTargetProcess, String> {
     let started = std::time::Instant::now();
 
     while started.elapsed() < timeout {
-        if valorant_process_is_running().map_err(|error| error.to_string())? {
-            return Ok(());
+        if let Some(process) = check_launch_target_process().await? {
+            return Ok(process);
         }
 
         tokio::time::sleep(poll_interval).await;
     }
 
     Err(
-        "sent VALORANT launch request to Riot Client, but the VALORANT process was not detected"
+        "sent VALORANT launch request to Riot Client, but neither Riot Client nor VALORANT was detected"
             .to_string(),
     )
+}
+
+async fn check_launch_target_process() -> Result<Option<LaunchTargetProcess>, String> {
+    tokio::task::spawn_blocking(launch_target_process_is_running)
+        .await
+        .map_err(|error| format!("failed to join VALORANT process check task: {error}"))?
+        .map_err(|error| error.to_string())
 }
 
 pub(super) async fn start_launcher_session_login(

@@ -6,9 +6,9 @@ use iced::{Color, Element, Length, Theme, alignment};
 use crate::account::{AccountId, AccountProfile, CompetitiveRank, Shard};
 
 use super::super::components::{anchored_popover, compact_loading_indicator};
-use super::super::{Message, PrimeApp};
+use super::super::{AccountExportOutput, Message, PrimeApp};
 
-const ACCOUNT_MENU_WIDTH: f32 = 180.0;
+const ACCOUNT_MENU_WIDTH: f32 = 190.0;
 const ACCOUNT_MENU_TOP_OFFSET: f32 = 48.0;
 const ACCOUNT_MENU_RIGHT_INSET: f32 = 14.0;
 const RANK_BADGE_HEIGHT: f32 = 22.0;
@@ -30,12 +30,25 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         account_cards = account_cards.push(account_card(app, account));
     }
 
-    let mut content = column![
-        row![button("Add account").on_press(Message::AddAccount)].spacing(10),
-        account_cards
+    let controls = row![
+        button("Add account").on_press(Message::AddAccount),
+        button("Import account").on_press_maybe(
+            (!app.import_account_in_progress).then_some(Message::OpenImportAccount)
+        )
     ]
-    .spacing(12)
-    .width(Length::Fill);
+    .spacing(10);
+
+    let mut content = column![controls].spacing(12).width(Length::Fill);
+
+    if app.show_import_account_prompt {
+        content = content.push(import_account_prompt(app));
+    }
+
+    if let Some(export) = &app.exported_account {
+        content = content.push(export_account_panel(export));
+    }
+
+    content = content.push(account_cards);
 
     if let Some(draft) = &app.pending_account {
         content = content.push(
@@ -71,6 +84,70 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     }
 
     content.into()
+}
+
+fn import_account_prompt(app: &PrimeApp) -> Element<'_, Message> {
+    let import_ready =
+        !app.import_account_in_progress && !app.import_account_input.trim().is_empty();
+    let mut import_input =
+        text_input("Paste account export", &app.import_account_input).width(Length::Fill);
+
+    if !app.import_account_in_progress {
+        import_input = import_input.on_input(Message::ImportAccountInputChanged);
+
+        if import_ready {
+            import_input = import_input.on_submit(Message::ConfirmImportAccount);
+        }
+    }
+
+    container(
+        column![
+            text("Import account").size(22),
+            import_input,
+            row![
+                space().width(Length::Fill),
+                button("Cancel").on_press_maybe(
+                    (!app.import_account_in_progress).then_some(Message::CancelImportAccount)
+                ),
+                button(if app.import_account_in_progress {
+                    "Importing..."
+                } else {
+                    "Import"
+                })
+                .on_press_maybe(import_ready.then_some(Message::ConfirmImportAccount))
+            ]
+            .spacing(10)
+        ]
+        .spacing(10),
+    )
+    .padding(16)
+    .width(Length::Fill)
+    .style(iced::widget::container::bordered_box)
+    .into()
+}
+
+fn export_account_panel(export: &AccountExportOutput) -> Element<'_, Message> {
+    container(
+        column![
+            text(format!("Export {}", export.display_name)).size(22),
+            text("Keep this private; it includes local session data.").size(13),
+            text_input("Account export", &export.payload)
+                .on_input(Message::ExportAccountPayloadChanged)
+                .width(Length::Fill)
+                .size(13),
+            row![
+                space().width(Length::Fill),
+                button("Close").on_press(Message::CloseAccountExport),
+                button("Copy").on_press(Message::CopyAccountExport)
+            ]
+            .spacing(10)
+        ]
+        .spacing(10),
+    )
+    .padding(16)
+    .width(Length::Fill)
+    .style(iced::widget::container::bordered_box)
+    .into()
 }
 
 fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, Message> {
@@ -255,6 +332,9 @@ fn account_menu(account_id: AccountId) -> Element<'static, Message> {
             button("Refresh profile")
                 .width(Length::Fill)
                 .on_press(Message::RefreshProfileIdentity(account_id)),
+            button("Export account")
+                .width(Length::Fill)
+                .on_press(Message::RequestExportAccount(account_id)),
             button("Delete account")
                 .width(Length::Fill)
                 .style(iced::widget::button::danger)
