@@ -14,8 +14,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub const VALORANT_PROCESS_IMAGES: [&str; 2] = ["VALORANT-Win64-Shipping.exe", "VALORANT.exe"];
 pub const RIOT_CLIENT_PROCESS_IMAGE: &str = "RiotClientServices.exe";
-const RIOT_CLIENT_WINDOW_PROCESS_IMAGES: [&str; 2] =
-    ["RiotClientUx.exe", RIOT_CLIENT_PROCESS_IMAGE];
+const RIOT_CLIENT_PROCESS_IMAGES: [&str; 2] = ["RiotClientUx.exe", RIOT_CLIENT_PROCESS_IMAGE];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LaunchTargetProcess {
@@ -104,12 +103,21 @@ fn resolve_riot_client_executable(config: &LaunchConfig) -> Result<PathBuf, Laun
 }
 
 pub fn close_riot_processes() -> Result<(), LaunchError> {
+    close_process_images(
+        VALORANT_PROCESS_IMAGES
+            .into_iter()
+            .chain(RIOT_CLIENT_PROCESS_IMAGES),
+    )
+}
+
+pub fn close_riot_client_processes() -> Result<(), LaunchError> {
+    close_process_images(RIOT_CLIENT_PROCESS_IMAGES)
+}
+
+fn close_process_images(images: impl IntoIterator<Item = &'static str>) -> Result<(), LaunchError> {
     #[cfg(windows)]
     {
-        for image in VALORANT_PROCESS_IMAGES
-            .into_iter()
-            .chain([RIOT_CLIENT_PROCESS_IMAGE])
-        {
+        for image in images {
             let mut command = Command::new("taskkill");
             configure_no_console_window(&mut command);
 
@@ -122,6 +130,9 @@ pub fn close_riot_processes() -> Result<(), LaunchError> {
                 .map_err(LaunchError::CloseProcess)?;
         }
     }
+
+    #[cfg(not(windows))]
+    let _ = images;
 
     Ok(())
 }
@@ -156,7 +167,7 @@ pub fn valorant_window_is_visible() -> Result<bool, LaunchError> {
 
 #[cfg(windows)]
 pub fn riot_client_window_is_visible() -> Result<bool, LaunchError> {
-    visible_window_belongs_to_process_image(&RIOT_CLIENT_WINDOW_PROCESS_IMAGES)
+    visible_window_belongs_to_process_image(&RIOT_CLIENT_PROCESS_IMAGES)
 }
 
 #[cfg(not(windows))]
@@ -535,12 +546,12 @@ mod tests {
         assert!(tasklist_contains_pid_with_image(
             output,
             &[1234],
-            &RIOT_CLIENT_WINDOW_PROCESS_IMAGES
+            &RIOT_CLIENT_PROCESS_IMAGES
         ));
         assert!(!tasklist_contains_pid_with_image(
             output,
             &[5678],
-            &RIOT_CLIENT_WINDOW_PROCESS_IMAGES
+            &RIOT_CLIENT_PROCESS_IMAGES
         ));
     }
 
@@ -568,7 +579,7 @@ mod tests {
         assert!(tasklist_contains_pid_with_image(
             output,
             &[1234],
-            &RIOT_CLIENT_WINDOW_PROCESS_IMAGES
+            &RIOT_CLIENT_PROCESS_IMAGES
         ));
     }
 }

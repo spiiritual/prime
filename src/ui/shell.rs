@@ -31,6 +31,13 @@ impl PrimeApp {
             .width(Length::Fill)
             .height(Length::Fill);
 
+        let pending_delete_account = self.confirm_delete_account.and_then(|account_id| {
+            self.state
+                .accounts
+                .iter()
+                .find(|account| account.id == account_id)
+        });
+
         if self.show_add_account_prompt {
             stack![content, add_account_prompt_overlay()]
                 .width(Length::Fill)
@@ -43,6 +50,11 @@ impl PrimeApp {
                 .into()
         } else if let Some(export) = &self.exported_account {
             stack![content, export_account_prompt_overlay(export)]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else if let Some(account) = pending_delete_account {
+            stack![content, delete_account_prompt_overlay(account)]
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
@@ -447,6 +459,41 @@ fn export_account_prompt_overlay(export: &AccountExportOutput) -> Element<'_, Me
     )
     .padding(24)
     .width(760)
+    .style(add_account_prompt_style);
+
+    opaque(
+        container(prompt)
+            .padding(14)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center)
+            .style(add_account_prompt_scrim_style),
+    )
+}
+
+fn delete_account_prompt_overlay(account: &AccountProfile) -> Element<'_, Message> {
+    let prompt = container(
+        column![
+            column![
+                text(format!("Delete {}?", account.display_name)).size(20),
+                text("This removes the local profile and captured launcher session data.").size(14)
+            ]
+            .spacing(8)
+            .width(Length::Fill),
+            row![
+                space().width(Length::Fill),
+                button("Cancel").on_press(Message::CancelDeleteAccount),
+                button("Delete")
+                    .style(iced::widget::button::danger)
+                    .on_press(Message::ConfirmDeleteAccount(account.id))
+            ]
+            .spacing(10)
+        ]
+        .spacing(18),
+    )
+    .padding(24)
+    .width(560)
     .style(add_account_prompt_style);
 
     opaque(

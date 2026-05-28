@@ -1,5 +1,5 @@
 use iced::widget::operation;
-use iced::{Task, clipboard};
+use iced::{Task, clipboard, window};
 
 use crate::account::{AccountId, AccountProfile, Shard};
 use crate::account_transfer::{export_account, import_account};
@@ -254,13 +254,13 @@ impl PrimeApp {
                             "Captured login. Confirm the account details to save it.".to_string()
                         });
                         self.pending_account = Some(draft);
+                        alert_and_focus_latest_window()
                     }
                     Err(error) => {
                         self.status = format!("Could not add account: {error}");
+                        Task::none()
                     }
                 }
-
-                Task::none()
             }
             Message::ConfirmCapturedAccount => {
                 let Some(draft) = self.pending_account.clone() else {
@@ -1340,4 +1340,15 @@ impl PrimeApp {
         };
         Task::none()
     }
+}
+
+fn alert_and_focus_latest_window() -> Task<Message> {
+    window::latest().then(|id| {
+        id.map_or_else(Task::none, |id| {
+            Task::batch([
+                window::request_user_attention(id, Some(window::UserAttention::Informational)),
+                window::gain_focus(id),
+            ])
+        })
+    })
 }

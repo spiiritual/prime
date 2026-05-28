@@ -291,7 +291,10 @@ pub enum RiotApiError {
     InvalidRedirectLocation,
     #[error("cookie reauth redirect did not contain Riot tokens: {0}")]
     AuthParse(#[from] AuthParseError),
-    #[error("Riot API HTTP error: {0}")]
+    #[error(
+        "Riot API HTTP error: {}",
+        crate::http_error::format_reqwest_error(.0)
+    )]
     Http(#[from] reqwest::Error),
 }
 

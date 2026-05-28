@@ -174,7 +174,10 @@ fn url_fingerprint(value: &str) -> u64 {
 pub enum ImageCacheError {
     #[error("image cache I/O error: {0}")]
     Io(#[from] io::Error),
-    #[error("image cache HTTP error: {0}")]
+    #[error(
+        "image cache HTTP error: {}",
+        crate::http_error::format_reqwest_error(.0)
+    )]
     Http(#[from] reqwest::Error),
 }
 

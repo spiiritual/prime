@@ -1,6 +1,4 @@
-use iced::widget::{
-    button, column, container, opaque, pick_list, row, space, stack, text, text_input,
-};
+use iced::widget::{button, column, container, pick_list, row, space, text, text_input};
 use iced::{Color, Element, Length, Theme, alignment};
 
 use crate::account::{AccountId, AccountProfile, CompetitiveRank, Shard};
@@ -149,16 +147,10 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
         .width(Length::Fill),
     );
 
-    let base = container(body)
+    let card = container(body)
         .padding(14)
         .width(Length::Fill)
         .style(move |theme| account_card_style(theme, is_selected));
-
-    let mut card = stack![base].width(Length::Fill);
-
-    if app.confirm_delete_account == Some(account.id) {
-        card = card.push(delete_account_prompt_overlay(account));
-    }
 
     anchored_popover(
         card,
@@ -313,41 +305,6 @@ fn account_menu(account_id: AccountId) -> Element<'static, Message> {
     .into()
 }
 
-fn delete_account_prompt_overlay(account: &AccountProfile) -> Element<'_, Message> {
-    let prompt = container(
-        column![
-            column![
-                text(format!("Delete {}?", account.display_name)).size(16),
-                text("This removes the local profile and captured launcher session data.").size(13)
-            ]
-            .spacing(3)
-            .width(Length::Fill),
-            row![
-                space().width(Length::Fill),
-                button("Cancel").on_press(Message::CancelDeleteAccount),
-                button("Delete")
-                    .style(iced::widget::button::danger)
-                    .on_press(Message::ConfirmDeleteAccount(account.id))
-            ]
-            .spacing(10)
-        ]
-        .spacing(10),
-    )
-    .padding(10)
-    .width(520)
-    .style(delete_prompt_style);
-
-    opaque(
-        container(prompt)
-            .padding(14)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Center)
-            .style(delete_prompt_scrim_style),
-    )
-}
-
 fn account_card_style(theme: &Theme, selected: bool) -> iced::widget::container::Style {
     let mut style = iced::widget::container::bordered_box(theme);
 
@@ -435,18 +392,4 @@ fn account_menu_button_style(
     }
 
     iced::widget::button::secondary(theme, status)
-}
-
-fn delete_prompt_style(theme: &Theme) -> iced::widget::container::Style {
-    let mut style = iced::widget::container::bordered_box(theme);
-    style.background = Some(Color::from_rgba8(70, 28, 32, 0.55).into());
-    style.border.color = Color::from_rgb8(214, 92, 92);
-    style
-}
-
-fn delete_prompt_scrim_style(_: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(Color::from_rgba8(8, 10, 14, 0.68).into()),
-        ..Default::default()
-    }
 }

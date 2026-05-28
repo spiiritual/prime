@@ -821,7 +821,10 @@ fn strip_prefix_ignore_ascii_case<'a>(value: &'a str, prefix: &str) -> Option<&'
 
 #[derive(Debug, Error)]
 pub enum ContentError {
-    #[error("Valorant content API HTTP error: {0}")]
+    #[error(
+        "Valorant content API HTTP error: {}",
+        crate::http_error::format_reqwest_error(.0)
+    )]
     Http(#[from] reqwest::Error),
 }
 

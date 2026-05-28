@@ -517,7 +517,10 @@ struct GitHubAsset {
 
 #[derive(Debug, Error)]
 pub enum UpdateError {
-    #[error("GitHub release HTTP error: {0}")]
+    #[error(
+        "GitHub release HTTP error: {}",
+        crate::http_error::format_reqwest_error(.0)
+    )]
     Http(#[from] reqwest::Error),
     #[error("update I/O error: {0}")]
     Io(#[from] io::Error),

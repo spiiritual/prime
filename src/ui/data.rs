@@ -8,8 +8,9 @@ use crate::account::{
 };
 use crate::image_cache::ImageCache;
 use crate::launch::{
-    LaunchConfig, LaunchTargetProcess, close_riot_processes, launch_riot_login_capture,
-    launch_target_window_is_visible, launch_valorant, riot_client_window_is_visible,
+    LaunchConfig, LaunchTargetProcess, close_riot_client_processes, close_riot_processes,
+    launch_riot_login_capture, launch_target_window_is_visible, launch_valorant,
+    riot_client_window_is_visible,
 };
 use crate::riot::client::{ApiCredentials, RiotApi};
 use crate::riot::content::{
@@ -191,7 +192,15 @@ pub(super) async fn start_account_capture(
     config: LaunchConfig,
 ) -> Result<CapturedAccountDraft, String> {
     let captured = start_launcher_session_login(account_id, backup_root, config).await?;
+    close_riot_client_after_capture().await?;
     Ok(enrich_captured_account(captured).await)
+}
+
+async fn close_riot_client_after_capture() -> Result<(), String> {
+    tokio::task::spawn_blocking(close_riot_client_processes)
+        .await
+        .map_err(|error| format!("failed to join Riot Client close task: {error}"))?
+        .map_err(|error| error.to_string())
 }
 
 pub(super) async fn enrich_captured_account(
