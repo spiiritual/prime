@@ -26,6 +26,7 @@ pub struct AvailableUpdate {
     pub latest_version: String,
     pub release_name: Option<String>,
     pub release_url: String,
+    pub changelog: Option<String>,
     pub asset: ReleaseAsset,
 }
 
@@ -92,8 +93,17 @@ fn update_from_release(
         latest_version,
         release_name: release.name,
         release_url: release.html_url,
+        changelog: release_changelog(release.body),
         asset,
     }))
+}
+
+fn release_changelog(body: Option<String>) -> Option<String> {
+    body.and_then(|body| {
+        let body = body.trim();
+
+        (!body.is_empty()).then(|| body.to_string())
+    })
 }
 
 fn compatible_release_asset(release: &GitHubRelease) -> Option<ReleaseAsset> {
@@ -503,6 +513,8 @@ struct GitHubRelease {
     name: Option<String>,
     html_url: String,
     #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
     assets: Vec<GitHubAsset>,
 }
 
@@ -615,6 +627,7 @@ mod tests {
             tag_name: "v0.2.0".to_string(),
             name: Some("Prime 0.2.0".to_string()),
             html_url: "https://github.com/spiiritual/prime/releases/tag/v0.2.0".to_string(),
+            body: Some("## Changes\n\n- Added updater notes".to_string()),
             assets: vec![],
         };
 
@@ -624,6 +637,30 @@ mod tests {
             error,
             UpdateError::NoCompatibleReleaseAsset { .. }
         ));
+    }
+
+    #[test]
+    fn update_includes_trimmed_release_changelog() {
+        let release = GitHubRelease {
+            tag_name: "v0.2.0".to_string(),
+            name: Some("Prime 0.2.0".to_string()),
+            html_url: "https://github.com/spiiritual/prime/releases/tag/v0.2.0".to_string(),
+            body: Some("\n\n## Changes\n\n- Added updater notes\n".to_string()),
+            assets: vec![asset(
+                "prime-windows-x86_64.exe",
+                "https://example.com/windows.exe",
+                20,
+            )],
+        };
+
+        let update = update_from_release("0.1.0", release)
+            .expect("release")
+            .expect("available update");
+
+        assert_eq!(
+            update.changelog.as_deref(),
+            Some("## Changes\n\n- Added updater notes")
+        );
     }
 
     fn asset(name: &str, url: &str, size: u64) -> GitHubAsset {

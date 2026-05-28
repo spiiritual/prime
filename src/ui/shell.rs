@@ -14,6 +14,7 @@ const SIDEBAR_WIDTH: f32 = 210.0;
 const SIDEBAR_PADDING: u16 = 16;
 const ACCOUNT_SWITCHER_MENU_TOP_OFFSET: f32 = 62.0;
 const ACCOUNT_SWITCHER_MENU_WIDTH: f32 = SIDEBAR_WIDTH - (SIDEBAR_PADDING as f32 * 2.0);
+const UPDATE_CHANGELOG_MAX_HEIGHT: f32 = 260.0;
 
 impl PrimeApp {
     pub(super) fn view(&self) -> Element<'_, Message> {
@@ -508,25 +509,31 @@ fn delete_account_prompt_overlay(account: &AccountProfile) -> Element<'_, Messag
 }
 
 fn app_update_prompt_overlay(update: &crate::updater::AvailableUpdate) -> Element<'_, Message> {
+    let mut details = column![
+        text(format!("Prime {} is available", update.latest_version)).size(20),
+        text(format!(
+            "You are running Prime {}. Download {} from GitHub and restart to install it.",
+            update.current_version,
+            update.display_name()
+        ))
+        .size(14),
+        text(format!(
+            "Asset: {} ({})",
+            update.asset.name,
+            format_bytes(update.asset.size_bytes)
+        ))
+        .size(14)
+    ]
+    .spacing(8)
+    .width(Length::Fill);
+
+    if let Some(changelog) = update.changelog.as_deref() {
+        details = details.push(app_update_changelog(changelog));
+    }
+
     let prompt = container(
         column![
-            column![
-                text(format!("Prime {} is available", update.latest_version)).size(20),
-                text(format!(
-                    "You are running Prime {}. Download {} from GitHub and restart to install it.",
-                    update.current_version,
-                    update.display_name()
-                ))
-                .size(14),
-                text(format!(
-                    "Asset: {} ({})",
-                    update.asset.name,
-                    format_bytes(update.asset.size_bytes)
-                ))
-                .size(14)
-            ]
-            .spacing(8)
-            .width(Length::Fill),
+            details,
             row![
                 space().width(Length::Fill),
                 button("Later").on_press(Message::DismissAppUpdate),
@@ -549,4 +556,30 @@ fn app_update_prompt_overlay(update: &crate::updater::AvailableUpdate) -> Elemen
             .align_y(alignment::Vertical::Center)
             .style(add_account_prompt_scrim_style),
     )
+}
+
+fn app_update_changelog(changelog: &str) -> Element<'_, Message> {
+    let changelog_text = text(changelog)
+        .size(13)
+        .width(Length::Fill)
+        .wrapping(iced::widget::text::Wrapping::WordOrGlyph);
+
+    let changelog_scroll = scrollable(
+        container(changelog_text)
+            .padding(Padding::ZERO.right(12))
+            .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Shrink);
+
+    column![
+        text("Changelog").size(15),
+        container(changelog_scroll)
+            .width(Length::Fill)
+            .max_height(UPDATE_CHANGELOG_MAX_HEIGHT)
+            .clip(true)
+    ]
+    .spacing(6)
+    .width(Length::Fill)
+    .into()
 }
