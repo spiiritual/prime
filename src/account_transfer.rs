@@ -3,13 +3,14 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::account::{AccountId, AccountProfile, AccountSessionError, LauncherSessionBackup};
 
 const EXPORT_VERSION: u32 = 1;
-const BASE64_TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const PRIVATE_SETTINGS_FILE: &str = "RiotGamesPrivateSettings.yaml";
 const MAX_ENCODED_EXPORT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_LAUNCHER_FILE_COUNT: usize = 1024;
@@ -24,14 +25,15 @@ pub struct ImportedAccount {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AccountExportPackage {
     version: u32,
     account: AccountProfile,
-    #[serde(default)]
     launcher_files: Vec<ExportedLauncherFile>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ExportedLauncherFile {
     path: String,
     contents: String,
@@ -395,32 +397,7 @@ fn remove_dir_if_exists(path: &Path) -> Result<(), AccountTransferError> {
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
-
-    for chunk in bytes.chunks(3) {
-        let first = chunk[0];
-        let second = chunk.get(1).copied().unwrap_or(0);
-        let third = chunk.get(2).copied().unwrap_or(0);
-
-        output.push(BASE64_TABLE[(first >> 2) as usize] as char);
-        output.push(BASE64_TABLE[(((first & 0b0000_0011) << 4) | (second >> 4)) as usize] as char);
-
-        if chunk.len() > 1 {
-            output.push(
-                BASE64_TABLE[(((second & 0b0000_1111) << 2) | (third >> 6)) as usize] as char,
-            );
-        } else {
-            output.push('=');
-        }
-
-        if chunk.len() > 2 {
-            output.push(BASE64_TABLE[(third & 0b0011_1111) as usize] as char);
-        } else {
-            output.push('=');
-        }
-    }
-
-    output
+    BASE64_STANDARD.encode(bytes)
 }
 
 fn base64_decode(input: &str) -> Result<Vec<u8>, AccountTransferError> {
@@ -429,66 +406,9 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, AccountTransferError> {
         .filter(|byte| !byte.is_ascii_whitespace())
         .collect::<Vec<_>>();
 
-    if bytes.len() % 4 != 0 {
-        return Err(AccountTransferError::InvalidBase64);
-    }
-
-    let chunk_count = bytes.len() / 4;
-    let mut output = Vec::with_capacity(chunk_count * 3);
-
-    for (index, chunk) in bytes.chunks(4).enumerate() {
-        let is_last = index + 1 == chunk_count;
-        let padding = match (chunk[2], chunk[3]) {
-            (b'=', b'=') => 2,
-            (_, b'=') => 1,
-            (b'=', _) => return Err(AccountTransferError::InvalidBase64),
-            _ => 0,
-        };
-
-        if padding > 0 && !is_last {
-            return Err(AccountTransferError::InvalidBase64);
-        }
-
-        if chunk[0] == b'=' || chunk[1] == b'=' {
-            return Err(AccountTransferError::InvalidBase64);
-        }
-
-        let first = base64_value(chunk[0]).ok_or(AccountTransferError::InvalidBase64)?;
-        let second = base64_value(chunk[1]).ok_or(AccountTransferError::InvalidBase64)?;
-        let third = if padding == 2 {
-            0
-        } else {
-            base64_value(chunk[2]).ok_or(AccountTransferError::InvalidBase64)?
-        };
-        let fourth = if padding > 0 {
-            0
-        } else {
-            base64_value(chunk[3]).ok_or(AccountTransferError::InvalidBase64)?
-        };
-
-        output.push((first << 2) | (second >> 4));
-
-        if padding < 2 {
-            output.push((second << 4) | (third >> 2));
-        }
-
-        if padding == 0 {
-            output.push((third << 6) | fourth);
-        }
-    }
-
-    Ok(output)
-}
-
-fn base64_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'A'..=b'Z' => Some(byte - b'A'),
-        b'a'..=b'z' => Some(byte - b'a' + 26),
-        b'0'..=b'9' => Some(byte - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        _ => None,
-    }
+    BASE64_STANDARD
+        .decode(bytes)
+        .map_err(|_| AccountTransferError::InvalidBase64)
 }
 
 #[derive(Debug, Error)]

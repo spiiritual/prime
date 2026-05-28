@@ -6,7 +6,7 @@ use crate::account_transfer::{export_account, import_account};
 use crate::image_cache::ImageCache;
 use crate::launch::{LaunchConfig, LaunchTargetProcess};
 use crate::riot::auth::parse_redirect_tokens;
-use crate::riot::launcher_session::CapturedLauncherSession;
+use crate::riot::launcher_session::{CapturedLauncherSession, remove_launcher_session_backup};
 use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{check_for_update, download_and_prepare_update};
 
@@ -54,7 +54,10 @@ impl PrimeApp {
                 loadout_summary: None,
                 store_loading: false,
                 loadout_loading: false,
+                store_loading_account: None,
+                loadout_loading_account: None,
                 account_ranks_loading: false,
+                launcher_capture_in_progress: false,
                 launching_account: None,
                 launch_progress_checking: false,
                 app_update_status: AppUpdateStatus::Checking,
@@ -201,6 +204,11 @@ impl PrimeApp {
                 Task::none()
             }
             Message::ConfirmAddAccountCapture => {
+                if self.launcher_capture_in_progress {
+                    self.status = "Launcher login capture is already in progress".to_string();
+                    return Task::none();
+                }
+
                 let account_id = AccountId::new();
                 let config = LaunchConfig {
                     riot_client_path: self.state.riot_client_path.clone(),
@@ -219,6 +227,7 @@ impl PrimeApp {
                 self.status =
                     "Opening Riot Client. Log in with Remember Me enabled to add the account."
                         .to_string();
+                self.launcher_capture_in_progress = true;
 
                 Task::perform(
                     async move { start_account_capture(account_id, backup_root, config).await },
@@ -231,6 +240,8 @@ impl PrimeApp {
                 Task::none()
             }
             Message::AccountCaptureFinished(result) => {
+                self.launcher_capture_in_progress = false;
+
                 match result {
                     Ok(draft) => {
                         self.new_display_name = draft
@@ -296,6 +307,19 @@ impl PrimeApp {
                 Task::none()
             }
             Message::CancelCapturedAccount => {
+                let Some(draft) = self.pending_account.as_ref() else {
+                    self.status = "No captured account is waiting to be discarded".to_string();
+                    return Task::none();
+                };
+
+                if let Err(error) = remove_launcher_session_backup(
+                    self.repo.launcher_backups_dir(),
+                    draft.account_id,
+                ) {
+                    self.status = format!("Could not discard captured account session: {error}");
+                    return Task::none();
+                }
+
                 self.pending_account = None;
                 self.account_switcher_open = false;
                 self.open_account_menu = None;
@@ -525,6 +549,17 @@ impl PrimeApp {
                     return Task::none();
                 };
 
+                if let Err(error) =
+                    remove_launcher_session_backup(self.repo.launcher_backups_dir(), id)
+                {
+                    self.open_account_menu = None;
+                    self.status = format!(
+                        "Could not delete captured launcher session for {}: {error}",
+                        account.summary()
+                    );
+                    return Task::none();
+                }
+
                 let was_selected = self.state.selected_account == Some(id);
                 self.state.remove_account(id);
                 self.account_switcher_open = false;
@@ -597,6 +632,11 @@ impl PrimeApp {
                 }
             }
             Message::StartLauncherSessionLogin(account_id) => {
+                if self.launcher_capture_in_progress {
+                    self.status = "Launcher login capture is already in progress".to_string();
+                    return Task::none();
+                }
+
                 let Some(account) = self
                     .state
                     .accounts
@@ -623,6 +663,7 @@ impl PrimeApp {
                 self.status = format!(
                     "Opening Riot Client and waiting for remembered login capture for {summary}"
                 );
+                self.launcher_capture_in_progress = true;
 
                 Task::perform(
                     async move { start_launcher_session_login(account_id, backup_root, config).await },
@@ -630,6 +671,8 @@ impl PrimeApp {
                 )
             }
             Message::LauncherSessionLoginStarted(result) => {
+                self.launcher_capture_in_progress = false;
+
                 match result {
                     Ok(captured) => {
                         return self.store_captured_launcher_session(captured);
@@ -782,12 +825,36 @@ impl PrimeApp {
                     Task::none()
                 }
             }
-            Message::StorefrontLoaded(result) => {
-                self.store_loading = false;
+            Message::StorefrontLoaded(account_id, result) => {
+                let is_current_request = self.store_loading_account == Some(account_id);
+
+                if is_current_request {
+                    self.store_loading = false;
+                    self.store_loading_account = None;
+                }
                 self.now = iced::time::Instant::now();
 
                 match result {
                     Ok(result) => {
+                        if !is_current_request {
+                            if result.account_id != account_id {
+                                return Task::none();
+                            }
+
+                            if cache_account_api_context(
+                                &mut self.state,
+                                result.account_id,
+                                result.session,
+                                result.identity,
+                            )
+                            .is_ok()
+                            {
+                                return self.save_task();
+                            }
+
+                            return Task::none();
+                        }
+
                         if let Err(error) = cache_account_api_context(
                             &mut self.state,
                             result.account_id,
@@ -819,7 +886,9 @@ impl PrimeApp {
                         return Task::batch([self.save_task(), self.image_cache_size_task()]);
                     }
                     Err(error) => {
-                        self.status = format!("Store check failed: {error}");
+                        if is_current_request {
+                            self.status = format!("Store check failed: {error}");
+                        }
                     }
                 }
 
@@ -851,12 +920,36 @@ impl PrimeApp {
 
                 Task::none()
             }
-            Message::LoadoutLoaded(result) => {
-                self.loadout_loading = false;
+            Message::LoadoutLoaded(account_id, result) => {
+                let is_current_request = self.loadout_loading_account == Some(account_id);
+
+                if is_current_request {
+                    self.loadout_loading = false;
+                    self.loadout_loading_account = None;
+                }
                 self.now = iced::time::Instant::now();
 
                 match result {
                     Ok(result) => {
+                        if !is_current_request {
+                            if result.account_id != account_id {
+                                return Task::none();
+                            }
+
+                            if cache_account_api_context(
+                                &mut self.state,
+                                result.account_id,
+                                result.session,
+                                result.identity,
+                            )
+                            .is_ok()
+                            {
+                                return self.save_task();
+                            }
+
+                            return Task::none();
+                        }
+
                         if let Err(error) = cache_account_api_context(
                             &mut self.state,
                             result.account_id,
@@ -895,7 +988,9 @@ impl PrimeApp {
                         return Task::batch([self.save_task(), self.image_cache_size_task()]);
                     }
                     Err(error) => {
-                        self.status = format!("Loadout check failed: {error}");
+                        if is_current_request {
+                            self.status = format!("Loadout check failed: {error}");
+                        }
                     }
                 }
 
@@ -1107,10 +1202,15 @@ impl PrimeApp {
     fn load_active_tab(&mut self) -> Task<Message> {
         match self.active_tab {
             Tab::Accounts if !self.account_ranks_loading => self.fetch_account_ranks_task(),
-            Tab::Shop if self.store_summary.is_none() && !self.store_loading => {
+            Tab::Shop
+                if self.store_summary.is_none() && !self.selected_account_is_store_loading() =>
+            {
                 self.fetch_storefront_task()
             }
-            Tab::Loadout if self.loadout_summary.is_none() && !self.loadout_loading => {
+            Tab::Loadout
+                if self.loadout_summary.is_none()
+                    && !self.selected_account_is_loadout_loading() =>
+            {
                 self.fetch_loadout_task()
             }
             _ => Task::none(),
@@ -1144,11 +1244,13 @@ impl PrimeApp {
         };
 
         self.store_loading = true;
+        self.store_loading_account = Some(account.id);
         self.status = "Loading shop".to_string();
         let image_cache = self.image_cache.clone();
+        let account_id = account.id;
         Task::perform(
             fetch_storefront(account, self.client_version_input.clone(), image_cache),
-            Message::StorefrontLoaded,
+            move |result| Message::StorefrontLoaded(account_id, result),
         )
     }
 
@@ -1159,12 +1261,24 @@ impl PrimeApp {
         };
 
         self.loadout_loading = true;
+        self.loadout_loading_account = Some(account.id);
         self.status = "Loading loadout".to_string();
         let image_cache = self.image_cache.clone();
+        let account_id = account.id;
         Task::perform(
             fetch_loadout(account, self.client_version_input.clone(), image_cache),
-            Message::LoadoutLoaded,
+            move |result| Message::LoadoutLoaded(account_id, result),
         )
+    }
+
+    fn selected_account_is_store_loading(&self) -> bool {
+        self.store_loading_account
+            .is_some_and(|account_id| Some(account_id) == self.state.selected_account)
+    }
+
+    fn selected_account_is_loadout_loading(&self) -> bool {
+        self.loadout_loading_account
+            .is_some_and(|account_id| Some(account_id) == self.state.selected_account)
     }
 
     fn save_task(&self) -> Task<Message> {
@@ -1215,7 +1329,15 @@ impl PrimeApp {
             return Task::batch([self.save_task(), self.load_active_tab()]);
         }
 
-        self.status = "Captured launcher session, but the profile no longer exists".to_string();
+        self.status = match remove_launcher_session_backup(
+            self.repo.launcher_backups_dir(),
+            captured.account_id,
+        ) {
+            Ok(()) => "Captured launcher session, but the profile no longer exists".to_string(),
+            Err(error) => format!(
+                "Captured launcher session, but the profile no longer exists and cleanup failed: {error}"
+            ),
+        };
         Task::none()
     }
 }

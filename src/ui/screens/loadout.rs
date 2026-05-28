@@ -2,7 +2,9 @@ use iced::widget::{button, column, container, grid, progress_bar, row, text};
 use iced::{Color, Element, Length, Theme, border};
 
 use super::super::components::{asset_image, loading_line};
-use super::super::data::{BattlePassProgressDisplay, LoadoutGunDisplay, weapon_category};
+use super::super::data::{
+    BattlePassProgressDisplay, LoadoutGunDisplay, format_duration, weapon_category,
+};
 use super::super::{LoadoutTab, Message, PrimeApp};
 
 const LOADOUT_CATEGORIES: [&str; 8] = [
@@ -213,25 +215,4 @@ fn battle_pass_metric(label: &'static str, value: String) -> Element<'static, Me
         .spacing(4)
         .width(Length::FillPortion(1))
         .into()
-}
-
-fn format_duration(seconds: i64) -> String {
-    if seconds <= 0 {
-        return "soon".to_string();
-    }
-
-    let days = seconds / 86_400;
-    let hours = (seconds % 86_400) / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let seconds = seconds % 60;
-
-    if days > 0 {
-        format!("{days}d {hours}h {minutes}m")
-    } else if hours > 0 {
-        format!("{hours}h {minutes}m {seconds}s")
-    } else if minutes > 0 {
-        format!("{minutes}m {seconds}s")
-    } else {
-        format!("{seconds}s")
-    }
 }

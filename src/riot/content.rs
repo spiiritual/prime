@@ -3,6 +3,9 @@ use std::collections::HashMap;
 use serde::{Deserialize, de::DeserializeOwned};
 use thiserror::Error;
 
+const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const USER_AGENT_VALUE: &str = concat!("prime/", env!("CARGO_PKG_VERSION"));
+
 pub const WEAPONS_URL: &str = "https://valorant-api.com/v1/weapons";
 pub const WEAPON_SKINS_URL: &str = "https://valorant-api.com/v1/weapons/skins";
 pub const BUNDLES_URL: &str = "https://valorant-api.com/v1/bundles";
@@ -22,7 +25,10 @@ pub struct ValorantContentApi {
 
 impl ValorantContentApi {
     pub fn new() -> Result<Self, ContentError> {
-        let client = reqwest::Client::builder().user_agent("prime/0.1").build()?;
+        let client = reqwest::Client::builder()
+            .timeout(HTTP_TIMEOUT)
+            .user_agent(USER_AGENT_VALUE)
+            .build()?;
 
         Ok(Self { client })
     }
@@ -36,7 +42,7 @@ impl ValorantContentApi {
             .error_for_status()?
             .json()
             .await?;
-        let tiers = self.content_tier_catalog().await.unwrap_or_default();
+        let tiers = self.content_tier_catalog().await?;
 
         Ok(SkinCatalog::from_skins_and_tiers(response.data, &tiers))
     }
@@ -94,22 +100,14 @@ impl ValorantContentApi {
     }
 
     pub async fn accessory_catalog(&self) -> Result<AccessoryCatalog, ContentError> {
-        let buddies = self
-            .content_data::<Vec<Buddy>>(BUDDIES_URL)
-            .await
-            .unwrap_or_default();
-        let sprays = self
-            .content_data::<Vec<Spray>>(SPRAYS_URL)
-            .await
-            .unwrap_or_default();
+        let buddies = self.content_data::<Vec<Buddy>>(BUDDIES_URL).await?;
+        let sprays = self.content_data::<Vec<Spray>>(SPRAYS_URL).await?;
         let player_cards = self
             .content_data::<Vec<PlayerCard>>(PLAYER_CARDS_URL)
-            .await
-            .unwrap_or_default();
+            .await?;
         let player_titles = self
             .content_data::<Vec<PlayerTitle>>(PLAYER_TITLES_URL)
-            .await
-            .unwrap_or_default();
+            .await?;
 
         Ok(AccessoryCatalog::from_parts(
             buddies,
@@ -568,11 +566,12 @@ impl AccessoryCatalog {
 
         for title in player_titles {
             let fallback = title.title_text.as_deref().unwrap_or(&title.uuid);
+            let display_name = title.display_name.as_deref().unwrap_or_default();
             by_uuid.insert(
                 normalize_uuid(&title.uuid),
                 ResolvedAccessory {
                     uuid: title.uuid.clone(),
-                    display_name: display_name_with_fallback(&title.display_name, fallback),
+                    display_name: display_name_with_fallback(display_name, fallback),
                     display_icon: None,
                 },
             );
@@ -774,7 +773,7 @@ pub struct PlayerCard {
 pub struct PlayerTitle {
     pub uuid: String,
     #[serde(rename = "displayName")]
-    pub display_name: String,
+    pub display_name: Option<String>,
     #[serde(rename = "titleText")]
     pub title_text: Option<String>,
 }
@@ -1027,7 +1026,7 @@ mod tests {
             }],
             vec![PlayerTitle {
                 uuid: "title-uuid".to_string(),
-                display_name: "Penguin".to_string(),
+                display_name: Some("Penguin".to_string()),
                 title_text: Some("Penguin".to_string()),
             }],
         );
@@ -1044,6 +1043,24 @@ mod tests {
         assert_eq!(card.display_name, "Penguin Card");
         assert_eq!(title.display_name, "Penguin");
         assert_eq!(unknown.display_name, "missing");
+    }
+
+    #[test]
+    fn tolerates_nullable_player_title_names() {
+        let response: ApiResponse<Vec<PlayerTitle>> = serde_json::from_value(serde_json::json!({
+            "status": 200,
+            "data": [{
+                "uuid": "title-uuid",
+                "displayName": null,
+                "titleText": null
+            }],
+        }))
+        .expect("player titles response");
+
+        let catalog = AccessoryCatalog::from_parts(vec![], vec![], vec![], response.data);
+        let title = catalog.resolve("title-uuid");
+
+        assert_eq!(title.display_name, "title-uuid");
     }
 
     #[test]

@@ -5,3 +5,4 @@
 *.tmp
 accounts.json
 TODO.md
+/.agents/

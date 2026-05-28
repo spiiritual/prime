@@ -31,19 +31,6 @@ impl fmt::Display for AccountId {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Region {
-    #[default]
-    Na,
-    Latam,
-    Br,
-    Eu,
-    Ap,
-    Kr,
-    Pbe,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum Shard {
     #[default]
     Na,
@@ -63,16 +50,6 @@ impl Shard {
             Shard::Ap => "ap",
             Shard::Kr => "kr",
             Shard::Pbe => "pbe",
-        }
-    }
-
-    pub fn from_live_region(region: Region) -> Self {
-        match region {
-            Region::Na | Region::Latam | Region::Br => Shard::Na,
-            Region::Eu => Shard::Eu,
-            Region::Ap => Shard::Ap,
-            Region::Kr => Shard::Kr,
-            Region::Pbe => Shard::Pbe,
         }
     }
 
@@ -110,6 +87,7 @@ impl FromStr for Shard {
 }
 
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuthSession {
     pub access_token: String,
     pub id_token: Option<String>,
@@ -164,6 +142,7 @@ impl AuthSession {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LauncherSessionBackup {
     pub data_dir: PathBuf,
     pub captured_at_unix: i64,
@@ -181,11 +160,11 @@ impl LauncherSessionBackup {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CompetitiveRank {
     pub tier: i64,
     pub rank_name: String,
     pub ranked_rating: i64,
-    #[serde(default)]
     pub season_id: Option<String>,
 }
 
@@ -210,6 +189,7 @@ impl CompetitiveRank {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AccountProfile {
     pub id: AccountId,
     pub display_name: String,
@@ -217,17 +197,11 @@ pub struct AccountProfile {
     pub puuid: Option<String>,
     pub game_name: Option<String>,
     pub tag_line: Option<String>,
-    pub region: Region,
     pub shard: Shard,
     pub session: Option<AuthSession>,
-    #[serde(default)]
     pub launcher_session: Option<LauncherSessionBackup>,
-    #[serde(default)]
     pub competitive_rank: Option<CompetitiveRank>,
-    #[serde(default)]
     pub account_level: Option<i64>,
-    #[serde(default)]
-    pub notes: String,
 }
 
 impl AccountProfile {
@@ -249,13 +223,11 @@ impl AccountProfile {
             puuid: None,
             game_name: None,
             tag_line: None,
-            region: Region::default(),
             shard,
             session: None,
             launcher_session: None,
             competitive_rank: None,
             account_level: None,
-            notes: String::new(),
         })
     }
 
@@ -276,12 +248,6 @@ impl AccountProfile {
         } else {
             format!("{} ({})", self.display_name, self.shard)
         }
-    }
-
-    pub fn has_api_session(&self) -> bool {
-        self.session
-            .as_ref()
-            .is_some_and(|session| !session.access_token.is_empty() && !session.is_expired())
     }
 
     pub fn has_launcher_session(&self) -> bool {
@@ -393,15 +359,6 @@ mod tests {
             .expect("valid account");
 
         assert_eq!(account.username.as_deref(), Some("player"));
-    }
-
-    #[test]
-    fn maps_regions_to_documented_live_shards() {
-        assert_eq!(Shard::from_live_region(Region::Latam), Shard::Na);
-        assert_eq!(Shard::from_live_region(Region::Br), Shard::Na);
-        assert_eq!(Shard::from_live_region(Region::Eu), Shard::Eu);
-        assert_eq!(Shard::from_live_region(Region::Ap), Shard::Ap);
-        assert_eq!(Shard::from_live_region(Region::Kr), Shard::Kr);
     }
 
     #[test]

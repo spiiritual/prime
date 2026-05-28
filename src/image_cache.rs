@@ -6,14 +6,27 @@ use directories::ProjectDirs;
 use thiserror::Error;
 use url::Url;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const USER_AGENT_VALUE: &str = concat!("prime/", env!("CARGO_PKG_VERSION"));
+
+#[derive(Clone)]
 pub struct ImageCache {
     root: PathBuf,
+    client: reqwest::Client,
 }
 
 impl ImageCache {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        let client = reqwest::Client::builder()
+            .timeout(HTTP_TIMEOUT)
+            .user_agent(USER_AGENT_VALUE)
+            .build()
+            .expect("image cache HTTP client configuration should be valid");
+
+        Self {
+            root: root.into(),
+            client,
+        }
     }
 
     pub fn default_path() -> PathBuf {
@@ -54,7 +67,8 @@ impl ImageCache {
             fs::create_dir_all(parent)?;
         }
 
-        let bytes = reqwest::Client::new()
+        let bytes = self
+            .client
             .get(url)
             .send()
             .await?
@@ -77,6 +91,22 @@ impl ImageCache {
             ))
     }
 }
+
+impl std::fmt::Debug for ImageCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ImageCache")
+            .field("root", &self.root)
+            .finish()
+    }
+}
+
+impl PartialEq for ImageCache {
+    fn eq(&self, other: &Self) -> bool {
+        self.root == other.root
+    }
+}
+
+impl Eq for ImageCache {}
 
 fn dir_size(path: &Path) -> io::Result<u64> {
     if !path.exists() {

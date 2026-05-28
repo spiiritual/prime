@@ -318,8 +318,7 @@ fn delete_account_prompt_overlay(account: &AccountProfile) -> Element<'_, Messag
         column![
             column![
                 text(format!("Delete {}?", account.display_name)).size(16),
-                text("This removes the local profile and captured launcher session reference.")
-                    .size(13)
+                text("This removes the local profile and captured launcher session data.").size(13)
             ]
             .spacing(3)
             .width(Length::Fill),

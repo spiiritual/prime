@@ -3,7 +3,8 @@ use iced::{Color, Element, Length, Theme, alignment};
 
 use super::super::components::{asset_background_image, asset_image, loading_line};
 use super::super::data::{
-    OfferPrice, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
+    OfferPrice, RarityTier, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
+    format_duration,
 };
 use super::super::{Message, PrimeApp};
 
@@ -215,62 +216,33 @@ fn bundle_text_scrim_style(_: &Theme) -> iced::widget::container::Style {
 }
 
 fn rarity_colors(rarity: Option<&str>) -> Option<(Color, Color)> {
-    let rarity = rarity?.to_ascii_lowercase();
-
-    if rarity.contains("exclusive") {
-        Some((
+    match RarityTier::from_name(rarity?)? {
+        RarityTier::Exclusive => Some((
             Color::from_rgba8(86, 42, 42, 0.72),
             Color::from_rgb8(214, 92, 92),
-        ))
-    } else if rarity.contains("ultra") {
-        Some((
+        )),
+        RarityTier::Ultra => Some((
             Color::from_rgba8(78, 58, 32, 0.72),
             Color::from_rgb8(218, 154, 72),
-        ))
-    } else if rarity.contains("premium") {
-        Some((
+        )),
+        RarityTier::Premium => Some((
             Color::from_rgba8(58, 48, 82, 0.72),
             Color::from_rgb8(166, 132, 224),
-        ))
-    } else if rarity.contains("deluxe") {
-        Some((
+        )),
+        RarityTier::Deluxe => Some((
             Color::from_rgba8(34, 55, 82, 0.72),
             Color::from_rgb8(91, 157, 218),
-        ))
-    } else if rarity.contains("select") {
-        Some((
+        )),
+        RarityTier::Select => Some((
             Color::from_rgba8(32, 68, 55, 0.72),
             Color::from_rgb8(86, 184, 139),
-        ))
-    } else {
-        None
-    }
-}
-
-fn format_duration(seconds: i64) -> String {
-    if seconds <= 0 {
-        return "soon".to_string();
-    }
-
-    let days = seconds / 86_400;
-    let hours = (seconds % 86_400) / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let seconds = seconds % 60;
-
-    if days > 0 {
-        format!("{days}d {hours}h {minutes}m")
-    } else if hours > 0 {
-        format!("{hours}h {minutes}m {seconds}s")
-    } else if minutes > 0 {
-        format!("{minutes}m {seconds}s")
-    } else {
-        format!("{seconds}s")
+        )),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::format_duration;
+    use super::super::super::data::format_duration;
 
     #[test]
     fn format_duration_includes_ticking_seconds() {

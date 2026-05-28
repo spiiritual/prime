@@ -3152,9 +3152,11 @@ dependencies = [
 name = "prime"
 version = "0.1.2"
 dependencies = [
+ "base64",
  "directories",
  "iced",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "tempfile",
@@ -3163,6 +3165,7 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

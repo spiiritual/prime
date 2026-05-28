@@ -37,7 +37,9 @@ pub fn ready_launcher_data_dir(data_dirs: impl IntoIterator<Item = PathBuf>) -> 
         let Ok(settings) = fs::read_to_string(settings_path) else {
             return false;
         };
-        let cookies = parse_private_settings_cookies(&settings);
+        let Ok(cookies) = parse_private_settings_cookies(&settings) else {
+            return false;
+        };
 
         cookie_value(&cookies, "ssid").is_some() && cookie_value(&cookies, "sub").is_some()
     })
@@ -56,7 +58,7 @@ pub fn capture_launcher_session_from_data_dir(
             source,
         }
     })?;
-    let cookies = parse_private_settings_cookies(&settings);
+    let cookies = parse_private_settings_cookies(&settings)?;
 
     if cookie_value(&cookies, "ssid").is_none() {
         return Err(LauncherSessionError::MissingSsid);
@@ -120,7 +122,7 @@ pub fn read_backup_cookies(
         }
     })?;
 
-    Ok(parse_private_settings_cookies(&settings))
+    parse_private_settings_cookies(&settings)
 }
 
 pub fn clear_existing_launcher_data_dirs() -> Result<usize, LauncherSessionError> {
@@ -154,17 +156,40 @@ pub fn launcher_cookie_header(cookies: &[LauncherCookie]) -> Result<String, Laun
     Ok(usable.join("; "))
 }
 
-pub fn parse_private_settings_cookies(contents: &str) -> Vec<LauncherCookie> {
+pub fn parse_private_settings_cookies(
+    contents: &str,
+) -> Result<Vec<LauncherCookie>, LauncherSessionError> {
     let mut cookies = Vec::new();
-    let mut current_name: Option<String> = None;
-    let mut current_value: Option<String> = None;
+    let mut pending: Option<PendingCookie> = None;
 
-    for line in contents.lines() {
+    for (line_index, line) in contents.lines().enumerate() {
         let trimmed = line.trim();
+
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if line
+            .chars()
+            .take_while(|ch| ch.is_whitespace())
+            .any(|ch| ch == '\t')
+        {
+            return Err(LauncherSessionError::PrivateSettingsFormat {
+                line: line_index + 1,
+                reason: "tabs are not valid indentation".to_string(),
+            });
+        }
+
+        let indent = line.chars().take_while(|ch| *ch == ' ').count();
         let starts_new_entry = trimmed.starts_with("- ");
 
         if starts_new_entry {
-            push_cookie(&mut cookies, &mut current_name, &mut current_value);
+            flush_pending_cookie(&mut cookies, &mut pending);
+        } else if pending
+            .as_ref()
+            .is_some_and(|pending| indent < pending.item_indent)
+        {
+            flush_pending_cookie(&mut cookies, &mut pending);
         }
 
         let normalized = trimmed.strip_prefix("- ").unwrap_or(trimmed);
@@ -172,23 +197,34 @@ pub fn parse_private_settings_cookies(contents: &str) -> Vec<LauncherCookie> {
             continue;
         };
         let key = key.trim();
-        let value = unquote_yaml_scalar(value.trim());
+        let value = value.trim();
 
-        match key {
-            "name" => {
-                if current_name.is_some() && current_value.is_some() {
-                    push_cookie(&mut cookies, &mut current_name, &mut current_value);
-                }
+        if value.is_empty() {
+            continue;
+        }
 
-                current_name = Some(value);
+        if matches!(key, "name" | "value") {
+            if key == "name"
+                && pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.name.is_some() && pending.value.is_some())
+            {
+                flush_pending_cookie(&mut cookies, &mut pending);
             }
-            "value" => current_value = Some(value),
-            _ => {}
+
+            let pending = pending.get_or_insert_with(|| PendingCookie::new(indent));
+
+            match key {
+                "name" => pending.name = Some(unquote_yaml_scalar(value)),
+                "value" => pending.value = Some(unquote_yaml_scalar(value)),
+                _ => {}
+            }
         }
     }
 
-    push_cookie(&mut cookies, &mut current_name, &mut current_value);
-    cookies
+    flush_pending_cookie(&mut cookies, &mut pending);
+
+    Ok(cookies)
 }
 
 pub fn cookie_value(cookies: &[LauncherCookie], name: &str) -> Option<String> {
@@ -206,7 +242,6 @@ pub fn default_data_dirs() -> Vec<PathBuf> {
     let local_app_data = PathBuf::from(local_app_data);
 
     vec![
-        local_app_data.join("Riot Games").join("Beta").join("Data"),
         local_app_data
             .join("Riot Games")
             .join("Riot Client")
@@ -228,12 +263,48 @@ fn default_restore_data_dir() -> PathBuf {
         })
 }
 
-fn push_cookie(
-    cookies: &mut Vec<LauncherCookie>,
-    current_name: &mut Option<String>,
-    current_value: &mut Option<String>,
-) {
-    if let (Some(name), Some(value)) = (current_name.take(), current_value.take()) {
+pub fn remove_launcher_session_backup(
+    backup_root: impl AsRef<Path>,
+    account_id: AccountId,
+) -> Result<(), LauncherSessionError> {
+    let backup_slot_dir = backup_root.as_ref().join(account_id.to_string());
+
+    if backup_slot_dir.exists() {
+        fs::remove_dir_all(backup_slot_dir)?;
+    }
+
+    Ok(())
+}
+
+#[derive(Default)]
+struct PendingCookie {
+    item_indent: usize,
+    name: Option<String>,
+    value: Option<String>,
+}
+
+impl PendingCookie {
+    fn new(item_indent: usize) -> Self {
+        Self {
+            item_indent,
+            name: None,
+            value: None,
+        }
+    }
+}
+
+fn flush_pending_cookie(cookies: &mut Vec<LauncherCookie>, pending: &mut Option<PendingCookie>) {
+    let Some(pending) = pending.take() else {
+        return;
+    };
+
+    if let (Some(name), Some(value)) = (pending.name, pending.value) {
+        push_cookie(cookies, name, value);
+    }
+}
+
+fn push_cookie(cookies: &mut Vec<LauncherCookie>, name: String, value: String) {
+    if !name.trim().is_empty() && !value.trim().is_empty() {
         cookies.push(LauncherCookie { name, value });
     }
 }
@@ -313,6 +384,8 @@ pub enum LauncherSessionError {
     PrivateSettingsNotFound,
     #[error("failed to read Riot private settings file at {path}: {source}")]
     ReadPrivateSettings { path: PathBuf, source: io::Error },
+    #[error("failed to parse Riot private settings YAML at line {line}: {reason}")]
+    PrivateSettingsFormat { line: usize, reason: String },
     #[error("the Riot Client login did not include an ssid cookie; login with Remember Me enabled")]
     MissingSsid,
     #[error("the Riot Client login did not include a sub cookie")]
@@ -358,7 +431,7 @@ rso-authenticator:
 
     #[test]
     fn parses_required_launcher_cookies_from_private_settings_yaml() {
-        let cookies = parse_private_settings_cookies(sample_private_settings());
+        let cookies = parse_private_settings_cookies(sample_private_settings()).expect("cookies");
 
         assert_eq!(
             cookie_value(&cookies, "ssid").as_deref(),
@@ -372,7 +445,7 @@ rso-authenticator:
 
     #[test]
     fn builds_cookie_reauth_header() {
-        let cookies = parse_private_settings_cookies(sample_private_settings());
+        let cookies = parse_private_settings_cookies(sample_private_settings()).expect("cookies");
 
         let header = launcher_cookie_header(&cookies).expect("cookie header");
 
@@ -535,5 +608,18 @@ riot-login:
             fs::read_to_string(target.path().join(PRIVATE_SETTINGS_FILE)).expect("new file"),
             "new"
         );
+    }
+
+    #[test]
+    fn removes_captured_launcher_backup_slot() {
+        let backup_root = tempdir().expect("backup root");
+        let account_id = AccountId::new();
+        let slot = backup_root.path().join(account_id.to_string());
+        fs::create_dir_all(slot.join("Data")).expect("slot");
+        fs::write(slot.join("Data").join(PRIVATE_SETTINGS_FILE), "settings").expect("settings");
+
+        remove_launcher_session_backup(backup_root.path(), account_id).expect("remove backup");
+
+        assert!(!slot.exists());
     }
 }

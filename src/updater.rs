@@ -6,6 +6,7 @@ use std::process::{Command, Stdio};
 
 use directories::ProjectDirs;
 use reqwest::header::{ACCEPT, USER_AGENT};
+use ring::digest::{SHA256, digest};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -17,6 +18,7 @@ pub const GITHUB_REPOSITORY: &str = "spiiritual/prime";
 
 const GITHUB_API_VERSION: &str = "2022-11-28";
 const USER_AGENT_VALUE: &str = concat!("prime/", env!("CARGO_PKG_VERSION"));
+const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AvailableUpdate {
@@ -41,6 +43,7 @@ pub struct ReleaseAsset {
     pub name: String,
     pub download_url: String,
     pub size_bytes: u64,
+    pub sha256_digest: String,
 }
 
 pub async fn check_for_update() -> Result<Option<AvailableUpdate>, UpdateError> {
@@ -56,7 +59,7 @@ pub async fn download_and_prepare_update(update: AvailableUpdate) -> Result<(), 
 async fn fetch_latest_release(repository: &str) -> Result<GitHubRelease, UpdateError> {
     let url = format!("https://api.github.com/repos/{repository}/releases/latest");
 
-    reqwest::Client::new()
+    http_client()?
         .get(url)
         .header(USER_AGENT, USER_AGENT_VALUE)
         .header(ACCEPT, "application/vnd.github+json")
@@ -99,10 +102,13 @@ fn compatible_release_asset(release: &GitHubRelease) -> Option<ReleaseAsset> {
         std::env::consts::OS,
         std::env::consts::ARCH,
     )
-    .map(|asset| ReleaseAsset {
-        name: asset.name.clone(),
-        download_url: asset.browser_download_url.clone(),
-        size_bytes: asset.size,
+    .and_then(|asset| {
+        Some(ReleaseAsset {
+            name: asset.name.clone(),
+            download_url: asset.browser_download_url.clone(),
+            size_bytes: asset.size,
+            sha256_digest: sha256_digest(asset)?.to_string(),
+        })
     })
 }
 
@@ -123,6 +129,8 @@ fn asset_score(asset: &GitHubAsset, target_os: &str, target_arch: &str) -> Optio
         return None;
     }
 
+    sha256_digest(asset)?;
+
     let name = asset.name.to_ascii_lowercase();
     let mut score = 0;
 
@@ -133,13 +141,12 @@ fn asset_score(asset: &GitHubAsset, target_os: &str, target_arch: &str) -> Optio
     match target_os {
         "windows" => {
             let is_exe = name.ends_with(".exe");
-            let is_zip = name.ends_with(".zip");
 
-            if !is_exe && !is_zip {
+            if !is_exe {
                 return None;
             }
 
-            score += if is_exe { 40 } else { 25 };
+            score += 40;
 
             if name == "prime.exe" {
                 score += 30;
@@ -214,8 +221,15 @@ fn matches_target_arch(name: &str, target_arch: &str) -> bool {
         || (target_arch == "x86" && name.contains("x86") && !name.contains("x86_64"))
 }
 
+fn sha256_digest(asset: &GitHubAsset) -> Option<&str> {
+    let digest = asset.digest.as_deref()?;
+    let digest = digest.strip_prefix("sha256:")?;
+
+    (digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(digest)
+}
+
 async fn download_release_asset(update: &AvailableUpdate) -> Result<PathBuf, UpdateError> {
-    let bytes = reqwest::Client::new()
+    let bytes = http_client()?
         .get(&update.asset.download_url)
         .header(USER_AGENT, USER_AGENT_VALUE)
         .send()
@@ -227,6 +241,8 @@ async fn download_release_asset(update: &AvailableUpdate) -> Result<PathBuf, Upd
     if bytes.is_empty() {
         return Err(UpdateError::EmptyDownload);
     }
+
+    verify_sha256(bytes.as_ref(), &update.asset.sha256_digest)?;
 
     let staging_dir = update_staging_dir(&update.latest_version);
     fs::create_dir_all(&staging_dir)?;
@@ -244,6 +260,30 @@ async fn download_release_asset(update: &AvailableUpdate) -> Result<PathBuf, Upd
     fs::write(&staged_exe, bytes)?;
 
     Ok(staged_exe)
+}
+
+fn http_client() -> Result<reqwest::Client, UpdateError> {
+    reqwest::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .build()
+        .map_err(UpdateError::Http)
+}
+
+fn verify_sha256(bytes: &[u8], expected: &str) -> Result<(), UpdateError> {
+    let actual = digest(&SHA256, bytes)
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+
+    if actual.eq_ignore_ascii_case(expected) {
+        Ok(())
+    } else {
+        Err(UpdateError::DigestMismatch {
+            expected: expected.to_string(),
+            actual,
+        })
+    }
 }
 
 fn update_staging_dir(version: &str) -> PathBuf {
@@ -311,35 +351,15 @@ if (Test-Path -LiteralPath $Destination) {
     Move-Item -LiteralPath $Destination -Destination $Backup -Force
 }
 
-$Payload = $Source
-$ExtractDir = Join-Path (Split-Path -Parent $Source) 'payload'
-
-if ([System.IO.Path]::GetExtension($Source) -ieq '.zip') {
-    if (Test-Path -LiteralPath $ExtractDir) {
-        Remove-Item -LiteralPath $ExtractDir -Recurse -Force -ErrorAction SilentlyContinue
-    }
-
-    New-Item -ItemType Directory -Path $ExtractDir -Force | Out-Null
-    Expand-Archive -LiteralPath $Source -DestinationPath $ExtractDir -Force
-
-    $Payload = Get-ChildItem -LiteralPath $ExtractDir -Recurse -File -Filter '*.exe' |
-        Where-Object { $_.Name -like 'prime*.exe' } |
-        Select-Object -First 1 -ExpandProperty FullName
-
-    if (-not $Payload) {
-        throw 'The update archive did not contain a Prime executable.'
-    }
+if ([System.IO.Path]::GetExtension($Source) -ine '.exe') {
+    throw 'The update payload must be a Prime executable.'
 }
 
-Move-Item -LiteralPath $Payload -Destination $Destination -Force
+Move-Item -LiteralPath $Source -Destination $Destination -Force
 Start-Process -FilePath $Relaunch
 
 if (Test-Path -LiteralPath $Backup) {
     Remove-Item -LiteralPath $Backup -Force -ErrorAction SilentlyContinue
-}
-
-if (Test-Path -LiteralPath $ExtractDir) {
-    Remove-Item -LiteralPath $ExtractDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 if (Test-Path -LiteralPath $Source) {
@@ -492,6 +512,7 @@ struct GitHubAsset {
     browser_download_url: String,
     #[serde(default)]
     size: u64,
+    digest: Option<String>,
 }
 
 #[derive(Debug, Error)]
@@ -503,11 +524,13 @@ pub enum UpdateError {
     #[error("latest GitHub release version could not be compared: {0}")]
     InvalidReleaseVersion(String),
     #[error(
-        "latest GitHub release {latest_version} does not include a compatible executable asset"
+        "latest GitHub release {latest_version} does not include a compatible checksum-verified executable asset"
     )]
     NoCompatibleReleaseAsset { latest_version: String },
     #[error("downloaded update was empty")]
     EmptyDownload,
+    #[error("downloaded update SHA-256 mismatch: expected {expected}, got {actual}")]
+    DigestMismatch { expected: String, actual: String },
 }
 
 #[cfg(test)]
@@ -551,36 +574,25 @@ mod tests {
     }
 
     #[test]
-    fn windows_asset_selection_accepts_release_archives() {
+    fn windows_asset_selection_rejects_release_archives() {
         let assets = vec![asset(
             "prime-windows-x86_64.zip",
             "https://example.com/windows.zip",
             20,
         )];
 
-        let selected = select_release_asset(&assets, "windows", "x86_64").expect("asset");
-
-        assert_eq!(selected.name, "prime-windows-x86_64.zip");
+        assert!(select_release_asset(&assets, "windows", "x86_64").is_none());
     }
 
     #[test]
-    fn windows_asset_selection_prefers_executable_over_archive() {
-        let assets = vec![
-            asset(
-                "prime-windows-x86_64.zip",
-                "https://example.com/windows.zip",
-                20,
-            ),
-            asset(
-                "prime-windows-x86_64.exe",
-                "https://example.com/windows.exe",
-                20,
-            ),
-        ];
+    fn windows_asset_selection_requires_digest() {
+        let assets = vec![asset_without_digest(
+            "prime-windows-x86_64.exe",
+            "https://example.com/windows.exe",
+            20,
+        )];
 
-        let selected = select_release_asset(&assets, "windows", "x86_64").expect("asset");
-
-        assert_eq!(selected.name, "prime-windows-x86_64.exe");
+        assert!(select_release_asset(&assets, "windows", "x86_64").is_none());
     }
 
     #[test]
@@ -616,6 +628,19 @@ mod tests {
             name: name.to_string(),
             browser_download_url: url.to_string(),
             size,
+            digest: Some(
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                    .to_string(),
+            ),
+        }
+    }
+
+    fn asset_without_digest(name: &str, url: &str, size: u64) -> GitHubAsset {
+        GitHubAsset {
+            name: name.to_string(),
+            browser_download_url: url.to_string(),
+            size,
+            digest: None,
         }
     }
 }

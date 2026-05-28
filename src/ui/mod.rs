@@ -79,6 +79,7 @@ fn loading_indicator_active(app: &PrimeApp) -> bool {
     app.store_loading
         || app.loadout_loading
         || app.account_ranks_loading
+        || app.launcher_capture_in_progress
         || app.launching_account.is_some()
         || app.app_update_status.is_busy()
         || loading_status_active(&app.status)
@@ -159,7 +160,10 @@ struct PrimeApp {
     loadout_summary: Option<LoadoutSummary>,
     store_loading: bool,
     loadout_loading: bool,
+    store_loading_account: Option<AccountId>,
+    loadout_loading_account: Option<AccountId>,
     account_ranks_loading: bool,
+    launcher_capture_in_progress: bool,
     launching_account: Option<AccountId>,
     launch_progress_checking: bool,
     app_update_status: AppUpdateStatus,
@@ -367,10 +371,10 @@ enum Message {
     RefreshProfileIdentity(AccountId),
     ProfileIdentityLoaded(Result<RefreshedProfileIdentity, String>),
     AccountRanksLoaded(AccountRanksResult),
-    StorefrontLoaded(Result<StorefrontResult, String>),
+    StorefrontLoaded(AccountId, Result<StorefrontResult, String>),
     ShopTimerTick(iced::time::Instant),
     LoadingTick,
-    LoadoutLoaded(Result<LoadoutResult, String>),
+    LoadoutLoaded(AccountId, Result<LoadoutResult, String>),
     RiotClientPathChanged(String),
     SaveSettings,
     ImageCacheSizeLoaded(Result<u64, String>),

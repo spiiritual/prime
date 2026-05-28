@@ -884,20 +884,45 @@ pub(super) fn strongest_bundle_rarity(bundle: &StoreBundle, skins: &SkinCatalog)
 }
 
 pub(super) fn rarity_rank(rarity: &str) -> usize {
-    let rarity = rarity.to_ascii_lowercase();
+    RarityTier::from_name(rarity).map_or(0, RarityTier::rank)
+}
 
-    if rarity.contains("exclusive") {
-        5
-    } else if rarity.contains("ultra") {
-        4
-    } else if rarity.contains("premium") {
-        3
-    } else if rarity.contains("deluxe") {
-        2
-    } else if rarity.contains("select") {
-        1
-    } else {
-        0
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RarityTier {
+    Select,
+    Deluxe,
+    Premium,
+    Ultra,
+    Exclusive,
+}
+
+impl RarityTier {
+    pub(super) fn from_name(rarity: &str) -> Option<Self> {
+        let rarity = rarity.to_ascii_lowercase();
+
+        if rarity.contains("exclusive") {
+            Some(Self::Exclusive)
+        } else if rarity.contains("ultra") {
+            Some(Self::Ultra)
+        } else if rarity.contains("premium") {
+            Some(Self::Premium)
+        } else if rarity.contains("deluxe") {
+            Some(Self::Deluxe)
+        } else if rarity.contains("select") {
+            Some(Self::Select)
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn rank(self) -> usize {
+        match self {
+            Self::Select => 1,
+            Self::Deluxe => 2,
+            Self::Premium => 3,
+            Self::Ultra => 4,
+            Self::Exclusive => 5,
+        }
     }
 }
 
@@ -1026,6 +1051,27 @@ pub(super) fn format_whole_number(amount: i64) -> String {
     formatted
 }
 
+pub(super) fn format_duration(seconds: i64) -> String {
+    if seconds <= 0 {
+        return "soon".to_string();
+    }
+
+    let days = seconds / 86_400;
+    let hours = (seconds % 86_400) / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let seconds = seconds % 60;
+
+    if days > 0 {
+        format!("{days}d {hours}h {minutes}m")
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m {seconds}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
+}
+
 pub(super) fn competitive_rank_from_mmr(response: &PlayerMmrResponse) -> Option<CompetitiveRank> {
     let competitive = response.queue_skills.competitive.as_ref()?;
     let seasons = &competitive.seasonal_info_by_season_id;
@@ -1083,36 +1129,44 @@ fn season_has_rank_data(season: &MmrSeasonInfo) -> bool {
 }
 
 pub(super) fn rank_name_for_competitive_tier(tier: i64) -> String {
-    match tier {
-        3 => "Iron 1",
-        4 => "Iron 2",
-        5 => "Iron 3",
-        6 => "Bronze 1",
-        7 => "Bronze 2",
-        8 => "Bronze 3",
-        9 => "Silver 1",
-        10 => "Silver 2",
-        11 => "Silver 3",
-        12 => "Gold 1",
-        13 => "Gold 2",
-        14 => "Gold 3",
-        15 => "Platinum 1",
-        16 => "Platinum 2",
-        17 => "Platinum 3",
-        18 => "Diamond 1",
-        19 => "Diamond 2",
-        20 => "Diamond 3",
-        21 => "Ascendant 1",
-        22 => "Ascendant 2",
-        23 => "Ascendant 3",
-        24 => "Immortal 1",
-        25 => "Immortal 2",
-        26 => "Immortal 3",
-        27 => "Radiant",
-        tier if tier > 27 => return format!("Tier {tier}"),
-        _ => "Unrated",
-    }
-    .to_string()
+    const COMPETITIVE_RANK_NAMES: &[(i64, &str)] = &[
+        (3, "Iron 1"),
+        (4, "Iron 2"),
+        (5, "Iron 3"),
+        (6, "Bronze 1"),
+        (7, "Bronze 2"),
+        (8, "Bronze 3"),
+        (9, "Silver 1"),
+        (10, "Silver 2"),
+        (11, "Silver 3"),
+        (12, "Gold 1"),
+        (13, "Gold 2"),
+        (14, "Gold 3"),
+        (15, "Platinum 1"),
+        (16, "Platinum 2"),
+        (17, "Platinum 3"),
+        (18, "Diamond 1"),
+        (19, "Diamond 2"),
+        (20, "Diamond 3"),
+        (21, "Ascendant 1"),
+        (22, "Ascendant 2"),
+        (23, "Ascendant 3"),
+        (24, "Immortal 1"),
+        (25, "Immortal 2"),
+        (26, "Immortal 3"),
+        (27, "Radiant"),
+    ];
+
+    COMPETITIVE_RANK_NAMES
+        .iter()
+        .find_map(|(rank_tier, name)| (*rank_tier == tier).then_some((*name).to_string()))
+        .unwrap_or_else(|| {
+            if tier > 27 {
+                format!("Tier {tier}")
+            } else {
+                "Unrated".to_string()
+            }
+        })
 }
 
 fn non_empty_string(value: String) -> Option<String> {
@@ -1464,29 +1518,15 @@ fn loadout_skin_level_label(
 }
 
 pub(super) fn weapon_order(name: &str) -> (usize, String) {
-    let index = match name {
-        "Classic" => 0,
-        "Shorty" => 1,
-        "Frenzy" => 2,
-        "Ghost" => 3,
-        "Sheriff" => 4,
-        "Bandit" => 5,
-        "Stinger" => 6,
-        "Spectre" => 7,
-        "Bucky" => 8,
-        "Judge" => 9,
-        "Bulldog" => 10,
-        "Guardian" => 11,
-        "Phantom" => 12,
-        "Vandal" => 13,
-        "Marshal" => 14,
-        "Outlaw" => 15,
-        "Operator" => 16,
-        "Ares" => 17,
-        "Odin" => 18,
-        "Melee" => 19,
-        _ => 99,
-    };
+    const WEAPON_ORDER: &[&str] = &[
+        "Classic", "Shorty", "Frenzy", "Ghost", "Sheriff", "Bandit", "Stinger", "Spectre", "Bucky",
+        "Judge", "Bulldog", "Guardian", "Phantom", "Vandal", "Marshal", "Outlaw", "Operator",
+        "Ares", "Odin", "Melee",
+    ];
+    let index = WEAPON_ORDER
+        .iter()
+        .position(|weapon| *weapon == name)
+        .unwrap_or(99);
 
     (index, name.to_string())
 }
@@ -1551,7 +1591,7 @@ pub(super) async fn fetch_storefront(
 ) -> Result<StorefrontResult, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
     let resolved = resolve_credentials(&api, &account, client_version).await?;
-    let metadata = fetch_store_metadata().await;
+    let metadata = fetch_store_metadata().await?;
     let mut summary = api
         .storefront(&resolved.credentials)
         .await
@@ -1575,7 +1615,7 @@ pub(super) async fn fetch_storefront(
             summary.currency_balance_error = Some(error.to_string());
         }
     }
-    cache_store_images(&mut summary, &image_cache).await;
+    cache_store_images(&mut summary, &image_cache).await?;
 
     Ok(StorefrontResult {
         account_id: account.id,
@@ -1592,7 +1632,7 @@ pub(super) async fn fetch_loadout(
 ) -> Result<LoadoutResult, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
     let resolved = resolve_credentials(&api, &account, client_version).await?;
-    let metadata = fetch_loadout_metadata().await;
+    let metadata = fetch_loadout_metadata().await?;
     let account_level = api
         .account_xp(&resolved.credentials)
         .await
@@ -1622,7 +1662,7 @@ pub(super) async fn fetch_loadout(
             summary.battle_pass_error = Some(error);
         }
     }
-    cache_loadout_images(&mut summary, &image_cache).await;
+    cache_loadout_images(&mut summary, &image_cache).await?;
 
     Ok(LoadoutResult {
         account_id: account.id,
@@ -1641,9 +1681,12 @@ async fn fetch_battle_pass_progress(
         .contracts(credentials)
         .await
         .map_err(|error| error.to_string())?;
-    let content = api.game_content(credentials).await.ok();
+    let content = api
+        .game_content(credentials)
+        .await
+        .map_err(|error| error.to_string())?;
 
-    battle_pass_progress_from_responses(&contracts, contract_catalog, content.as_ref())
+    battle_pass_progress_from_responses(&contracts, contract_catalog, Some(&content))
         .ok_or_else(|| "No active battle pass progress found".to_string())
 }
 
@@ -1743,21 +1786,35 @@ pub(super) struct StoreMetadata {
     pub(super) accessories: AccessoryCatalog,
 }
 
-pub(super) async fn fetch_store_metadata() -> StoreMetadata {
-    match ValorantContentApi::new() {
-        Ok(api) => StoreMetadata {
-            skins: api.skin_catalog().await.unwrap_or_default(),
-            bundles: api.bundle_catalog().await.unwrap_or_default(),
-            currencies: api.currency_catalog().await.unwrap_or_default(),
-            accessories: api.accessory_catalog().await.unwrap_or_default(),
-        },
-        Err(_) => StoreMetadata::default(),
-    }
+pub(super) async fn fetch_store_metadata() -> Result<StoreMetadata, String> {
+    let api = ValorantContentApi::new().map_err(|error| error.to_string())?;
+
+    Ok(StoreMetadata {
+        skins: api
+            .skin_catalog()
+            .await
+            .map_err(|error| error.to_string())?,
+        bundles: api
+            .bundle_catalog()
+            .await
+            .map_err(|error| error.to_string())?,
+        currencies: api
+            .currency_catalog()
+            .await
+            .map_err(|error| error.to_string())?,
+        accessories: api
+            .accessory_catalog()
+            .await
+            .map_err(|error| error.to_string())?,
+    })
 }
 
-pub(super) async fn cache_store_images(summary: &mut StoreSummary, image_cache: &ImageCache) {
+pub(super) async fn cache_store_images(
+    summary: &mut StoreSummary,
+    image_cache: &ImageCache,
+) -> Result<(), String> {
     for bundle in &mut summary.featured_bundles {
-        cache_bundle_icon(&mut bundle.bundle, image_cache).await;
+        cache_bundle_icon(&mut bundle.bundle, image_cache).await?;
     }
 
     for offer in summary
@@ -1765,63 +1822,94 @@ pub(super) async fn cache_store_images(summary: &mut StoreSummary, image_cache: 
         .iter_mut()
         .chain(summary.night_market_offers.iter_mut())
     {
-        cache_skin_icon(&mut offer.skin, image_cache).await;
+        cache_skin_icon(&mut offer.skin, image_cache).await?;
     }
 
     for offer in &mut summary.accessory_offers {
-        cache_accessory_icon(&mut offer.accessory, image_cache).await;
+        cache_accessory_icon(&mut offer.accessory, image_cache).await?;
     }
+
+    Ok(())
 }
 
-pub(super) async fn cache_loadout_images(summary: &mut LoadoutSummary, image_cache: &ImageCache) {
+pub(super) async fn cache_loadout_images(
+    summary: &mut LoadoutSummary,
+    image_cache: &ImageCache,
+) -> Result<(), String> {
     for gun in &mut summary.gun_skins {
-        cache_weapon_icon(&mut gun.weapon, image_cache).await;
-        cache_skin_icon(&mut gun.skin, image_cache).await;
+        cache_weapon_icon(&mut gun.weapon, image_cache).await?;
+        cache_skin_icon(&mut gun.skin, image_cache).await?;
     }
+
+    Ok(())
 }
 
-pub(super) async fn cache_skin_icon(skin: &mut SkinDisplay, image_cache: &ImageCache) {
+pub(super) async fn cache_skin_icon(
+    skin: &mut SkinDisplay,
+    image_cache: &ImageCache,
+) -> Result<(), String> {
     let Some(url) = skin.display_icon.as_ref() else {
-        return;
+        return Ok(());
     };
 
-    skin.cached_icon = image_cache.cache_url("skins", &skin.uuid, url).await.ok();
+    skin.cached_icon = Some(
+        image_cache
+            .cache_url("skins", &skin.uuid, url)
+            .await
+            .map_err(|error| error.to_string())?,
+    );
+    Ok(())
 }
 
-pub(super) async fn cache_weapon_icon(weapon: &mut WeaponDisplay, image_cache: &ImageCache) {
+pub(super) async fn cache_weapon_icon(
+    weapon: &mut WeaponDisplay,
+    image_cache: &ImageCache,
+) -> Result<(), String> {
     let Some(url) = weapon.display_icon.as_ref() else {
-        return;
+        return Ok(());
     };
 
-    weapon.cached_icon = image_cache
-        .cache_url("weapons", &weapon.uuid, url)
-        .await
-        .ok();
+    weapon.cached_icon = Some(
+        image_cache
+            .cache_url("weapons", &weapon.uuid, url)
+            .await
+            .map_err(|error| error.to_string())?,
+    );
+    Ok(())
 }
 
 pub(super) async fn cache_accessory_icon(
     accessory: &mut AccessoryDisplay,
     image_cache: &ImageCache,
-) {
+) -> Result<(), String> {
     let Some(url) = accessory.display_icon.as_ref() else {
-        return;
+        return Ok(());
     };
 
-    accessory.cached_icon = image_cache
-        .cache_url("accessories", &accessory.uuid, url)
-        .await
-        .ok();
+    accessory.cached_icon = Some(
+        image_cache
+            .cache_url("accessories", &accessory.uuid, url)
+            .await
+            .map_err(|error| error.to_string())?,
+    );
+    Ok(())
 }
 
-pub(super) async fn cache_bundle_icon(bundle: &mut BundleDisplay, image_cache: &ImageCache) {
+pub(super) async fn cache_bundle_icon(
+    bundle: &mut BundleDisplay,
+    image_cache: &ImageCache,
+) -> Result<(), String> {
     let Some(url) = bundle.display_icon.as_ref() else {
-        return;
+        return Ok(());
     };
 
-    bundle.cached_icon = image_cache
-        .cache_url("bundles", &bundle.uuid, url)
-        .await
-        .ok();
+    bundle.cached_icon = Some(
+        image_cache
+            .cache_url("bundles", &bundle.uuid, url)
+            .await
+            .map_err(|error| error.to_string())?,
+    );
+    Ok(())
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -1831,15 +1919,23 @@ pub(super) struct LoadoutMetadata {
     pub(super) contracts: ContractCatalog,
 }
 
-pub(super) async fn fetch_loadout_metadata() -> LoadoutMetadata {
-    match ValorantContentApi::new() {
-        Ok(api) => LoadoutMetadata {
-            skins: api.skin_catalog().await.unwrap_or_default(),
-            weapons: api.weapon_catalog().await.unwrap_or_default(),
-            contracts: api.contract_catalog().await.unwrap_or_default(),
-        },
-        Err(_) => LoadoutMetadata::default(),
-    }
+pub(super) async fn fetch_loadout_metadata() -> Result<LoadoutMetadata, String> {
+    let api = ValorantContentApi::new().map_err(|error| error.to_string())?;
+
+    Ok(LoadoutMetadata {
+        skins: api
+            .skin_catalog()
+            .await
+            .map_err(|error| error.to_string())?,
+        weapons: api
+            .weapon_catalog()
+            .await
+            .map_err(|error| error.to_string())?,
+        contracts: api
+            .contract_catalog()
+            .await
+            .map_err(|error| error.to_string())?,
+    })
 }
 
 pub(super) async fn fetch_current_client_version() -> Result<String, String> {

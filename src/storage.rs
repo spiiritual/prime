@@ -1,5 +1,5 @@
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
@@ -11,9 +11,9 @@ use crate::account::{AccountId, AccountProfile};
 const STORAGE_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StoredState {
     pub version: u32,
-    #[serde(default)]
     pub accounts: Vec<AccountProfile>,
     pub selected_account: Option<AccountId>,
     pub riot_client_path: Option<PathBuf>,
@@ -107,14 +107,16 @@ impl AccountRepository {
 
         let contents = fs::read_to_string(&self.path)?;
         let contents = contents.strip_prefix('\u{feff}').unwrap_or(&contents);
-        let mut state: StoredState = serde_json::from_str(contents)?;
-        state.version = STORAGE_VERSION;
+        let state: StoredState = serde_json::from_str(contents)?;
 
-        if state
-            .selected_account
-            .is_some_and(|id| !state.accounts.iter().any(|account| account.id == id))
+        if state.version != STORAGE_VERSION {
+            return Err(StorageError::UnsupportedVersion(state.version));
+        }
+
+        if let Some(selected) = state.selected_account
+            && !state.accounts.iter().any(|account| account.id == selected)
         {
-            state.selected_account = state.accounts.first().map(|account| account.id);
+            return Err(StorageError::InvalidSelectedAccount(selected));
         }
 
         Ok(state)
@@ -128,24 +130,68 @@ impl AccountRepository {
         let pretty = serde_json::to_string_pretty(state)?;
         let tmp = self.path.with_extension("json.tmp");
 
-        fs::write(&tmp, pretty)?;
-
-        if self.path.exists() {
-            fs::remove_file(&self.path)?;
-        }
-
-        fs::rename(tmp, &self.path)?;
+        write_synced(&tmp, pretty.as_bytes())?;
+        replace_file_atomically(&tmp, &self.path)?;
 
         Ok(())
     }
+}
+
+fn write_synced(path: &Path, contents: &[u8]) -> io::Result<()> {
+    let mut file = fs::File::create(path)?;
+    file.write_all(contents)?;
+    file.sync_all()
+}
+
+#[cfg(windows)]
+fn replace_file_atomically(source: &Path, destination: &Path) -> io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+    };
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let moved = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+
+    if moved == 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
+fn replace_file_atomically(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::rename(source, destination)
 }
 
 #[derive(Debug, Error)]
 pub enum StorageError {
     #[error("storage I/O error: {0}")]
     Io(#[from] io::Error),
-    #[error("storage JSON error: {0}")]
+    #[error("storage JSON/schema error: {0}; delete accounts.json and re-add accounts")]
     Json(#[from] serde_json::Error),
+    #[error("unsupported storage version {0}; delete accounts.json and re-add accounts")]
+    UnsupportedVersion(u32),
+    #[error(
+        "selected account {0} does not exist in storage; delete accounts.json and re-add accounts"
+    )]
+    InvalidSelectedAccount(AccountId),
 }
 
 #[cfg(test)]
@@ -204,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn repairs_selected_account_when_profile_is_missing() {
+    fn rejects_selected_account_when_profile_is_missing() {
         let first = AccountProfile::new("First", None, Shard::Na).expect("first");
         let missing = AccountProfile::new("Missing", None, Shard::Na).expect("missing");
         let raw = serde_json::json!({
@@ -218,8 +264,29 @@ mod tests {
         fs::write(&path, serde_json::to_string_pretty(&raw).unwrap()).expect("write");
         let repo = AccountRepository::new(path);
 
-        let state = repo.load().expect("load");
+        let error = repo.load().expect_err("invalid selected account");
 
-        assert_eq!(state.selected_account, Some(state.accounts[0].id));
+        assert!(matches!(
+            error,
+            StorageError::InvalidSelectedAccount(id) if id == missing.id
+        ));
+    }
+
+    #[test]
+    fn rejects_unsupported_storage_version() {
+        let raw = serde_json::json!({
+            "version": 0,
+            "accounts": [],
+            "selected_account": null,
+            "riot_client_path": null
+        });
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("accounts.json");
+        fs::write(&path, serde_json::to_string_pretty(&raw).unwrap()).expect("write");
+        let repo = AccountRepository::new(path);
+
+        let error = repo.load().expect_err("unsupported version");
+
+        assert!(matches!(error, StorageError::UnsupportedVersion(0)));
     }
 }

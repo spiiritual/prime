@@ -3,6 +3,9 @@ use thiserror::Error;
 
 use crate::account::Shard;
 
+const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const USER_AGENT_VALUE: &str = concat!("prime/", env!("CARGO_PKG_VERSION"));
+
 use super::auth::{AuthParseError, COOKIE_REAUTH_URL, RedirectTokens, parse_redirect_tokens};
 use super::endpoints::{
     CLIENT_PLATFORM, ENTITLEMENTS_URL, HEADER_CLIENT_PLATFORM, HEADER_CLIENT_VERSION,
@@ -56,11 +59,13 @@ impl RiotApi {
     pub fn new() -> Result<Self, RiotApiError> {
         let client = reqwest::Client::builder()
             .cookie_store(true)
-            .user_agent("prime/0.1")
+            .timeout(HTTP_TIMEOUT)
+            .user_agent(USER_AGENT_VALUE)
             .build()?;
         let no_redirect_client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
-            .user_agent("prime/0.1")
+            .timeout(HTTP_TIMEOUT)
+            .user_agent(USER_AGENT_VALUE)
             .build()?;
 
         Ok(Self {
