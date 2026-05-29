@@ -1,7 +1,9 @@
 use iced::widget::{column, container, rich_text, span, stack, text};
 use iced::{Color, Element, Length, Theme, alignment};
 
-use super::super::components::{asset_background_image, asset_image, loading_line};
+use super::super::components::{
+    asset_background_image, asset_image, high_res_image_source, loading_line,
+};
 use super::super::data::{
     OfferPrice, RarityTier, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
     format_duration,
@@ -124,7 +126,13 @@ fn store_bundle_card(bundle: &StoreBundleDisplay) -> Element<'_, Message> {
             asset_background_image(
                 bundle.bundle.cached_icon.as_ref(),
                 214.0,
-                &bundle.bundle.display_name
+                &bundle.bundle.display_name,
+                high_res_image_source(
+                    "viewer-bundles",
+                    &bundle.bundle.uuid,
+                    bundle.bundle.display_icon.as_deref(),
+                    bundle.bundle.viewer_icon.as_deref(),
+                )
             ),
             overlay
         ]
@@ -149,7 +157,13 @@ fn store_accessory_card(offer: &StoreAccessoryDisplay) -> Element<'_, Message> {
         asset_image(
             offer.accessory.cached_icon.as_ref(),
             96.0,
-            &offer.accessory.display_name
+            &offer.accessory.display_name,
+            high_res_image_source(
+                "viewer-accessories",
+                &offer.accessory.uuid,
+                offer.accessory.display_icon.as_deref(),
+                offer.accessory.viewer_icon.as_deref(),
+            )
         ),
         text(&offer.accessory.display_name).size(16),
         text(price).size(14),
@@ -171,6 +185,12 @@ fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {
             offer.skin.cached_icon.as_ref(),
             118.0,
             &offer.skin.display_name,
+            high_res_image_source(
+                "viewer-skins",
+                &offer.skin.uuid,
+                offer.skin.display_icon.as_deref(),
+                offer.skin.viewer_icon.as_deref(),
+            ),
         ))
         .push(text(&offer.skin.display_name).size(16))
         .push(offer_price_line(offer));

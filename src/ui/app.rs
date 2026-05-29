@@ -16,7 +16,8 @@ use super::data::{
     launch_account, non_empty_path, start_account_capture, start_launcher_session_login,
 };
 use super::{
-    AppUpdateStatus, LoadoutTab, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, Tab, TabScrollOffsets,
+    AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, MAIN_PANEL_SCROLLABLE_ID,
+    Message, PrimeApp, Tab, TabScrollOffsets,
 };
 
 impl PrimeApp {
@@ -1000,7 +1001,42 @@ impl PrimeApp {
                 Task::none()
             }
             Message::OpenImageViewer(image) => {
-                self.image_viewer = Some(image);
+                let high_res = image.high_res.clone();
+                self.image_viewer = Some(ImageViewerImage::from_request(image));
+
+                if let Some(source) = high_res {
+                    if let Some(viewer) = &mut self.image_viewer {
+                        viewer.high_res_loading = true;
+                    }
+
+                    return self.load_image_viewer_source_task(source);
+                }
+
+                Task::none()
+            }
+            Message::ImageViewerImageLoaded(source, result) => {
+                let Some(viewer) = &mut self.image_viewer else {
+                    return Task::none();
+                };
+
+                if viewer.high_res.as_ref() != Some(&source) {
+                    return Task::none();
+                }
+
+                viewer.high_res_loading = false;
+
+                match result {
+                    Ok(path) => {
+                        viewer.path = path;
+                        viewer.high_res_error = None;
+                        return self.image_cache_size_task();
+                    }
+                    Err(error) => {
+                        viewer.high_res_error = Some("Full image unavailable".to_string());
+                        self.status = format!("Could not load full image: {error}");
+                    }
+                }
+
                 Task::none()
             }
             Message::CloseImageViewer => {
@@ -1308,6 +1344,25 @@ impl PrimeApp {
         Task::perform(
             async move { cache.size_bytes().map_err(|error| error.to_string()) },
             Message::ImageCacheSizeLoaded,
+        )
+    }
+
+    fn load_image_viewer_source_task(&self, source: ImageViewerSource) -> Task<Message> {
+        let cache = self.image_cache.clone();
+        let source_for_load = source.clone();
+
+        Task::perform(
+            async move {
+                cache
+                    .cache_url(
+                        &source_for_load.namespace,
+                        &source_for_load.id,
+                        &source_for_load.url,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())
+            },
+            move |result| Message::ImageViewerImageLoaded(source, result),
         )
     }
 

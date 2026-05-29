@@ -706,6 +706,7 @@ pub(super) struct BundleDisplay {
     pub(super) uuid: String,
     pub(super) display_name: String,
     pub(super) display_icon: Option<String>,
+    pub(super) viewer_icon: Option<String>,
     pub(super) cached_icon: Option<PathBuf>,
 }
 
@@ -715,6 +716,7 @@ impl From<ResolvedBundle> for BundleDisplay {
             uuid: bundle.uuid,
             display_name: bundle.display_name,
             display_icon: bundle.display_icon,
+            viewer_icon: bundle.viewer_icon,
             cached_icon: None,
         }
     }
@@ -725,6 +727,7 @@ pub(super) struct AccessoryDisplay {
     pub(super) uuid: String,
     pub(super) display_name: String,
     pub(super) display_icon: Option<String>,
+    pub(super) viewer_icon: Option<String>,
     pub(super) cached_icon: Option<PathBuf>,
 }
 
@@ -734,6 +737,7 @@ impl From<ResolvedAccessory> for AccessoryDisplay {
             uuid: accessory.uuid,
             display_name: accessory.display_name,
             display_icon: accessory.display_icon,
+            viewer_icon: accessory.viewer_icon,
             cached_icon: None,
         }
     }
@@ -1373,6 +1377,7 @@ pub(super) struct BattlePassRewardDisplay {
     pub(super) amount: i64,
     pub(super) highlighted: bool,
     pub(super) display_icon: Option<String>,
+    pub(super) viewer_icon: Option<String>,
     pub(super) cached_icon: Option<PathBuf>,
 }
 
@@ -1566,6 +1571,7 @@ fn battle_pass_reward_display(
         amount: reward.amount,
         highlighted: reward.highlighted,
         display_icon: resolved.display_icon,
+        viewer_icon: resolved.viewer_icon,
         cached_icon: None,
     }
 }
@@ -1575,6 +1581,7 @@ struct ResolvedBattlePassReward {
     name: String,
     kind: String,
     display_icon: Option<String>,
+    viewer_icon: Option<String>,
 }
 
 fn resolve_battle_pass_reward(
@@ -1590,6 +1597,7 @@ fn resolve_battle_pass_reward(
                 name: skin.display_name,
                 kind: "Weapon skin".to_string(),
                 display_icon: skin.display_icon,
+                viewer_icon: skin.viewer_icon,
             }
         }
         "EquippableCharmLevel" | "Buddy" | "BuddyLevel" => {
@@ -1598,6 +1606,7 @@ fn resolve_battle_pass_reward(
                 name: accessory.display_name,
                 kind: "Gun buddy".to_string(),
                 display_icon: accessory.display_icon,
+                viewer_icon: accessory.viewer_icon,
             }
         }
         "Spray" => {
@@ -1606,6 +1615,7 @@ fn resolve_battle_pass_reward(
                 name: accessory.display_name,
                 kind: "Spray".to_string(),
                 display_icon: accessory.display_icon,
+                viewer_icon: accessory.viewer_icon,
             }
         }
         "PlayerCard" => {
@@ -1614,6 +1624,7 @@ fn resolve_battle_pass_reward(
                 name: accessory.display_name,
                 kind: "Player card".to_string(),
                 display_icon: accessory.display_icon,
+                viewer_icon: accessory.viewer_icon,
             }
         }
         "Title" => {
@@ -1622,6 +1633,7 @@ fn resolve_battle_pass_reward(
                 name: accessory.display_name,
                 kind: "Title".to_string(),
                 display_icon: accessory.display_icon,
+                viewer_icon: accessory.viewer_icon,
             }
         }
         "Currency" => {
@@ -1630,6 +1642,7 @@ fn resolve_battle_pass_reward(
                 name: currency.display_name,
                 kind: "Currency".to_string(),
                 display_icon: currency.display_icon,
+                viewer_icon: currency.viewer_icon,
             }
         }
         kind => ResolvedBattlePassReward {
@@ -1640,6 +1653,7 @@ fn resolve_battle_pass_reward(
                 kind.to_string()
             },
             display_icon: None,
+            viewer_icon: None,
         },
     }
 }
@@ -1808,6 +1822,7 @@ pub(super) struct WeaponDisplay {
     pub(super) uuid: String,
     pub(super) display_name: String,
     pub(super) display_icon: Option<String>,
+    pub(super) viewer_icon: Option<String>,
     pub(super) cached_icon: Option<PathBuf>,
 }
 
@@ -1817,6 +1832,7 @@ impl From<ResolvedWeapon> for WeaponDisplay {
             uuid: weapon.uuid,
             display_name: weapon.display_name,
             display_icon: weapon.display_icon,
+            viewer_icon: weapon.viewer_icon,
             cached_icon: None,
         }
     }
@@ -1827,6 +1843,7 @@ pub(super) struct SkinDisplay {
     pub(super) uuid: String,
     pub(super) display_name: String,
     pub(super) display_icon: Option<String>,
+    pub(super) viewer_icon: Option<String>,
     pub(super) rarity: Option<String>,
     pub(super) cached_icon: Option<PathBuf>,
 }
@@ -1837,6 +1854,7 @@ impl From<ResolvedSkin> for SkinDisplay {
             uuid: skin.uuid,
             display_name: skin.display_name,
             display_icon: skin.display_icon,
+            viewer_icon: skin.viewer_icon,
             rarity: skin.rarity,
             cached_icon: None,
         }

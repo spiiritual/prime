@@ -83,6 +83,10 @@ fn loading_indicator_active(app: &PrimeApp) -> bool {
         || app.launcher_capture_in_progress
         || app.launching_account.is_some()
         || app.app_update_status.is_busy()
+        || app
+            .image_viewer
+            .as_ref()
+            .is_some_and(|image| image.high_res_loading)
         || loading_status_active(&app.status)
 }
 
@@ -175,22 +179,66 @@ struct PrimeApp {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ImageViewerImage {
-    path: PathBuf,
+struct ImageViewerRequest {
+    preview_path: PathBuf,
     title: String,
+    high_res: Option<ImageViewerSource>,
 }
 
-impl ImageViewerImage {
-    fn new(path: PathBuf, title: impl Into<String>) -> Self {
+impl ImageViewerRequest {
+    fn new(
+        preview_path: PathBuf,
+        title: impl Into<String>,
+        high_res: Option<ImageViewerSource>,
+    ) -> Self {
         let title = title.into();
 
         Self {
-            path,
+            preview_path,
             title: if title.trim().is_empty() {
                 "Image".to_string()
             } else {
                 title
             },
+            high_res,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ImageViewerSource {
+    namespace: String,
+    id: String,
+    url: String,
+}
+
+impl ImageViewerSource {
+    fn new(namespace: impl Into<String>, id: impl Into<String>, url: impl Into<String>) -> Self {
+        Self {
+            namespace: namespace.into(),
+            id: id.into(),
+            url: url.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ImageViewerImage {
+    path: PathBuf,
+    title: String,
+    high_res: Option<ImageViewerSource>,
+    high_res_loading: bool,
+    high_res_error: Option<String>,
+}
+
+impl ImageViewerImage {
+    fn from_request(request: ImageViewerRequest) -> Self {
+        Self {
+            path: request.preview_path,
+            title: request.title,
+            high_res: request.high_res,
+            high_res_loading: false,
+            high_res_error: None,
         }
     }
 }
@@ -398,7 +446,8 @@ enum Message {
     ShopTimerTick(iced::time::Instant),
     LoadingTick,
     LoadoutLoaded(AccountId, Result<LoadoutResult, String>),
-    OpenImageViewer(ImageViewerImage),
+    OpenImageViewer(ImageViewerRequest),
+    ImageViewerImageLoaded(ImageViewerSource, Result<PathBuf, String>),
     CloseImageViewer,
     RiotClientPathChanged(String),
     SaveSettings,

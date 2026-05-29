@@ -11,7 +11,7 @@ use iced::{
 };
 
 use super::data::{CurrencyBalanceDisplay, StoreSummary};
-use super::{ImageViewerImage, Message};
+use super::{ImageViewerRequest, ImageViewerSource, Message};
 
 // Keeps popovers in the overlay layer so controls are not clipped by their parent card.
 pub(super) fn anchored_popover<'a>(
@@ -314,6 +314,7 @@ pub(super) fn asset_image<'a>(
     path: Option<&'a PathBuf>,
     height: f32,
     title: impl Into<String>,
+    high_res: Option<ImageViewerSource>,
 ) -> Element<'a, Message> {
     let title = title.into();
 
@@ -326,6 +327,7 @@ pub(super) fn asset_image<'a>(
             path,
             height,
             title,
+            high_res,
         ),
         None => container(text("No image").size(13))
             .width(Length::Fill)
@@ -339,6 +341,7 @@ pub(super) fn asset_background_image<'a>(
     path: Option<&'a PathBuf>,
     height: f32,
     title: impl Into<String>,
+    high_res: Option<ImageViewerSource>,
 ) -> Element<'a, Message> {
     let title = title.into();
 
@@ -351,6 +354,7 @@ pub(super) fn asset_background_image<'a>(
             path,
             height,
             title,
+            high_res,
         ),
         None => container(text("No image").size(13))
             .width(Length::Fill)
@@ -365,17 +369,39 @@ fn preview_image_button<'a>(
     path: &PathBuf,
     height: f32,
     title: String,
+    high_res: Option<ImageViewerSource>,
 ) -> Element<'a, Message> {
     button(image)
         .padding(0)
         .width(Length::Fill)
         .height(height)
         .style(preview_image_button_style)
-        .on_press(Message::OpenImageViewer(ImageViewerImage::new(
+        .on_press(Message::OpenImageViewer(ImageViewerRequest::new(
             path.clone(),
             title,
+            high_res,
         )))
         .into()
+}
+
+pub(super) fn high_res_image_source(
+    namespace: &str,
+    id: &str,
+    thumbnail_url: Option<&str>,
+    viewer_url: Option<&str>,
+) -> Option<ImageViewerSource> {
+    let viewer_url = viewer_url
+        .map(str::trim)
+        .filter(|viewer_url| !viewer_url.is_empty())?;
+
+    if thumbnail_url
+        .map(str::trim)
+        .is_some_and(|thumbnail_url| thumbnail_url == viewer_url)
+    {
+        return None;
+    }
+
+    Some(ImageViewerSource::new(namespace, id, viewer_url))
 }
 
 fn preview_image_button_style(
@@ -516,4 +542,26 @@ fn currency_balance_chip(balance: &CurrencyBalanceDisplay) -> Element<'_, Messag
         .padding([6, 10])
         .style(iced::widget::container::bordered_box)
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::high_res_image_source;
+
+    #[test]
+    fn high_res_image_source_ignores_missing_or_duplicate_urls() {
+        assert!(high_res_image_source("viewer", "id", Some("thumb"), None).is_none());
+        assert!(high_res_image_source("viewer", "id", Some("same"), Some("same")).is_none());
+        assert!(high_res_image_source("viewer", "id", Some("same"), Some(" same ")).is_none());
+    }
+
+    #[test]
+    fn high_res_image_source_keeps_distinct_viewer_url() {
+        let source =
+            high_res_image_source("viewer", "id", Some("thumb"), Some("full")).expect("source");
+
+        assert_eq!(source.namespace, "viewer");
+        assert_eq!(source.id, "id");
+        assert_eq!(source.url, "full");
+    }
 }

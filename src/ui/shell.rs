@@ -73,7 +73,7 @@ impl PrimeApp {
         };
 
         if let Some(image) = &self.image_viewer {
-            stack![content, image_viewer_overlay(image)]
+            stack![content, image_viewer_overlay(image, self.loading_frame)]
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
@@ -597,9 +597,30 @@ fn app_update_changelog(changelog: &str) -> Element<'_, Message> {
     .into()
 }
 
-fn image_viewer_overlay(image_to_view: &ImageViewerImage) -> Element<'_, Message> {
+fn image_viewer_overlay(
+    image_to_view: &ImageViewerImage,
+    loading_frame: usize,
+) -> Element<'_, Message> {
+    let status: Element<_> = if image_to_view.high_res_loading {
+        row![
+            loading_indicator(loading_frame),
+            text("Loading full image").size(13)
+        ]
+        .spacing(8)
+        .align_y(alignment::Vertical::Center)
+        .into()
+    } else if let Some(error) = &image_to_view.high_res_error {
+        text(error)
+            .size(13)
+            .color(Color::from_rgb8(255, 112, 112))
+            .into()
+    } else {
+        text("").into()
+    };
+
     let header = row![
         text(&image_to_view.title).size(18).width(Length::Fill),
+        status,
         button(text("x").size(18))
             .padding([6, 12])
             .on_press(Message::CloseImageViewer)

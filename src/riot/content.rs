@@ -305,6 +305,7 @@ impl WeaponCatalog {
                         uuid: weapon.uuid,
                         display_name: weapon.display_name,
                         display_icon: weapon.display_icon,
+                        viewer_icon: None,
                     },
                 )
             })
@@ -326,6 +327,7 @@ pub struct ResolvedWeapon {
     pub uuid: String,
     pub display_name: String,
     pub display_icon: Option<String>,
+    pub viewer_icon: Option<String>,
 }
 
 impl ResolvedWeapon {
@@ -334,6 +336,7 @@ impl ResolvedWeapon {
             uuid: uuid.to_string(),
             display_name: uuid.to_string(),
             display_icon: None,
+            viewer_icon: None,
         }
     }
 }
@@ -352,6 +355,11 @@ impl SkinCatalog {
         let mut by_uuid = HashMap::new();
 
         for skin in skins {
+            let viewer_icon = skin
+                .chromas
+                .iter()
+                .find_map(|chroma| chroma.full_render.clone())
+                .or_else(|| skin.display_icon.clone());
             let rarity = skin
                 .content_tier_uuid
                 .as_ref()
@@ -360,6 +368,7 @@ impl SkinCatalog {
                 uuid: skin.uuid.clone(),
                 display_name: skin.display_name.clone(),
                 display_icon: skin.display_icon.clone(),
+                viewer_icon: viewer_icon.clone(),
                 rarity: rarity.clone(),
                 level_label: None,
             };
@@ -380,12 +389,15 @@ impl SkinCatalog {
                         )),
                         display_name,
                         display_icon: level.display_icon.or_else(|| skin.display_icon.clone()),
+                        viewer_icon: viewer_icon.clone(),
                         rarity: rarity.clone(),
                     },
                 );
             }
 
             for chroma in skin.chromas {
+                let chroma_viewer_icon = chroma.full_render.clone().or_else(|| viewer_icon.clone());
+
                 by_uuid.insert(
                     normalize_uuid(&chroma.uuid),
                     ResolvedSkin {
@@ -398,6 +410,7 @@ impl SkinCatalog {
                             .full_render
                             .or(chroma.display_icon)
                             .or_else(|| skin_info.display_icon.clone()),
+                        viewer_icon: chroma_viewer_icon,
                         rarity: rarity.clone(),
                         level_label: None,
                     },
@@ -421,6 +434,7 @@ pub struct ResolvedSkin {
     pub uuid: String,
     pub display_name: String,
     pub display_icon: Option<String>,
+    pub viewer_icon: Option<String>,
     pub rarity: Option<String>,
     pub level_label: Option<String>,
 }
@@ -431,6 +445,7 @@ impl ResolvedSkin {
             uuid: uuid.to_string(),
             display_name: uuid.to_string(),
             display_icon: None,
+            viewer_icon: None,
             rarity: None,
             level_label: None,
         }
@@ -473,6 +488,7 @@ impl CurrencyCatalog {
                         uuid: currency.uuid,
                         display_name: currency.display_name,
                         display_icon: currency.display_icon,
+                        viewer_icon: None,
                     },
                 )
             })
@@ -494,6 +510,7 @@ pub struct ResolvedCurrency {
     pub uuid: String,
     pub display_name: String,
     pub display_icon: Option<String>,
+    pub viewer_icon: Option<String>,
 }
 
 impl ResolvedCurrency {
@@ -502,6 +519,7 @@ impl ResolvedCurrency {
             uuid: uuid.to_string(),
             display_name: uuid.to_string(),
             display_icon: None,
+            viewer_icon: None,
         }
     }
 }
@@ -525,6 +543,7 @@ impl BundleCatalog {
                             .vertical_promo_image
                             .or(bundle.display_icon2)
                             .or(bundle.display_icon),
+                        viewer_icon: None,
                     },
                 )
             })
@@ -546,6 +565,7 @@ pub struct ResolvedBundle {
     pub uuid: String,
     pub display_name: String,
     pub display_icon: Option<String>,
+    pub viewer_icon: Option<String>,
 }
 
 impl ResolvedBundle {
@@ -554,6 +574,7 @@ impl ResolvedBundle {
             uuid: uuid.to_string(),
             display_name: uuid.to_string(),
             display_icon: None,
+            viewer_icon: None,
         }
     }
 }
@@ -580,10 +601,13 @@ impl AccessoryCatalog {
                     uuid: buddy.uuid.clone(),
                     display_name: buddy.display_name.clone(),
                     display_icon: buddy_icon.clone(),
+                    viewer_icon: buddy_icon.clone(),
                 },
             );
 
             for level in buddy.levels {
+                let level_icon = level.display_icon.or_else(|| buddy_icon.clone());
+
                 by_uuid.insert(
                     normalize_uuid(&level.uuid),
                     ResolvedAccessory {
@@ -592,33 +616,49 @@ impl AccessoryCatalog {
                             &level.display_name,
                             &buddy.display_name,
                         ),
-                        display_icon: level.display_icon.or_else(|| buddy_icon.clone()),
+                        display_icon: level_icon.clone(),
+                        viewer_icon: level_icon,
                     },
                 );
             }
         }
 
         for spray in sprays {
+            let display_icon = spray
+                .full_transparent_icon
+                .or(spray.full_icon)
+                .or(spray.display_icon);
+
             by_uuid.insert(
                 normalize_uuid(&spray.uuid),
                 ResolvedAccessory {
                     uuid: spray.uuid,
                     display_name: spray.display_name,
-                    display_icon: spray
-                        .full_transparent_icon
-                        .or(spray.full_icon)
-                        .or(spray.display_icon),
+                    display_icon: display_icon.clone(),
+                    viewer_icon: display_icon,
                 },
             );
         }
 
         for card in player_cards {
+            let display_icon = card
+                .display_icon
+                .clone()
+                .or_else(|| card.small_art.clone())
+                .or_else(|| card.large_art.clone());
+            let viewer_icon = card
+                .large_art
+                .clone()
+                .or_else(|| card.display_icon.clone())
+                .or_else(|| card.small_art.clone());
+
             by_uuid.insert(
                 normalize_uuid(&card.uuid),
                 ResolvedAccessory {
                     uuid: card.uuid,
                     display_name: card.display_name,
-                    display_icon: card.display_icon.or(card.small_art).or(card.large_art),
+                    display_icon,
+                    viewer_icon,
                 },
             );
         }
@@ -632,6 +672,7 @@ impl AccessoryCatalog {
                     uuid: title.uuid.clone(),
                     display_name: display_name_with_fallback(display_name, fallback),
                     display_icon: None,
+                    viewer_icon: None,
                 },
             );
         }
@@ -652,6 +693,7 @@ pub struct ResolvedAccessory {
     pub uuid: String,
     pub display_name: String,
     pub display_icon: Option<String>,
+    pub viewer_icon: Option<String>,
 }
 
 impl ResolvedAccessory {
@@ -660,6 +702,7 @@ impl ResolvedAccessory {
             uuid: uuid.to_string(),
             display_name: uuid.to_string(),
             display_icon: None,
+            viewer_icon: None,
         }
     }
 }
@@ -941,11 +984,19 @@ mod tests {
             Some("Level 4")
         );
         assert_eq!(
+            catalog.resolve("level-uuid").viewer_icon.as_deref(),
+            Some("render")
+        );
+        assert_eq!(
             catalog.resolve("chroma-uuid").display_name,
             "Prime Vandal Orange"
         );
         assert_eq!(
             catalog.resolve("chroma-uuid").display_icon.as_deref(),
+            Some("render")
+        );
+        assert_eq!(
+            catalog.resolve("skin-uuid").viewer_icon.as_deref(),
             Some("render")
         );
         assert_eq!(catalog.resolve("skin-uuid").rarity.as_deref(), None);
@@ -969,6 +1020,10 @@ mod tests {
 
         assert_eq!(
             catalog.resolve("chroma-uuid").display_icon.as_deref(),
+            Some("full-render")
+        );
+        assert_eq!(
+            catalog.resolve("chroma-uuid").viewer_icon.as_deref(),
             Some("full-render")
         );
     }
@@ -1115,8 +1170,8 @@ mod tests {
                 uuid: "card-uuid".to_string(),
                 display_name: "Penguin Card".to_string(),
                 display_icon: Some("card-icon".to_string()),
-                small_art: None,
-                large_art: None,
+                small_art: Some("card-small".to_string()),
+                large_art: Some("card-large".to_string()),
             }],
             vec![PlayerTitle {
                 uuid: "title-uuid".to_string(),
@@ -1133,8 +1188,12 @@ mod tests {
 
         assert_eq!(buddy.display_name, "Penguin Buddy Level 1");
         assert_eq!(buddy.display_icon.as_deref(), Some("buddy-icon"));
+        assert_eq!(buddy.viewer_icon.as_deref(), Some("buddy-icon"));
         assert_eq!(spray.display_icon.as_deref(), Some("spray-icon"));
+        assert_eq!(spray.viewer_icon.as_deref(), Some("spray-icon"));
         assert_eq!(card.display_name, "Penguin Card");
+        assert_eq!(card.display_icon.as_deref(), Some("card-icon"));
+        assert_eq!(card.viewer_icon.as_deref(), Some("card-large"));
         assert_eq!(title.display_name, "Penguin");
         assert_eq!(unknown.display_name, "missing");
     }

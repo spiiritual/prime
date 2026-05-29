@@ -1,7 +1,7 @@
 use iced::widget::{button, column, container, grid, progress_bar, row, text};
 use iced::{Color, Element, Length, Theme, border};
 
-use super::super::components::{asset_image, loading_line};
+use super::super::components::{asset_image, high_res_image_source, loading_line};
 use super::super::data::{
     BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutGunDisplay, format_duration,
     weapon_category,
@@ -167,7 +167,13 @@ fn loadout_card(gun: &LoadoutGunDisplay) -> Element<'_, Message> {
             asset_image(
                 gun.skin.cached_icon.as_ref(),
                 LOADOUT_IMAGE_HEIGHT,
-                skin_label.clone()
+                skin_label.clone(),
+                high_res_image_source(
+                    "viewer-skins",
+                    &gun.skin.uuid,
+                    gun.skin.display_icon.as_deref(),
+                    gun.skin.viewer_icon.as_deref(),
+                )
             ),
             text(&gun.weapon.display_name).size(15).width(Length::Fill),
             text(skin_label).size(12).width(Length::Fill)
@@ -291,7 +297,13 @@ fn battle_pass_reward_card(reward: &BattlePassRewardDisplay) -> Element<'_, Mess
             asset_image(
                 reward.cached_icon.as_ref(),
                 BATTLE_PASS_REWARD_IMAGE_HEIGHT,
-                &reward.name
+                &reward.name,
+                high_res_image_source(
+                    "viewer-battle-pass",
+                    &reward.uuid,
+                    reward.display_icon.as_deref(),
+                    reward.viewer_icon.as_deref(),
+                )
             ),
             text(&reward.name).size(14).width(Length::Fill),
             text(&reward.kind).size(12).width(Length::Fill),
