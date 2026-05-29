@@ -169,18 +169,42 @@ impl ContractCatalog {
         for contract in contracts {
             let uuid = contract.uuid.unwrap_or_default();
             let content = contract.content.unwrap_or_default();
-            let level_xp = content
-                .chapters
-                .into_iter()
-                .flat_map(|chapter| {
-                    chapter
-                        .levels
-                        .into_iter()
-                        .map(|level| level.xp.unwrap_or(0))
-                })
-                .collect::<Vec<_>>();
+            let free_reward_schedule_uuid = contract.free_reward_schedule_uuid;
+            let premium_reward_schedule_uuid = content.premium_reward_schedule_uuid.clone();
             let relation_type = content.relation_type.unwrap_or_default();
             let relation_uuid = content.relation_uuid.unwrap_or_default();
+            let mut level_xp = Vec::new();
+            let mut reward_levels = Vec::new();
+            let mut tier = 0_i64;
+
+            for (chapter_index, chapter) in content.chapters.into_iter().enumerate() {
+                let chapter_number = i64::try_from(chapter_index + 1).unwrap_or(i64::MAX);
+                let mut chapter_level_indexes = Vec::new();
+
+                for (level_index, level) in chapter.levels.into_iter().enumerate() {
+                    tier = tier.saturating_add(1);
+                    level_xp.push(level.xp.unwrap_or(0));
+
+                    chapter_level_indexes.push(reward_levels.len());
+                    reward_levels.push(ResolvedContractRewardLevel {
+                        tier,
+                        chapter: chapter_number,
+                        level_in_chapter: i64::try_from(level_index + 1).unwrap_or(i64::MAX),
+                        is_epilogue: chapter.is_epilogue,
+                        premium_reward: level.reward.map(ResolvedContractReward::from),
+                        free_rewards: Vec::new(),
+                    });
+                }
+
+                if let (Some(last_level), Some(free_rewards)) =
+                    (chapter_level_indexes.last().copied(), chapter.free_rewards)
+                {
+                    reward_levels[last_level].free_rewards = free_rewards
+                        .into_iter()
+                        .map(ResolvedContractReward::from)
+                        .collect();
+                }
+            }
 
             if relation_type.eq_ignore_ascii_case("season") && !relation_uuid.trim().is_empty() {
                 season_contracts.insert(normalize_uuid(&relation_uuid), normalize_uuid(&uuid));
@@ -194,6 +218,9 @@ impl ContractCatalog {
                     relation_type,
                     relation_uuid,
                     level_xp,
+                    reward_levels,
+                    free_reward_schedule_uuid,
+                    premium_reward_schedule_uuid,
                 },
             );
         }
@@ -222,11 +249,43 @@ pub struct ResolvedContract {
     pub relation_type: String,
     pub relation_uuid: String,
     pub level_xp: Vec<i64>,
+    pub reward_levels: Vec<ResolvedContractRewardLevel>,
+    pub free_reward_schedule_uuid: Option<String>,
+    pub premium_reward_schedule_uuid: Option<String>,
 }
 
 impl ResolvedContract {
     pub fn is_season_contract(&self) -> bool {
         self.relation_type.eq_ignore_ascii_case("season")
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedContractRewardLevel {
+    pub tier: i64,
+    pub chapter: i64,
+    pub level_in_chapter: i64,
+    pub is_epilogue: bool,
+    pub premium_reward: Option<ResolvedContractReward>,
+    pub free_rewards: Vec<ResolvedContractReward>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedContractReward {
+    pub kind: String,
+    pub uuid: String,
+    pub amount: i64,
+    pub highlighted: bool,
+}
+
+impl From<ContractReward> for ResolvedContractReward {
+    fn from(reward: ContractReward) -> Self {
+        Self {
+            kind: reward.kind,
+            uuid: reward.uuid,
+            amount: reward.amount,
+            highlighted: reward.highlighted,
+        }
     }
 }
 
@@ -695,6 +754,8 @@ pub struct ValorantContract {
     pub uuid: Option<String>,
     #[serde(rename = "displayName")]
     pub display_name: Option<String>,
+    #[serde(default, rename = "freeRewardScheduleUuid")]
+    pub free_reward_schedule_uuid: Option<String>,
     #[serde(default)]
     pub content: Option<ContractContent>,
 }
@@ -707,6 +768,8 @@ pub struct ContractContent {
     pub relation_uuid: Option<String>,
     #[serde(default)]
     pub chapters: Vec<ContractChapter>,
+    #[serde(default, rename = "premiumRewardScheduleUuid")]
+    pub premium_reward_schedule_uuid: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -715,12 +778,28 @@ pub struct ContractChapter {
     pub is_epilogue: bool,
     #[serde(default)]
     pub levels: Vec<ContractLevel>,
+    #[serde(default, rename = "freeRewards")]
+    pub free_rewards: Option<Vec<ContractReward>>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 pub struct ContractLevel {
     #[serde(default)]
+    pub reward: Option<ContractReward>,
+    #[serde(default)]
     pub xp: Option<i64>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+pub struct ContractReward {
+    #[serde(default, rename = "type")]
+    pub kind: String,
+    #[serde(default)]
+    pub uuid: String,
+    #[serde(default)]
+    pub amount: i64,
+    #[serde(default, rename = "isHighlighted")]
+    pub highlighted: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -979,16 +1058,28 @@ mod tests {
         let catalog = ContractCatalog::from_contracts(vec![ValorantContract {
             uuid: Some("contract-uuid".to_string()),
             display_name: Some("Season 2026 // Act III".to_string()),
+            free_reward_schedule_uuid: Some("free-schedule".to_string()),
             content: Some(ContractContent {
                 relation_type: Some("Season".to_string()),
                 relation_uuid: Some("act-uuid".to_string()),
+                premium_reward_schedule_uuid: Some("premium-schedule".to_string()),
                 chapters: vec![ContractChapter {
                     is_epilogue: false,
                     levels: vec![
-                        ContractLevel { xp: Some(0) },
-                        ContractLevel { xp: Some(2_000) },
-                        ContractLevel { xp: Some(2_750) },
+                        ContractLevel {
+                            reward: None,
+                            xp: Some(0),
+                        },
+                        ContractLevel {
+                            reward: None,
+                            xp: Some(2_000),
+                        },
+                        ContractLevel {
+                            reward: None,
+                            xp: Some(2_750),
+                        },
                     ],
+                    free_rewards: None,
                 }],
             }),
         }]);

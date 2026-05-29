@@ -15,8 +15,8 @@ use crate::launch::{
 use crate::riot::client::{ApiCredentials, RiotApi};
 use crate::riot::content::{
     AccessoryCatalog, BundleCatalog, ContractCatalog, CurrencyCatalog, ResolvedAccessory,
-    ResolvedBundle, ResolvedContract, ResolvedCurrency, ResolvedSkin, ResolvedWeapon, SkinCatalog,
-    ValorantContentApi, WeaponCatalog,
+    ResolvedBundle, ResolvedContract, ResolvedContractReward, ResolvedCurrency, ResolvedSkin,
+    ResolvedWeapon, SkinCatalog, ValorantContentApi, WeaponCatalog,
 };
 use crate::riot::launcher_session::{
     CapturedLauncherSession, LauncherSessionError, apply_launcher_session_backup,
@@ -1258,6 +1258,9 @@ pub(super) struct BattlePassProgressDisplay {
     pub(super) total_progression_required: Option<i64>,
     pub(super) completed: bool,
     pub(super) remaining_seconds: Option<i64>,
+    pub(super) earned_rewards: Vec<BattlePassRewardDisplay>,
+    pub(super) unearned_rewards: Vec<BattlePassRewardDisplay>,
+    pub(super) locked_paid_rewards: Vec<BattlePassRewardDisplay>,
     pub(super) loaded_at: iced::time::Instant,
 }
 
@@ -1342,15 +1345,71 @@ impl BattlePassProgressDisplay {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum BattlePassRewardTrack {
+    Free,
+    Paid,
+}
+
+impl BattlePassRewardTrack {
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Free => "Free",
+            Self::Paid => "Paid",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct BattlePassRewardDisplay {
+    pub(super) tier: i64,
+    pub(super) chapter: i64,
+    pub(super) level_in_chapter: i64,
+    pub(super) is_epilogue: bool,
+    pub(super) track: BattlePassRewardTrack,
+    pub(super) uuid: String,
+    pub(super) name: String,
+    pub(super) kind: String,
+    pub(super) amount: i64,
+    pub(super) highlighted: bool,
+    pub(super) display_icon: Option<String>,
+    pub(super) cached_icon: Option<PathBuf>,
+}
+
+impl BattlePassRewardDisplay {
+    pub(super) fn location_label(&self) -> String {
+        if self.is_epilogue {
+            format!("Epilogue tier {}", self.tier.max(0))
+        } else {
+            format!(
+                "Tier {} (Ch {} L{})",
+                self.tier.max(0),
+                self.chapter.max(0),
+                self.level_in_chapter.max(0)
+            )
+        }
+    }
+
+    pub(super) fn amount_label(&self) -> Option<String> {
+        (self.amount > 1).then(|| format!("x{}", format_whole_number(self.amount)))
+    }
+}
+
 pub(super) fn battle_pass_progress_from_responses(
     contracts: &ContractsResponse,
     contract_catalog: &ContractCatalog,
     content: Option<&GameContentResponse>,
+    skins: &SkinCatalog,
+    accessories: &AccessoryCatalog,
+    currencies: &CurrencyCatalog,
 ) -> Option<BattlePassProgressDisplay> {
     battle_pass_progress_from_responses_at(
         contracts,
         contract_catalog,
         content,
+        skins,
+        accessories,
+        currencies,
         OffsetDateTime::now_utc(),
         iced::time::Instant::now(),
     )
@@ -1360,6 +1419,9 @@ fn battle_pass_progress_from_responses_at(
     contracts: &ContractsResponse,
     contract_catalog: &ContractCatalog,
     content: Option<&GameContentResponse>,
+    skins: &SkinCatalog,
+    accessories: &AccessoryCatalog,
+    currencies: &CurrencyCatalog,
     now_utc: OffsetDateTime,
     loaded_at: iced::time::Instant,
 ) -> Option<BattlePassProgressDisplay> {
@@ -1377,6 +1439,15 @@ fn battle_pass_progress_from_responses_at(
             .is_some_and(|levels| levels > 0 && contract.progression_level_reached >= levels);
     let remaining_seconds =
         active_act.and_then(|act| remaining_seconds_until_utc_at(&act.end_time, now_utc));
+    let paid_pass_owned = battle_pass_paid_pass_owned(definition, contract);
+    let (earned_rewards, unearned_rewards, locked_paid_rewards) = battle_pass_reward_groups(
+        definition,
+        contract,
+        paid_pass_owned,
+        skins,
+        accessories,
+        currencies,
+    );
 
     Some(BattlePassProgressDisplay {
         name: non_empty_string(definition.display_name.clone())
@@ -1390,8 +1461,187 @@ fn battle_pass_progress_from_responses_at(
         total_progression_required,
         completed,
         remaining_seconds,
+        earned_rewards,
+        unearned_rewards,
+        locked_paid_rewards,
         loaded_at,
     })
+}
+
+fn battle_pass_paid_pass_owned(definition: &ResolvedContract, contract: &PlayerContract) -> bool {
+    let Some(schedule_id) = definition
+        .premium_reward_schedule_uuid
+        .as_ref()
+        .filter(|schedule_id| !schedule_id.trim().is_empty())
+    else {
+        return true;
+    };
+
+    contract
+        .contract_progression
+        .highest_rewarded_level
+        .iter()
+        .any(|(reward_schedule_id, level)| {
+            ids_match(reward_schedule_id, schedule_id) && level.amount > 0
+        })
+}
+
+fn battle_pass_reward_groups(
+    definition: &ResolvedContract,
+    contract: &PlayerContract,
+    paid_pass_owned: bool,
+    skins: &SkinCatalog,
+    accessories: &AccessoryCatalog,
+    currencies: &CurrencyCatalog,
+) -> (
+    Vec<BattlePassRewardDisplay>,
+    Vec<BattlePassRewardDisplay>,
+    Vec<BattlePassRewardDisplay>,
+) {
+    let mut earned_rewards = Vec::new();
+    let mut unearned_rewards = Vec::new();
+    let mut locked_paid_rewards = Vec::new();
+    let level_reached = contract.progression_level_reached.max(0);
+
+    for level in &definition.reward_levels {
+        if let Some(reward) = &level.premium_reward {
+            let display = battle_pass_reward_display(
+                reward,
+                level,
+                BattlePassRewardTrack::Paid,
+                skins,
+                accessories,
+                currencies,
+            );
+
+            if !paid_pass_owned {
+                locked_paid_rewards.push(display);
+            } else if level.tier <= level_reached {
+                earned_rewards.push(display);
+            } else {
+                unearned_rewards.push(display);
+            }
+        }
+
+        for reward in &level.free_rewards {
+            let display = battle_pass_reward_display(
+                reward,
+                level,
+                BattlePassRewardTrack::Free,
+                skins,
+                accessories,
+                currencies,
+            );
+
+            if level.tier <= level_reached {
+                earned_rewards.push(display);
+            } else {
+                unearned_rewards.push(display);
+            }
+        }
+    }
+
+    (earned_rewards, unearned_rewards, locked_paid_rewards)
+}
+
+fn battle_pass_reward_display(
+    reward: &ResolvedContractReward,
+    level: &crate::riot::content::ResolvedContractRewardLevel,
+    track: BattlePassRewardTrack,
+    skins: &SkinCatalog,
+    accessories: &AccessoryCatalog,
+    currencies: &CurrencyCatalog,
+) -> BattlePassRewardDisplay {
+    let resolved = resolve_battle_pass_reward(reward, skins, accessories, currencies);
+
+    BattlePassRewardDisplay {
+        tier: level.tier,
+        chapter: level.chapter,
+        level_in_chapter: level.level_in_chapter,
+        is_epilogue: level.is_epilogue,
+        track,
+        uuid: reward.uuid.clone(),
+        name: resolved.name,
+        kind: resolved.kind,
+        amount: reward.amount,
+        highlighted: reward.highlighted,
+        display_icon: resolved.display_icon,
+        cached_icon: None,
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ResolvedBattlePassReward {
+    name: String,
+    kind: String,
+    display_icon: Option<String>,
+}
+
+fn resolve_battle_pass_reward(
+    reward: &ResolvedContractReward,
+    skins: &SkinCatalog,
+    accessories: &AccessoryCatalog,
+    currencies: &CurrencyCatalog,
+) -> ResolvedBattlePassReward {
+    match reward.kind.as_str() {
+        "EquippableSkinLevel" | "EquippableSkinChroma" | "Skin" => {
+            let skin = skins.resolve(&reward.uuid);
+            ResolvedBattlePassReward {
+                name: skin.display_name,
+                kind: "Weapon skin".to_string(),
+                display_icon: skin.display_icon,
+            }
+        }
+        "EquippableCharmLevel" | "Buddy" | "BuddyLevel" => {
+            let accessory = accessories.resolve(&reward.uuid);
+            ResolvedBattlePassReward {
+                name: accessory.display_name,
+                kind: "Gun buddy".to_string(),
+                display_icon: accessory.display_icon,
+            }
+        }
+        "Spray" => {
+            let accessory = accessories.resolve(&reward.uuid);
+            ResolvedBattlePassReward {
+                name: accessory.display_name,
+                kind: "Spray".to_string(),
+                display_icon: accessory.display_icon,
+            }
+        }
+        "PlayerCard" => {
+            let accessory = accessories.resolve(&reward.uuid);
+            ResolvedBattlePassReward {
+                name: accessory.display_name,
+                kind: "Player card".to_string(),
+                display_icon: accessory.display_icon,
+            }
+        }
+        "Title" => {
+            let accessory = accessories.resolve(&reward.uuid);
+            ResolvedBattlePassReward {
+                name: accessory.display_name,
+                kind: "Title".to_string(),
+                display_icon: accessory.display_icon,
+            }
+        }
+        "Currency" => {
+            let currency = currencies.resolve(&reward.uuid);
+            ResolvedBattlePassReward {
+                name: currency.display_name,
+                kind: "Currency".to_string(),
+                display_icon: currency.display_icon,
+            }
+        }
+        kind => ResolvedBattlePassReward {
+            name: reward.uuid.clone(),
+            kind: if kind.trim().is_empty() {
+                "Reward".to_string()
+            } else {
+                kind.to_string()
+            },
+            display_icon: None,
+        },
+    }
 }
 
 fn find_battle_pass_contract<'a>(
@@ -1647,8 +1897,7 @@ pub(super) async fn fetch_loadout(
         .await
         .ok()
         .map(|xp| xp.progress.level);
-    let battle_pass =
-        fetch_battle_pass_progress(&api, &resolved.credentials, &metadata.contracts).await;
+    let battle_pass = fetch_battle_pass_progress(&api, &resolved.credentials, &metadata).await;
     let mut summary = api
         .player_loadout(&resolved.credentials)
         .await
@@ -1684,7 +1933,7 @@ pub(super) async fn fetch_loadout(
 async fn fetch_battle_pass_progress(
     api: &RiotApi,
     credentials: &ApiCredentials,
-    contract_catalog: &ContractCatalog,
+    metadata: &LoadoutMetadata,
 ) -> Result<BattlePassProgressDisplay, String> {
     let contracts = api
         .contracts(credentials)
@@ -1695,8 +1944,15 @@ async fn fetch_battle_pass_progress(
         .await
         .map_err(|error| error.to_string())?;
 
-    battle_pass_progress_from_responses(&contracts, contract_catalog, Some(&content))
-        .ok_or_else(|| "No active battle pass progress found".to_string())
+    battle_pass_progress_from_responses(
+        &contracts,
+        &metadata.contracts,
+        Some(&content),
+        &metadata.skins,
+        &metadata.accessories,
+        &metadata.currencies,
+    )
+    .ok_or_else(|| "No active battle pass progress found".to_string())
 }
 
 pub(super) async fn fetch_account_ranks(
@@ -1850,6 +2106,17 @@ pub(super) async fn cache_loadout_images(
         cache_skin_icon(&mut gun.skin, image_cache).await?;
     }
 
+    if let Some(battle_pass) = &mut summary.battle_pass {
+        for reward in battle_pass
+            .earned_rewards
+            .iter_mut()
+            .chain(battle_pass.unearned_rewards.iter_mut())
+            .chain(battle_pass.locked_paid_rewards.iter_mut())
+        {
+            cache_battle_pass_reward_icon(reward, image_cache).await?;
+        }
+    }
+
     Ok(())
 }
 
@@ -1921,11 +2188,30 @@ pub(super) async fn cache_bundle_icon(
     Ok(())
 }
 
+pub(super) async fn cache_battle_pass_reward_icon(
+    reward: &mut BattlePassRewardDisplay,
+    image_cache: &ImageCache,
+) -> Result<(), String> {
+    let Some(url) = reward.display_icon.as_ref() else {
+        return Ok(());
+    };
+
+    reward.cached_icon = Some(
+        image_cache
+            .cache_url("battle-pass", &reward.uuid, url)
+            .await
+            .map_err(|error| error.to_string())?,
+    );
+    Ok(())
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct LoadoutMetadata {
     pub(super) skins: SkinCatalog,
     pub(super) weapons: WeaponCatalog,
     pub(super) contracts: ContractCatalog,
+    pub(super) accessories: AccessoryCatalog,
+    pub(super) currencies: CurrencyCatalog,
 }
 
 pub(super) async fn fetch_loadout_metadata() -> Result<LoadoutMetadata, String> {
@@ -1942,6 +2228,14 @@ pub(super) async fn fetch_loadout_metadata() -> Result<LoadoutMetadata, String> 
             .map_err(|error| error.to_string())?,
         contracts: api
             .contract_catalog()
+            .await
+            .map_err(|error| error.to_string())?,
+        accessories: api
+            .accessory_catalog()
+            .await
+            .map_err(|error| error.to_string())?,
+        currencies: api
+            .currency_catalog()
             .await
             .map_err(|error| error.to_string())?,
     })

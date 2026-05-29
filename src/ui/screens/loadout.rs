@@ -3,7 +3,8 @@ use iced::{Color, Element, Length, Theme, border};
 
 use super::super::components::{asset_image, loading_line};
 use super::super::data::{
-    BattlePassProgressDisplay, LoadoutGunDisplay, format_duration, weapon_category,
+    BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutGunDisplay, format_duration,
+    weapon_category,
 };
 use super::super::{LoadoutTab, Message, PrimeApp};
 
@@ -20,6 +21,9 @@ const LOADOUT_CATEGORIES: [&str; 8] = [
 const LOADOUT_CARD_WIDTH: u32 = 220;
 const LOADOUT_CARD_HEIGHT: u32 = 264;
 const LOADOUT_IMAGE_HEIGHT: f32 = 148.0;
+const BATTLE_PASS_REWARD_CARD_WIDTH: u32 = 174;
+const BATTLE_PASS_REWARD_CARD_HEIGHT: u32 = 214;
+const BATTLE_PASS_REWARD_IMAGE_HEIGHT: f32 = 92.0;
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     container(
@@ -207,6 +211,26 @@ fn battle_pass_panel(
         details = details.push(text(percent).size(14));
     }
 
+    details = details
+        .push(battle_pass_reward_section(
+            "Earned rewards",
+            &battle_pass.earned_rewards,
+            "No earned rewards yet",
+        ))
+        .push(battle_pass_reward_section(
+            "Unearned rewards",
+            &battle_pass.unearned_rewards,
+            "No unearned rewards",
+        ));
+
+    if !battle_pass.locked_paid_rewards.is_empty() {
+        details = details.push(battle_pass_reward_section(
+            "Locked paid pass rewards",
+            &battle_pass.locked_paid_rewards,
+            "No locked paid rewards",
+        ));
+    }
+
     container(details)
         .padding(14)
         .width(Length::Fill)
@@ -219,4 +243,79 @@ fn battle_pass_metric(label: &'static str, value: String) -> Element<'static, Me
         .spacing(4)
         .width(Length::FillPortion(1))
         .into()
+}
+
+fn battle_pass_reward_section<'a>(
+    title: &'static str,
+    rewards: &'a [BattlePassRewardDisplay],
+    empty_label: &'static str,
+) -> Element<'a, Message> {
+    let mut section = column![text(title).size(18)].spacing(8).width(Length::Fill);
+
+    if rewards.is_empty() {
+        section = section.push(text(empty_label).size(13));
+    } else {
+        let mut cards = grid::Grid::new()
+            .spacing(10)
+            .fluid(BATTLE_PASS_REWARD_CARD_WIDTH)
+            .height(grid::aspect_ratio(
+                BATTLE_PASS_REWARD_CARD_WIDTH,
+                BATTLE_PASS_REWARD_CARD_HEIGHT,
+            ));
+
+        for reward in rewards {
+            cards = cards.push(battle_pass_reward_card(reward));
+        }
+
+        section = section.push(cards);
+    }
+
+    section.into()
+}
+
+fn battle_pass_reward_card(reward: &BattlePassRewardDisplay) -> Element<'_, Message> {
+    let amount = reward
+        .amount_label()
+        .map(|amount| format!(" {amount}"))
+        .unwrap_or_default();
+    let meta = format!(
+        "{} | {}{}",
+        reward.location_label(),
+        reward.track.label(),
+        amount
+    );
+    let highlighted = reward.highlighted;
+
+    container(
+        column![
+            asset_image(
+                reward.cached_icon.as_ref(),
+                BATTLE_PASS_REWARD_IMAGE_HEIGHT,
+                &reward.name
+            ),
+            text(&reward.name).size(14).width(Length::Fill),
+            text(&reward.kind).size(12).width(Length::Fill),
+            text(meta).size(12).width(Length::Fill)
+        ]
+        .spacing(5),
+    )
+    .padding(9)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(move |theme| battle_pass_reward_card_style(theme, highlighted))
+    .into()
+}
+
+fn battle_pass_reward_card_style(
+    theme: &Theme,
+    highlighted: bool,
+) -> iced::widget::container::Style {
+    let mut style = iced::widget::container::bordered_box(theme);
+
+    if highlighted {
+        style.background = Some(Color::from_rgba8(78, 58, 32, 0.72).into());
+        style.border.color = Color::from_rgb8(218, 154, 72);
+    }
+
+    style
 }

@@ -15,7 +15,8 @@ use super::{loading_status_active, masked_account_export_payload, status_bar_vis
 use crate::account::{AccountId, AccountProfile, AuthSession, LauncherSessionBackup, Shard};
 use crate::riot::content::{
     AccessoryCatalog, Buddy, BuddyLevel, BundleCatalog, ContractCatalog, ContractChapter,
-    ContractContent, ContractLevel, CurrencyCatalog, SkinCatalog, ValorantContract, WeaponCatalog,
+    ContractContent, ContractLevel, ContractReward, CurrencyCatalog, SkinCatalog, ValorantContract,
+    WeaponCatalog,
 };
 use crate::riot::launcher_session::LauncherSessionError;
 use crate::riot::models::{
@@ -656,17 +657,32 @@ fn battle_pass_progress_uses_story_contract_and_active_act() {
     let catalog = ContractCatalog::from_contracts(vec![ValorantContract {
         uuid: Some("battle-pass".to_string()),
         display_name: Some("Season 2026 // Act III".to_string()),
+        free_reward_schedule_uuid: Some("free-schedule".to_string()),
         content: Some(ContractContent {
             relation_type: Some("Season".to_string()),
             relation_uuid: Some("act".to_string()),
+            premium_reward_schedule_uuid: Some("premium-schedule".to_string()),
             chapters: vec![ContractChapter {
                 is_epilogue: false,
                 levels: vec![
-                    ContractLevel { xp: Some(0) },
-                    ContractLevel { xp: Some(2_000) },
-                    ContractLevel { xp: Some(3_000) },
-                    ContractLevel { xp: Some(4_000) },
+                    ContractLevel {
+                        reward: None,
+                        xp: Some(0),
+                    },
+                    ContractLevel {
+                        reward: None,
+                        xp: Some(2_000),
+                    },
+                    ContractLevel {
+                        reward: None,
+                        xp: Some(3_000),
+                    },
+                    ContractLevel {
+                        reward: None,
+                        xp: Some(4_000),
+                    },
                 ],
+                free_rewards: None,
             }],
         }),
     }]);
@@ -684,8 +700,15 @@ fn battle_pass_progress_uses_story_contract_and_active_act() {
     }))
     .expect("content");
 
-    let progress = battle_pass_progress_from_responses(&contracts, &catalog, Some(&content))
-        .expect("battle pass progress");
+    let progress = battle_pass_progress_from_responses(
+        &contracts,
+        &catalog,
+        Some(&content),
+        &SkinCatalog::default(),
+        &AccessoryCatalog::default(),
+        &CurrencyCatalog::default(),
+    )
+    .expect("battle pass progress");
 
     assert_eq!(progress.title(), "Act 3 Battle Pass");
     assert_eq!(progress.tier_label(), "Tier 2 of 4");
@@ -698,6 +721,119 @@ fn battle_pass_progress_uses_story_contract_and_active_act() {
         Some("4,500 / 9,000 XP total")
     );
     assert!(progress.remaining_seconds.is_some());
+}
+
+#[test]
+fn battle_pass_progress_separates_free_unearned_and_locked_paid_rewards() {
+    let contracts: ContractsResponse = serde_json::from_value(serde_json::json!({
+        "Version": 1,
+        "Subject": "puuid",
+        "Contracts": [{
+            "ContractDefinitionID": "battle-pass",
+            "ContractProgression": {
+                "TotalProgressionEarned": 2_000,
+                "TotalProgressionEarnedVersion": 1,
+                "HighestRewardedLevel": {
+                    "free-schedule": { "Amount": 1, "Version": 1 }
+                }
+            },
+            "ProgressionLevelReached": 2,
+            "ProgressionTowardsNextLevel": 0,
+            "ProgressionCompleted": false
+        }],
+        "ActiveSpecialContract": ""
+    }))
+    .expect("contracts");
+    let catalog = ContractCatalog::from_contracts(vec![ValorantContract {
+        uuid: Some("battle-pass".to_string()),
+        display_name: Some("Season 2026 // Act III".to_string()),
+        free_reward_schedule_uuid: Some("free-schedule".to_string()),
+        content: Some(ContractContent {
+            relation_type: Some("Season".to_string()),
+            relation_uuid: Some("act".to_string()),
+            premium_reward_schedule_uuid: Some("premium-schedule".to_string()),
+            chapters: vec![
+                ContractChapter {
+                    is_epilogue: false,
+                    levels: vec![
+                        ContractLevel {
+                            reward: Some(ContractReward {
+                                kind: "EquippableSkinLevel".to_string(),
+                                uuid: "paid-tier-one".to_string(),
+                                amount: 1,
+                                highlighted: false,
+                            }),
+                            xp: Some(0),
+                        },
+                        ContractLevel {
+                            reward: Some(ContractReward {
+                                kind: "EquippableSkinLevel".to_string(),
+                                uuid: "paid-tier-two".to_string(),
+                                amount: 1,
+                                highlighted: true,
+                            }),
+                            xp: Some(2_000),
+                        },
+                    ],
+                    free_rewards: Some(vec![ContractReward {
+                        kind: "Title".to_string(),
+                        uuid: "free-title".to_string(),
+                        amount: 1,
+                        highlighted: false,
+                    }]),
+                },
+                ContractChapter {
+                    is_epilogue: false,
+                    levels: vec![ContractLevel {
+                        reward: None,
+                        xp: Some(3_000),
+                    }],
+                    free_rewards: Some(vec![ContractReward {
+                        kind: "Title".to_string(),
+                        uuid: "future-free-title".to_string(),
+                        amount: 1,
+                        highlighted: false,
+                    }]),
+                },
+            ],
+        }),
+    }]);
+    let content: GameContentResponse = serde_json::from_value(serde_json::json!({
+        "DisabledIDs": [],
+        "Seasons": [{
+            "ID": "act",
+            "Name": "Act 3",
+            "Type": "act",
+            "StartTime": "2026-05-01T00:00:00Z",
+            "EndTime": "2099-06-24T13:00:00Z",
+            "IsActive": true
+        }],
+        "Events": []
+    }))
+    .expect("content");
+
+    let progress = battle_pass_progress_from_responses(
+        &contracts,
+        &catalog,
+        Some(&content),
+        &SkinCatalog::default(),
+        &AccessoryCatalog::default(),
+        &CurrencyCatalog::default(),
+    )
+    .expect("battle pass progress");
+
+    assert_eq!(progress.earned_rewards.len(), 1);
+    assert_eq!(progress.earned_rewards[0].name, "free-title");
+    assert_eq!(progress.earned_rewards[0].track.label(), "Free");
+    assert_eq!(progress.unearned_rewards.len(), 1);
+    assert_eq!(progress.unearned_rewards[0].name, "future-free-title");
+    assert_eq!(progress.locked_paid_rewards.len(), 2);
+    assert!(
+        progress
+            .locked_paid_rewards
+            .iter()
+            .all(|reward| reward.track.label() == "Paid")
+    );
 }
 
 #[test]
