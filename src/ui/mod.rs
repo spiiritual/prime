@@ -6,6 +6,7 @@ mod shell;
 #[cfg(test)]
 mod tests;
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use iced::widget::operation::AbsoluteOffset;
@@ -136,6 +137,7 @@ fn status_message_is_error(status: &str) -> bool {
 struct PrimeApp {
     repo: AccountRepository,
     image_cache: ImageCache,
+    image_viewer: Option<ImageViewerImage>,
     state: StoredState,
     active_tab: Tab,
     active_loadout_tab: LoadoutTab,
@@ -170,6 +172,27 @@ struct PrimeApp {
     image_cache_size_bytes: u64,
     loading_frame: usize,
     now: iced::time::Instant,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ImageViewerImage {
+    path: PathBuf,
+    title: String,
+}
+
+impl ImageViewerImage {
+    fn new(path: PathBuf, title: impl Into<String>) -> Self {
+        let title = title.into();
+
+        Self {
+            path,
+            title: if title.trim().is_empty() {
+                "Image".to_string()
+            } else {
+                title
+            },
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -375,6 +398,8 @@ enum Message {
     ShopTimerTick(iced::time::Instant),
     LoadingTick,
     LoadoutLoaded(AccountId, Result<LoadoutResult, String>),
+    OpenImageViewer(ImageViewerImage),
+    CloseImageViewer,
     RiotClientPathChanged(String),
     SaveSettings,
     ImageCacheSizeLoaded(Result<u64, String>),

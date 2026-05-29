@@ -30,6 +30,7 @@ impl PrimeApp {
             Self {
                 repo,
                 image_cache,
+                image_viewer: None,
                 state: StoredState::default(),
                 active_tab: Tab::Accounts,
                 active_loadout_tab: LoadoutTab::Skins,
@@ -120,6 +121,7 @@ impl PrimeApp {
             }
             Message::TabSelected(tab) => {
                 self.active_tab = tab;
+                self.image_viewer = None;
                 self.account_switcher_open = false;
                 self.open_account_menu = None;
                 self.show_add_account_prompt = false;
@@ -164,6 +166,7 @@ impl PrimeApp {
                 }
 
                 self.account_switcher_open = false;
+                self.image_viewer = None;
                 self.open_account_menu = None;
                 self.show_add_account_prompt = false;
                 self.show_import_account_prompt = false;
@@ -994,6 +997,14 @@ impl PrimeApp {
                     }
                 }
 
+                Task::none()
+            }
+            Message::OpenImageViewer(image) => {
+                self.image_viewer = Some(image);
+                Task::none()
+            }
+            Message::CloseImageViewer => {
+                self.image_viewer = None;
                 Task::none()
             }
             Message::RiotClientPathChanged(value) => {

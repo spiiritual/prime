@@ -1,13 +1,17 @@
+use iced::widget::image::Handle;
 use iced::widget::{
-    button, column, container, opaque, row, scrollable, space, stack, text, text_input,
+    button, column, container, image, opaque, row, scrollable, space, stack, text, text_input,
 };
-use iced::{Color, Element, Length, Padding, Theme, alignment};
+use iced::{Color, ContentFit, Element, Length, Padding, Theme, alignment};
 
 use crate::account::AccountProfile;
 
 use super::components::{anchored_popover, currency_balance_display, loading_indicator};
 use super::data::format_bytes;
-use super::{AccountExportOutput, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, Tab, screens};
+use super::{
+    AccountExportOutput, ImageViewerImage, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, Tab,
+    screens,
+};
 use super::{loading_indicator_active, status_bar_visible};
 
 const SIDEBAR_WIDTH: f32 = 210.0;
@@ -39,7 +43,7 @@ impl PrimeApp {
                 .find(|account| account.id == account_id)
         });
 
-        if self.show_add_account_prompt {
+        let content: Element<_> = if self.show_add_account_prompt {
             stack![content, add_account_prompt_overlay()]
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -66,6 +70,15 @@ impl PrimeApp {
                 .into()
         } else {
             content.into()
+        };
+
+        if let Some(image) = &self.image_viewer {
+            stack![content, image_viewer_overlay(image)]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else {
+            content
         }
     }
 
@@ -582,4 +595,48 @@ fn app_update_changelog(changelog: &str) -> Element<'_, Message> {
     .spacing(6)
     .width(Length::Fill)
     .into()
+}
+
+fn image_viewer_overlay(image_to_view: &ImageViewerImage) -> Element<'_, Message> {
+    let header = row![
+        text(&image_to_view.title).size(18).width(Length::Fill),
+        button(text("x").size(18))
+            .padding([6, 12])
+            .on_press(Message::CloseImageViewer)
+    ]
+    .spacing(12)
+    .align_y(alignment::Vertical::Center);
+
+    let viewer = image::viewer(Handle::from_path(image_to_view.path.clone()))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .content_fit(ContentFit::Contain)
+        .min_scale(0.5)
+        .max_scale(12.0)
+        .scale_step(0.12);
+
+    let prompt = container(
+        column![header, viewer]
+            .spacing(12)
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .padding(14)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(image_viewer_panel_style);
+
+    opaque(
+        container(prompt)
+            .padding(28)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(add_account_prompt_scrim_style),
+    )
+}
+
+fn image_viewer_panel_style(theme: &Theme) -> iced::widget::container::Style {
+    let mut style = iced::widget::container::bordered_box(theme);
+    style.background = Some(Color::from_rgba8(10, 12, 16, 0.96).into());
+    style
 }

@@ -4,14 +4,14 @@ use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget::Tree,
 };
 use iced::widget::image::Handle;
-use iced::widget::{Column, Row, container, image, row, space, text};
+use iced::widget::{Column, Row, button, container, image, row, space, text};
 use iced::{
     Color, ContentFit, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector,
     alignment,
 };
 
-use super::Message;
 use super::data::{CurrencyBalanceDisplay, StoreSummary};
+use super::{ImageViewerImage, Message};
 
 // Keeps popovers in the overlay layer so controls are not clipped by their parent card.
 pub(super) fn anchored_popover<'a>(
@@ -310,13 +310,23 @@ impl overlay::Overlay<Message, Theme, Renderer> for AnchoredOverlay<'_, '_> {
     }
 }
 
-pub(super) fn asset_image(path: Option<&PathBuf>, height: f32) -> Element<'_, Message> {
+pub(super) fn asset_image<'a>(
+    path: Option<&'a PathBuf>,
+    height: f32,
+    title: impl Into<String>,
+) -> Element<'a, Message> {
+    let title = title.into();
+
     match path {
-        Some(path) => image(Handle::from_path(path.clone()))
-            .width(Length::Fill)
-            .height(height)
-            .content_fit(ContentFit::Contain)
-            .into(),
+        Some(path) => preview_image_button(
+            image(Handle::from_path(path.clone()))
+                .width(Length::Fill)
+                .height(height)
+                .content_fit(ContentFit::Contain),
+            path,
+            height,
+            title,
+        ),
         None => container(text("No image").size(13))
             .width(Length::Fill)
             .height(height)
@@ -325,19 +335,66 @@ pub(super) fn asset_image(path: Option<&PathBuf>, height: f32) -> Element<'_, Me
     }
 }
 
-pub(super) fn asset_background_image(path: Option<&PathBuf>, height: f32) -> Element<'_, Message> {
+pub(super) fn asset_background_image<'a>(
+    path: Option<&'a PathBuf>,
+    height: f32,
+    title: impl Into<String>,
+) -> Element<'a, Message> {
+    let title = title.into();
+
     match path {
-        Some(path) => image(Handle::from_path(path.clone()))
-            .width(Length::Fill)
-            .height(height)
-            .content_fit(ContentFit::Cover)
-            .into(),
+        Some(path) => preview_image_button(
+            image(Handle::from_path(path.clone()))
+                .width(Length::Fill)
+                .height(height)
+                .content_fit(ContentFit::Cover),
+            path,
+            height,
+            title,
+        ),
         None => container(text("No image").size(13))
             .width(Length::Fill)
             .height(height)
             .style(iced::widget::container::rounded_box)
             .into(),
     }
+}
+
+fn preview_image_button<'a>(
+    image: impl Into<Element<'a, Message>>,
+    path: &PathBuf,
+    height: f32,
+    title: String,
+) -> Element<'a, Message> {
+    button(image)
+        .padding(0)
+        .width(Length::Fill)
+        .height(height)
+        .style(preview_image_button_style)
+        .on_press(Message::OpenImageViewer(ImageViewerImage::new(
+            path.clone(),
+            title,
+        )))
+        .into()
+}
+
+fn preview_image_button_style(
+    _: &Theme,
+    status: iced::widget::button::Status,
+) -> iced::widget::button::Style {
+    let mut style = iced::widget::button::Style {
+        text_color: Color::WHITE,
+        ..Default::default()
+    };
+
+    if matches!(
+        status,
+        iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+    ) {
+        style.background = Some(Color::from_rgba8(255, 255, 255, 0.05).into());
+    }
+
+    style
 }
 
 pub(super) fn loading_line(label: &'static str, frame: usize) -> Element<'static, Message> {

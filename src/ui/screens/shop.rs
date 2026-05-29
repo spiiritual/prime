@@ -121,7 +121,11 @@ fn store_bundle_card(bundle: &StoreBundleDisplay) -> Element<'_, Message> {
 
     container(
         stack![
-            asset_background_image(bundle.bundle.cached_icon.as_ref(), 214.0),
+            asset_background_image(
+                bundle.bundle.cached_icon.as_ref(),
+                214.0,
+                &bundle.bundle.display_name
+            ),
             overlay
         ]
         .width(Length::Fill)
@@ -142,7 +146,11 @@ fn store_accessory_card(offer: &StoreAccessoryDisplay) -> Element<'_, Message> {
         .map(OfferPrice::label)
         .unwrap_or_else(|| "Price unavailable".to_string());
     let details = column![
-        asset_image(offer.accessory.cached_icon.as_ref(), 96.0),
+        asset_image(
+            offer.accessory.cached_icon.as_ref(),
+            96.0,
+            &offer.accessory.display_name
+        ),
         text(&offer.accessory.display_name).size(16),
         text(price).size(14),
     ]
@@ -159,7 +167,11 @@ fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {
     let rarity_for_style = offer.skin.rarity.clone();
     let mut details = iced::widget::Column::new()
         .spacing(6)
-        .push(asset_image(offer.skin.cached_icon.as_ref(), 118.0))
+        .push(asset_image(
+            offer.skin.cached_icon.as_ref(),
+            118.0,
+            &offer.skin.display_name,
+        ))
         .push(text(&offer.skin.display_name).size(16))
         .push(offer_price_line(offer));
 

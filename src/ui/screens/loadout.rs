@@ -160,7 +160,11 @@ fn loadout_card(gun: &LoadoutGunDisplay) -> Element<'_, Message> {
 
     container(
         column![
-            asset_image(gun.skin.cached_icon.as_ref(), LOADOUT_IMAGE_HEIGHT),
+            asset_image(
+                gun.skin.cached_icon.as_ref(),
+                LOADOUT_IMAGE_HEIGHT,
+                skin_label.clone()
+            ),
             text(&gun.weapon.display_name).size(15).width(Length::Fill),
             text(skin_label).size(12).width(Length::Fill)
         ]
