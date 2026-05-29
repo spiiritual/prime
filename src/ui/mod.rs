@@ -284,7 +284,7 @@ fn masked_account_export_payload(payload: &str) -> String {
     format!("{prefix}...{}...{suffix}", "*".repeat(MASK_CHARS))
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 enum AppUpdateStatus {
     Checking,
     UpToDate,

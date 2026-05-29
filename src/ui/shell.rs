@@ -7,7 +7,6 @@ use iced::{Color, ContentFit, Element, Length, Padding, Theme, alignment};
 use crate::account::AccountProfile;
 
 use super::components::{anchored_popover, currency_balance_display, loading_indicator};
-use super::data::format_bytes;
 use super::{
     AccountExportOutput, ImageViewerImage, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, Tab,
     screens,
@@ -525,15 +524,8 @@ fn app_update_prompt_overlay(update: &crate::updater::AvailableUpdate) -> Elemen
     let mut details = column![
         text(format!("Prime {} is available", update.latest_version)).size(20),
         text(format!(
-            "You are running Prime {}. Download {} from GitHub and restart to install it.",
-            update.current_version,
-            update.display_name()
-        ))
-        .size(14),
-        text(format!(
-            "Asset: {} ({})",
-            update.asset.name,
-            format_bytes(update.asset.size_bytes)
+            "You are running Prime {}. Would you like to update to {}?",
+            update.current_version, update.latest_version
         ))
         .size(14)
     ]

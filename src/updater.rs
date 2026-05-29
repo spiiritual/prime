@@ -1,686 +1,245 @@
-use std::cmp::Ordering;
-use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::env;
 
-use directories::ProjectDirs;
-use reqwest::header::{ACCEPT, USER_AGENT};
-use ring::digest::{SHA256, digest};
-use serde::Deserialize;
 use thiserror::Error;
-
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
+use velopack::sources::AutoSource;
+use velopack::{UpdateCheck, UpdateInfo, UpdateManager, UpdateOptions};
 
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const GITHUB_REPOSITORY: &str = "spiiritual/prime";
+pub const DEFAULT_UPDATE_SOURCE: &str = "https://github.com/spiiritual/prime";
+pub const UPDATE_SOURCE_ENV: &str = "PRIME_UPDATE_SOURCE";
+pub const UPDATE_CHANNEL_ENV: &str = "PRIME_UPDATE_CHANNEL";
 
-const GITHUB_API_VERSION: &str = "2022-11-28";
-const USER_AGENT_VALUE: &str = concat!("prime/", env!("CARGO_PKG_VERSION"));
-const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct AvailableUpdate {
     pub current_version: String,
     pub latest_version: String,
-    pub release_name: Option<String>,
-    pub release_url: String,
     pub changelog: Option<String>,
-    pub asset: ReleaseAsset,
+    pub package: ReleasePackage,
+    update: Box<UpdateInfo>,
 }
 
 impl AvailableUpdate {
-    pub fn display_name(&self) -> &str {
-        self.release_name
-            .as_deref()
-            .filter(|name| !name.trim().is_empty())
-            .unwrap_or(&self.latest_version)
+    fn update_info(&self) -> &UpdateInfo {
+        &self.update
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReleaseAsset {
-    pub name: String,
-    pub download_url: String,
+pub struct ReleasePackage {
+    pub package_id: Option<String>,
+    pub file_name: String,
     pub size_bytes: u64,
-    pub sha256_digest: String,
+    pub update_strategy: UpdateStrategy,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UpdateStrategy {
+    Full,
+    Delta {
+        package_count: usize,
+        size_bytes: u64,
+    },
 }
 
 pub async fn check_for_update() -> Result<Option<AvailableUpdate>, UpdateError> {
-    let release = fetch_latest_release(GITHUB_REPOSITORY).await?;
-    update_from_release(CURRENT_VERSION, release)
+    tokio::task::spawn_blocking(check_for_update_blocking)
+        .await?
+        .map_err(UpdateError::from)
 }
 
 pub async fn download_and_prepare_update(update: AvailableUpdate) -> Result<(), UpdateError> {
-    let staged_exe = download_release_asset(&update).await?;
-    launch_self_replace(&staged_exe)
-}
-
-async fn fetch_latest_release(repository: &str) -> Result<GitHubRelease, UpdateError> {
-    let url = format!("https://api.github.com/repos/{repository}/releases/latest");
-
-    http_client()?
-        .get(url)
-        .header(USER_AGENT, USER_AGENT_VALUE)
-        .header(ACCEPT, "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", GITHUB_API_VERSION)
-        .send()
+    tokio::task::spawn_blocking(move || download_and_prepare_update_blocking(update))
         .await?
-        .error_for_status()?
-        .json()
-        .await
-        .map_err(UpdateError::Http)
+        .map_err(UpdateError::from)
 }
 
-fn update_from_release(
-    current_version: &str,
-    release: GitHubRelease,
-) -> Result<Option<AvailableUpdate>, UpdateError> {
-    if !latest_version_is_newer(current_version, &release.tag_name)? {
-        return Ok(None);
-    }
+fn check_for_update_blocking() -> Result<Option<AvailableUpdate>, UpdateError> {
+    let manager = update_manager()?;
 
-    let latest_version = display_version(&release.tag_name);
-    let asset = compatible_release_asset(&release).ok_or_else(|| {
-        UpdateError::NoCompatibleReleaseAsset {
-            latest_version: latest_version.clone(),
-        }
-    })?;
-
-    Ok(Some(AvailableUpdate {
-        current_version: current_version.to_string(),
-        latest_version,
-        release_name: release.name,
-        release_url: release.html_url,
-        changelog: release_changelog(release.body),
-        asset,
-    }))
-}
-
-fn release_changelog(body: Option<String>) -> Option<String> {
-    body.and_then(|body| {
-        let body = body.trim();
-
-        (!body.is_empty()).then(|| body.to_string())
-    })
-}
-
-fn compatible_release_asset(release: &GitHubRelease) -> Option<ReleaseAsset> {
-    select_release_asset(
-        &release.assets,
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-    )
-    .and_then(|asset| {
-        Some(ReleaseAsset {
-            name: asset.name.clone(),
-            download_url: asset.browser_download_url.clone(),
-            size_bytes: asset.size,
-            sha256_digest: sha256_digest(asset)?.to_string(),
-        })
-    })
-}
-
-fn select_release_asset<'a>(
-    assets: &'a [GitHubAsset],
-    target_os: &str,
-    target_arch: &str,
-) -> Option<&'a GitHubAsset> {
-    assets
-        .iter()
-        .filter_map(|asset| asset_score(asset, target_os, target_arch).map(|score| (score, asset)))
-        .max_by_key(|(score, _)| *score)
-        .map(|(_, asset)| asset)
-}
-
-fn asset_score(asset: &GitHubAsset, target_os: &str, target_arch: &str) -> Option<u32> {
-    if asset.browser_download_url.trim().is_empty() {
-        return None;
-    }
-
-    sha256_digest(asset)?;
-
-    let name = asset.name.to_ascii_lowercase();
-    let mut score = 0;
-
-    if name.contains("prime") {
-        score += 8;
-    }
-
-    match target_os {
-        "windows" => {
-            let is_exe = name.ends_with(".exe");
-
-            if !is_exe {
-                return None;
-            }
-
-            score += 40;
-
-            if name == "prime.exe" {
-                score += 30;
-            }
-
-            if contains_any(&name, &["windows", "win32", "win64", "win"]) {
-                score += 20;
-            }
-        }
-        "macos" => {
-            if !contains_any(&name, &["macos", "darwin", "apple"]) {
-                return None;
-            }
-
-            score += 20;
-        }
-        "linux" => {
-            if !contains_any(&name, &["linux", "gnu", "musl", "appimage"]) {
-                return None;
-            }
-
-            score += 20;
-        }
-        other => {
-            if !name.contains(other) {
-                return None;
-            }
-
-            score += 10;
-        }
-    }
-
-    let mentions_arch = mentions_known_arch(&name);
-    let matches_arch = matches_target_arch(&name, target_arch);
-
-    if mentions_arch && !matches_arch {
-        return None;
-    }
-
-    if matches_arch {
-        score += 20;
-    }
-
-    Some(score)
-}
-
-fn contains_any(value: &str, needles: &[&str]) -> bool {
-    needles.iter().any(|needle| value.contains(needle))
-}
-
-fn arch_aliases(arch: &str) -> &'static [&'static str] {
-    match arch {
-        "x86_64" => &["x86_64", "x64", "amd64"],
-        "x86" => &["i686", "i386", "win32"],
-        "aarch64" => &["aarch64", "arm64"],
-        "arm" => &["arm"],
-        _ => &[],
+    match manager.check_for_updates()? {
+        UpdateCheck::UpdateAvailable(update) => Ok(Some(available_update_from_info(
+            manager.get_current_version_as_string(),
+            update,
+        ))),
+        UpdateCheck::RemoteIsEmpty | UpdateCheck::NoUpdateAvailable => Ok(None),
     }
 }
 
-fn mentions_known_arch(name: &str) -> bool {
-    contains_any(
-        name,
-        &[
-            "x86_64", "x64", "amd64", "i686", "i386", "win32", "aarch64", "arm64",
-        ],
-    ) || (name.contains("x86") && !name.contains("x86_64"))
-}
+fn download_and_prepare_update_blocking(update: AvailableUpdate) -> Result<(), UpdateError> {
+    let manager = update_manager()?;
+    let update_info = update.update_info();
 
-fn matches_target_arch(name: &str, target_arch: &str) -> bool {
-    contains_any(name, arch_aliases(target_arch))
-        || (target_arch == "x86" && name.contains("x86") && !name.contains("x86_64"))
-}
+    manager.download_updates(update_info, None)?;
+    manager.wait_exit_then_apply_updates(update_info, false, true, Vec::<String>::new())?;
 
-fn sha256_digest(asset: &GitHubAsset) -> Option<&str> {
-    let digest = asset.digest.as_deref()?;
-    let digest = digest.strip_prefix("sha256:")?;
-
-    (digest.len() == 64 && digest.bytes().all(|byte| byte.is_ascii_hexdigit())).then_some(digest)
-}
-
-async fn download_release_asset(update: &AvailableUpdate) -> Result<PathBuf, UpdateError> {
-    let bytes = http_client()?
-        .get(&update.asset.download_url)
-        .header(USER_AGENT, USER_AGENT_VALUE)
-        .send()
-        .await?
-        .error_for_status()?
-        .bytes()
-        .await?;
-
-    if bytes.is_empty() {
-        return Err(UpdateError::EmptyDownload);
-    }
-
-    verify_sha256(bytes.as_ref(), &update.asset.sha256_digest)?;
-
-    let staging_dir = update_staging_dir(&update.latest_version);
-    fs::create_dir_all(&staging_dir)?;
-
-    let extension = Path::new(&update.asset.name)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .filter(|extension| !extension.trim().is_empty())
-        .unwrap_or("exe");
-    let staged_exe = staging_dir.join(format!(
-        "prime-{}.{}",
-        sanitize_path_component(&update.latest_version),
-        extension
-    ));
-    fs::write(&staged_exe, bytes)?;
-
-    Ok(staged_exe)
-}
-
-fn http_client() -> Result<reqwest::Client, UpdateError> {
-    reqwest::Client::builder()
-        .timeout(HTTP_TIMEOUT)
-        .build()
-        .map_err(UpdateError::Http)
-}
-
-fn verify_sha256(bytes: &[u8], expected: &str) -> Result<(), UpdateError> {
-    let actual = digest(&SHA256, bytes)
-        .as_ref()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-
-    if actual.eq_ignore_ascii_case(expected) {
-        Ok(())
-    } else {
-        Err(UpdateError::DigestMismatch {
-            expected: expected.to_string(),
-            actual,
-        })
-    }
-}
-
-fn update_staging_dir(version: &str) -> PathBuf {
-    ProjectDirs::from("dev", "spiiritual", "prime")
-        .map(|dirs| dirs.cache_dir().join("updates"))
-        .unwrap_or_else(|| std::env::temp_dir().join("prime-updates"))
-        .join(sanitize_path_component(version))
-}
-
-fn launch_self_replace(staged_exe: &Path) -> Result<(), UpdateError> {
-    let current_exe = std::env::current_exe()?;
-    let script_path = staged_exe
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("install-prime-update.ps1");
-
-    fs::write(&script_path, POWERSHELL_SELF_UPDATE_SCRIPT)?;
-
-    let mut command = Command::new("powershell.exe");
-    command
-        .arg("-NoProfile")
-        .arg("-ExecutionPolicy")
-        .arg("Bypass")
-        .arg("-File")
-        .arg(&script_path)
-        .arg("-ProcessId")
-        .arg(std::process::id().to_string())
-        .arg("-Source")
-        .arg(staged_exe)
-        .arg("-Destination")
-        .arg(&current_exe)
-        .arg("-Relaunch")
-        .arg(&current_exe)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-
-    #[cfg(windows)]
-    command.creation_flags(0x0800_0000);
-
-    command.spawn()?;
     Ok(())
 }
 
-const POWERSHELL_SELF_UPDATE_SCRIPT: &str = r#"
-param(
-    [int]$ProcessId,
-    [string]$Source,
-    [string]$Destination,
-    [string]$Relaunch
-)
+fn update_manager() -> Result<UpdateManager, UpdateError> {
+    let source = AutoSource::new(&update_source());
+    let options = UpdateOptions {
+        ExplicitChannel: update_channel(),
+        ..UpdateOptions::default()
+    };
 
-$ErrorActionPreference = 'Stop'
-
-Wait-Process -Id $ProcessId -ErrorAction SilentlyContinue
-Start-Sleep -Milliseconds 300
-
-$Backup = "$Destination.old"
-
-if (Test-Path -LiteralPath $Backup) {
-    Remove-Item -LiteralPath $Backup -Force -ErrorAction SilentlyContinue
+    UpdateManager::new(source, Some(options), None).map_err(UpdateError::from)
 }
 
-if (Test-Path -LiteralPath $Destination) {
-    Move-Item -LiteralPath $Destination -Destination $Backup -Force
+fn update_source() -> String {
+    env::var(UPDATE_SOURCE_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_UPDATE_SOURCE.to_string())
 }
 
-if ([System.IO.Path]::GetExtension($Source) -ine '.exe') {
-    throw 'The update payload must be a Prime executable.'
+fn update_channel() -> Option<String> {
+    env::var(UPDATE_CHANNEL_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
-Move-Item -LiteralPath $Source -Destination $Destination -Force
-Start-Process -FilePath $Relaunch
-
-if (Test-Path -LiteralPath $Backup) {
-    Remove-Item -LiteralPath $Backup -Force -ErrorAction SilentlyContinue
-}
-
-if (Test-Path -LiteralPath $Source) {
-    Remove-Item -LiteralPath $Source -Force -ErrorAction SilentlyContinue
-}
-
-Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue
-"#;
-
-fn latest_version_is_newer(current: &str, latest: &str) -> Result<bool, UpdateError> {
-    compare_version_strings(current, latest)
-        .map(|ordering| ordering == Ordering::Less)
-        .ok_or_else(|| UpdateError::InvalidReleaseVersion(latest.to_string()))
-}
-
-fn compare_version_strings(left: &str, right: &str) -> Option<Ordering> {
-    let left = ParsedVersion::parse(left)?;
-    let right = ParsedVersion::parse(right)?;
-    let max_len = left.numbers.len().max(right.numbers.len()).max(3);
-
-    for index in 0..max_len {
-        let left_part = *left.numbers.get(index).unwrap_or(&0);
-        let right_part = *right.numbers.get(index).unwrap_or(&0);
-
-        match left_part.cmp(&right_part) {
-            Ordering::Equal => {}
-            ordering => return Some(ordering),
-        }
-    }
-
-    match (&left.pre_release, &right.pre_release) {
-        (None, None) => Some(Ordering::Equal),
-        (None, Some(_)) => Some(Ordering::Greater),
-        (Some(_), None) => Some(Ordering::Less),
-        (Some(left), Some(right)) => Some(compare_prerelease(left, right)),
-    }
-}
-
-fn compare_prerelease(left: &str, right: &str) -> Ordering {
-    let mut left_parts = left.split('.');
-    let mut right_parts = right.split('.');
-
-    loop {
-        match (left_parts.next(), right_parts.next()) {
-            (Some(left), Some(right)) => {
-                let ordering = compare_prerelease_part(left, right);
-
-                if ordering != Ordering::Equal {
-                    return ordering;
-                }
-            }
-            (None, None) => return Ordering::Equal,
-            (None, Some(_)) => return Ordering::Less,
-            (Some(_), None) => return Ordering::Greater,
-        }
-    }
-}
-
-fn compare_prerelease_part(left: &str, right: &str) -> Ordering {
-    match (left.parse::<u64>(), right.parse::<u64>()) {
-        (Ok(left), Ok(right)) => left.cmp(&right),
-        (Ok(_), Err(_)) => Ordering::Less,
-        (Err(_), Ok(_)) => Ordering::Greater,
-        (Err(_), Err(_)) => left.cmp(right),
-    }
-}
-
-fn display_version(tag_name: &str) -> String {
-    tag_name
-        .trim()
-        .trim_start_matches(|ch| ch == 'v' || ch == 'V')
-        .to_string()
-}
-
-fn sanitize_path_component(value: &str) -> String {
-    let sanitized = value
-        .chars()
-        .map(|ch| match ch {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' => ch,
-            _ => '_',
-        })
-        .collect::<String>();
-
-    if sanitized.is_empty() {
-        "update".to_string()
+fn available_update_from_info(current_version: String, update: Box<UpdateInfo>) -> AvailableUpdate {
+    let target = &update.TargetFullRelease;
+    let latest_version = target.Version.clone();
+    let changelog = trimmed_text(&target.NotesMarkdown);
+    let delta_size_bytes = update
+        .DeltasToTarget
+        .iter()
+        .map(|delta| delta.Size)
+        .sum::<u64>();
+    let update_strategy = if update.DeltasToTarget.is_empty() {
+        UpdateStrategy::Full
     } else {
-        sanitized
+        UpdateStrategy::Delta {
+            package_count: update.DeltasToTarget.len(),
+            size_bytes: delta_size_bytes,
+        }
+    };
+
+    AvailableUpdate {
+        current_version,
+        latest_version,
+        changelog,
+        package: ReleasePackage {
+            package_id: trimmed_text(&target.PackageId),
+            file_name: target.FileName.clone(),
+            size_bytes: target.Size,
+            update_strategy,
+        },
+        update,
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ParsedVersion {
-    numbers: Vec<u64>,
-    pre_release: Option<String>,
-}
+fn trimmed_text(value: &str) -> Option<String> {
+    let value = value.trim();
 
-impl ParsedVersion {
-    fn parse(value: &str) -> Option<Self> {
-        let trimmed = value.trim();
-        let mut candidate = trimmed.trim_start_matches(|ch| ch == 'v' || ch == 'V');
-
-        if candidate == trimmed
-            && let Some(index) = trimmed.find(|ch: char| ch.is_ascii_digit())
-        {
-            candidate = &trimmed[index..];
-        }
-
-        let candidate = candidate
-            .split_once('+')
-            .map_or(candidate, |(core, _)| core);
-        let (core, pre_release) = candidate
-            .split_once('-')
-            .map_or((candidate, None), |(core, pre_release)| {
-                (core, Some(pre_release.to_string()))
-            });
-        let numbers = core
-            .split('.')
-            .map(|part| {
-                if part.is_empty() {
-                    None
-                } else {
-                    part.parse::<u64>().ok()
-                }
-            })
-            .collect::<Option<Vec<_>>>()?;
-
-        if numbers.is_empty() {
-            return None;
-        }
-
-        Some(Self {
-            numbers,
-            pre_release,
-        })
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct GitHubRelease {
-    tag_name: String,
-    name: Option<String>,
-    html_url: String,
-    #[serde(default)]
-    body: Option<String>,
-    #[serde(default)]
-    assets: Vec<GitHubAsset>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-struct GitHubAsset {
-    name: String,
-    browser_download_url: String,
-    #[serde(default)]
-    size: u64,
-    digest: Option<String>,
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 #[derive(Debug, Error)]
 pub enum UpdateError {
-    #[error(
-        "GitHub release HTTP error: {}",
-        crate::http_error::format_reqwest_error(.0)
-    )]
-    Http(#[from] reqwest::Error),
-    #[error("update I/O error: {0}")]
-    Io(#[from] io::Error),
-    #[error("latest GitHub release version could not be compared: {0}")]
-    InvalidReleaseVersion(String),
-    #[error(
-        "latest GitHub release {latest_version} does not include a compatible checksum-verified executable asset"
-    )]
-    NoCompatibleReleaseAsset { latest_version: String },
-    #[error("downloaded update was empty")]
-    EmptyDownload,
-    #[error("downloaded update SHA-256 mismatch: expected {expected}, got {actual}")]
-    DigestMismatch { expected: String, actual: String },
+    #[error("Velopack update error: {0}")]
+    Velopack(#[from] velopack::Error),
+    #[error("update task failed: {0}")]
+    Join(#[from] tokio::task::JoinError),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use velopack::VelopackAsset;
 
     #[test]
-    fn version_comparison_accepts_v_prefixed_tags() {
-        assert!(latest_version_is_newer("0.1.0", "v0.2.0").expect("comparison"));
-        assert!(!latest_version_is_newer("0.2.0", "v0.2.0").expect("comparison"));
-        assert!(!latest_version_is_newer("0.3.0", "v0.2.0").expect("comparison"));
-    }
+    fn update_summary_uses_release_notes_markdown() {
+        let update = available_update_from_info(
+            "0.1.2".to_string(),
+            Box::new(full_update(asset(
+                "prime",
+                "0.1.3",
+                "prime-0.1.3-full.nupkg",
+                128,
+                "  ## Changes\n\n- Velopack  ",
+            ))),
+        );
 
-    #[test]
-    fn version_comparison_handles_prerelease_ordering() {
-        assert!(latest_version_is_newer("0.2.0-beta.1", "0.2.0").expect("comparison"));
-        assert!(!latest_version_is_newer("0.2.0", "0.2.0-beta.1").expect("comparison"));
-        assert!(latest_version_is_newer("0.2.0-beta.1", "0.2.0-beta.2").expect("comparison"));
-    }
-
-    #[test]
-    fn version_parser_can_find_version_inside_tag_name() {
-        assert!(latest_version_is_newer("0.1.0", "prime-v0.2.0").expect("comparison"));
-    }
-
-    #[test]
-    fn windows_asset_selection_prefers_prime_executable_for_arch() {
-        let assets = vec![
-            asset("prime-linux-x86_64", "https://example.com/linux", 10),
-            asset(
-                "prime-windows-x86_64.exe",
-                "https://example.com/windows",
-                20,
-            ),
-            asset("prime.exe", "https://example.com/plain", 30),
-        ];
-
-        let selected = select_release_asset(&assets, "windows", "x86_64").expect("asset");
-
-        assert_eq!(selected.name, "prime-windows-x86_64.exe");
-    }
-
-    #[test]
-    fn windows_asset_selection_rejects_release_archives() {
-        let assets = vec![asset(
-            "prime-windows-x86_64.zip",
-            "https://example.com/windows.zip",
-            20,
-        )];
-
-        assert!(select_release_asset(&assets, "windows", "x86_64").is_none());
-    }
-
-    #[test]
-    fn windows_asset_selection_requires_digest() {
-        let assets = vec![asset_without_digest(
-            "prime-windows-x86_64.exe",
-            "https://example.com/windows.exe",
-            20,
-        )];
-
-        assert!(select_release_asset(&assets, "windows", "x86_64").is_none());
-    }
-
-    #[test]
-    fn windows_asset_selection_rejects_wrong_architecture() {
-        let assets = vec![asset(
-            "prime-windows-arm64.exe",
-            "https://example.com/windows-arm64.exe",
-            20,
-        )];
-
-        assert!(select_release_asset(&assets, "windows", "x86_64").is_none());
-    }
-
-    #[test]
-    fn newer_release_without_asset_is_an_error() {
-        let release = GitHubRelease {
-            tag_name: "v0.2.0".to_string(),
-            name: Some("Prime 0.2.0".to_string()),
-            html_url: "https://github.com/spiiritual/prime/releases/tag/v0.2.0".to_string(),
-            body: Some("## Changes\n\n- Added updater notes".to_string()),
-            assets: vec![],
-        };
-
-        let error = update_from_release("0.1.0", release).expect_err("asset error");
-
-        assert!(matches!(
-            error,
-            UpdateError::NoCompatibleReleaseAsset { .. }
-        ));
-    }
-
-    #[test]
-    fn update_includes_trimmed_release_changelog() {
-        let release = GitHubRelease {
-            tag_name: "v0.2.0".to_string(),
-            name: Some("Prime 0.2.0".to_string()),
-            html_url: "https://github.com/spiiritual/prime/releases/tag/v0.2.0".to_string(),
-            body: Some("\n\n## Changes\n\n- Added updater notes\n".to_string()),
-            assets: vec![asset(
-                "prime-windows-x86_64.exe",
-                "https://example.com/windows.exe",
-                20,
-            )],
-        };
-
-        let update = update_from_release("0.1.0", release)
-            .expect("release")
-            .expect("available update");
-
+        assert_eq!(update.latest_version, "0.1.3");
         assert_eq!(
             update.changelog.as_deref(),
-            Some("## Changes\n\n- Added updater notes")
+            Some("## Changes\n\n- Velopack")
         );
+        assert_eq!(update.package.package_id.as_deref(), Some("prime"));
+        assert_eq!(update.package.update_strategy, UpdateStrategy::Full);
     }
 
-    fn asset(name: &str, url: &str, size: u64) -> GitHubAsset {
-        GitHubAsset {
-            name: name.to_string(),
-            browser_download_url: url.to_string(),
-            size,
-            digest: Some(
-                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-                    .to_string(),
-            ),
+    #[test]
+    fn update_summary_reports_delta_strategy() {
+        let update = available_update_from_info(
+            "0.1.2".to_string(),
+            Box::new(delta_update(
+                asset("prime", "0.1.4", "prime-0.1.4-full.nupkg", 1_024, ""),
+                asset("prime", "0.1.2", "prime-0.1.2-full.nupkg", 900, ""),
+                vec![
+                    asset("prime", "0.1.3", "prime-0.1.3-delta.nupkg", 80, ""),
+                    asset("prime", "0.1.4", "prime-0.1.4-delta.nupkg", 90, ""),
+                ],
+            )),
+        );
+
+        assert_eq!(
+            update.package.update_strategy,
+            UpdateStrategy::Delta {
+                package_count: 2,
+                size_bytes: 170
+            }
+        );
+        assert_eq!(update.changelog, None);
+    }
+
+    fn full_update(target: VelopackAsset) -> UpdateInfo {
+        UpdateInfo {
+            TargetFullRelease: target,
+            BaseRelease: None,
+            DeltasToTarget: Vec::new(),
+            IsDowngrade: false,
         }
     }
 
-    fn asset_without_digest(name: &str, url: &str, size: u64) -> GitHubAsset {
-        GitHubAsset {
-            name: name.to_string(),
-            browser_download_url: url.to_string(),
-            size,
-            digest: None,
+    fn delta_update(
+        target: VelopackAsset,
+        base: VelopackAsset,
+        deltas: Vec<VelopackAsset>,
+    ) -> UpdateInfo {
+        UpdateInfo {
+            TargetFullRelease: target,
+            BaseRelease: Some(base),
+            DeltasToTarget: deltas,
+            IsDowngrade: false,
+        }
+    }
+
+    fn asset(
+        package_id: &str,
+        version: &str,
+        file_name: &str,
+        size: u64,
+        notes_markdown: &str,
+    ) -> VelopackAsset {
+        VelopackAsset {
+            PackageId: package_id.to_string(),
+            Version: version.to_string(),
+            Type: if file_name.contains("delta") {
+                "Delta".to_string()
+            } else {
+                "Full".to_string()
+            },
+            FileName: file_name.to_string(),
+            SHA1: "sha1".to_string(),
+            SHA256: "sha256".to_string(),
+            Size: size,
+            NotesMarkdown: notes_markdown.to_string(),
+            NotesHtml: String::new(),
         }
     }
 }
