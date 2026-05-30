@@ -3,6 +3,10 @@ name = "prime"
 version = "0.1.4"
 edition = "2024"
 
+[features]
+default = []
+image-viewer-testing = []
+
 [dependencies]
 base64 = "0.22.1"
 directories = "6.0.0"

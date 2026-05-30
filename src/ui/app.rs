@@ -1008,6 +1008,11 @@ impl PrimeApp {
                 Task::none()
             }
             Message::OpenImageViewer(image) => {
+                if !super::image_viewer_enabled() {
+                    self.image_viewer = None;
+                    return Task::none();
+                }
+
                 let high_res = image.high_res.clone();
                 self.image_viewer = Some(ImageViewerImage::from_request(image));
 
@@ -1022,6 +1027,10 @@ impl PrimeApp {
                 Task::none()
             }
             Message::ImageViewerImageLoaded(source, result) => {
+                if !super::image_viewer_enabled() {
+                    return Task::none();
+                }
+
                 let Some(viewer) = &mut self.image_viewer else {
                     return Task::none();
                 };

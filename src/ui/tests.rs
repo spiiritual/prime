@@ -25,6 +25,18 @@ use crate::riot::models::{
 };
 use crate::storage::StoredState;
 
+#[cfg(not(feature = "image-viewer-testing"))]
+#[test]
+fn image_viewer_is_disabled_without_testing_feature() {
+    assert!(!super::image_viewer_enabled());
+}
+
+#[cfg(feature = "image-viewer-testing")]
+#[test]
+fn image_viewer_can_be_enabled_for_testing_builds() {
+    assert!(super::image_viewer_enabled());
+}
+
 #[test]
 fn store_summary_counts_night_market() {
     let response: StorefrontResponse = serde_json::from_value(serde_json::json!({

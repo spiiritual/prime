@@ -27,6 +27,10 @@ const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
 const LAUNCH_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const MAIN_PANEL_SCROLLABLE_ID: &str = "main-panel-scrollable";
 
+fn image_viewer_enabled() -> bool {
+    cfg!(feature = "image-viewer-testing")
+}
+
 pub fn run() -> iced::Result {
     iced::application(PrimeApp::boot, PrimeApp::update, PrimeApp::view)
         .title(app_title)
@@ -83,10 +87,11 @@ fn loading_indicator_active(app: &PrimeApp) -> bool {
         || app.launcher_capture_in_progress
         || app.launching_account.is_some()
         || app.app_update_status.is_busy()
-        || app
-            .image_viewer
-            .as_ref()
-            .is_some_and(|image| image.high_res_loading)
+        || image_viewer_enabled()
+            && app
+                .image_viewer
+                .as_ref()
+                .is_some_and(|image| image.high_res_loading)
         || loading_status_active(&app.status)
 }
 

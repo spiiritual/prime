@@ -11,7 +11,7 @@ use iced::{
 };
 
 use super::data::{CurrencyBalanceDisplay, StoreSummary};
-use super::{ImageViewerRequest, ImageViewerSource, Message};
+use super::{ImageViewerRequest, ImageViewerSource, Message, image_viewer_enabled};
 
 // Keeps popovers in the overlay layer so controls are not clipped by their parent card.
 pub(super) fn anchored_popover<'a>(
@@ -371,17 +371,23 @@ fn preview_image_button<'a>(
     title: String,
     high_res: Option<ImageViewerSource>,
 ) -> Element<'a, Message> {
-    button(image)
-        .padding(0)
-        .width(Length::Fill)
-        .height(height)
-        .style(preview_image_button_style)
-        .on_press(Message::OpenImageViewer(ImageViewerRequest::new(
-            path.clone(),
-            title,
-            high_res,
-        )))
-        .into()
+    let image = image.into();
+
+    if image_viewer_enabled() {
+        button(image)
+            .padding(0)
+            .width(Length::Fill)
+            .height(height)
+            .style(preview_image_button_style)
+            .on_press(Message::OpenImageViewer(ImageViewerRequest::new(
+                path.clone(),
+                title,
+                high_res,
+            )))
+            .into()
+    } else {
+        container(image).width(Length::Fill).height(height).into()
+    }
 }
 
 pub(super) fn high_res_image_source(

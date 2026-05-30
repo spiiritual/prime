@@ -71,7 +71,9 @@ impl PrimeApp {
             content.into()
         };
 
-        if let Some(image) = &self.image_viewer {
+        if super::image_viewer_enabled()
+            && let Some(image) = &self.image_viewer
+        {
             stack![content, image_viewer_overlay(image, self.loading_frame)]
                 .width(Length::Fill)
                 .height(Length::Fill)
