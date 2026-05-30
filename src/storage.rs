@@ -6,9 +6,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::account::{
-    AccountId, AccountProfile, AuthSession, CompetitiveRank, LauncherSessionBackup, Shard,
-};
+use crate::account::{AccountId, AccountProfile};
 
 const STORAGE_VERSION: u32 = 1;
 
@@ -109,15 +107,7 @@ impl AccountRepository {
 
         let contents = fs::read_to_string(&self.path)?;
         let contents = contents.strip_prefix('\u{feff}').unwrap_or(&contents);
-        let state: StoredState = match serde_json::from_str(contents) {
-            Ok(state) => state,
-            Err(error) => {
-                let state = migrate_legacy_state(contents).map_err(|_| error)?;
-                self.validate_state(&state)?;
-                self.save(&state)?;
-                return Ok(state);
-            }
-        };
+        let state: StoredState = serde_json::from_str(contents)?;
 
         self.validate_state(&state)?;
 
@@ -151,89 +141,6 @@ impl AccountRepository {
 
         Ok(())
     }
-}
-
-// Temporary 0.1.x migration for pre-hard-cut account JSON that still contains
-// `region` and `notes`. Canonical storage remains `StoredState`; delete this in
-// the next product version after users have had one release to re-save profiles.
-// Tracking: user-requested follow-up removal in the next version.
-fn migrate_legacy_state(contents: &str) -> Result<StoredState, serde_json::Error> {
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct LegacyStoredState {
-        version: u32,
-        #[serde(default)]
-        accounts: Vec<LegacyAccountProfile>,
-        selected_account: Option<AccountId>,
-        riot_client_path: Option<PathBuf>,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(deny_unknown_fields)]
-    struct LegacyAccountProfile {
-        id: AccountId,
-        display_name: String,
-        username: Option<String>,
-        puuid: Option<String>,
-        game_name: Option<String>,
-        tag_line: Option<String>,
-        #[serde(default)]
-        region: Option<LegacyRegion>,
-        shard: Shard,
-        session: Option<AuthSession>,
-        #[serde(default)]
-        launcher_session: Option<LauncherSessionBackup>,
-        #[serde(default)]
-        competitive_rank: Option<CompetitiveRank>,
-        #[serde(default)]
-        account_level: Option<i64>,
-        #[serde(default)]
-        last_refreshed_at_unix: Option<i64>,
-        #[serde(default)]
-        notes: String,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "lowercase")]
-    enum LegacyRegion {
-        Na,
-        Latam,
-        Br,
-        Eu,
-        Ap,
-        Kr,
-        Pbe,
-    }
-
-    let legacy: LegacyStoredState = serde_json::from_str(contents)?;
-
-    Ok(StoredState {
-        version: legacy.version,
-        accounts: legacy
-            .accounts
-            .into_iter()
-            .map(|account| {
-                let _ = (account.region, account.notes);
-
-                AccountProfile {
-                    id: account.id,
-                    display_name: account.display_name,
-                    username: account.username,
-                    puuid: account.puuid,
-                    game_name: account.game_name,
-                    tag_line: account.tag_line,
-                    shard: account.shard,
-                    session: account.session,
-                    launcher_session: account.launcher_session,
-                    competitive_rank: account.competitive_rank,
-                    account_level: account.account_level,
-                    last_refreshed_at_unix: account.last_refreshed_at_unix,
-                }
-            })
-            .collect(),
-        selected_account: legacy.selected_account,
-        riot_client_path: legacy.riot_client_path,
-    })
 }
 
 fn write_synced(path: &Path, contents: &[u8]) -> io::Result<()> {
@@ -354,7 +261,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_legacy_accounts_with_region_and_notes() {
+    fn rejects_legacy_accounts_with_region_and_notes() {
         let account =
             AccountProfile::new("Main", Some("player".to_string()), Shard::Na).expect("account");
         let raw = serde_json::json!({
@@ -384,26 +291,17 @@ mod tests {
         let dir = tempdir().expect("temp dir");
         let path = dir.path().join("accounts.json");
         fs::write(&path, serde_json::to_string_pretty(&raw).unwrap()).expect("write");
-        let repo = AccountRepository::new(path.clone());
+        let repo = AccountRepository::new(path);
 
-        let loaded = repo.load().expect("migrated state");
-        let migrated_json = fs::read_to_string(path).expect("migrated json");
+        let error = repo.load().expect_err("legacy state is rejected");
 
-        assert_eq!(loaded.accounts.len(), 1);
-        assert_eq!(loaded.selected_account, Some(account.id));
-        assert_eq!(loaded.accounts[0].display_name, "Main");
-        assert_eq!(loaded.accounts[0].riot_id().as_deref(), Some("Player#NA1"));
-        assert_eq!(loaded.accounts[0].last_refreshed_at_unix, None);
-        assert_eq!(
-            loaded.accounts[0]
-                .competitive_rank
-                .as_ref()
-                .unwrap()
-                .season_id,
-            None
-        );
-        assert!(!migrated_json.contains("\"region\""));
-        assert!(!migrated_json.contains("\"notes\""));
+        match error {
+            StorageError::Json(error) => {
+                let message = error.to_string();
+                assert!(message.contains("unknown field"), "{message}");
+            }
+            other => panic!("expected JSON schema error, got {other:?}"),
+        }
     }
 
     #[test]
