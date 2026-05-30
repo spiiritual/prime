@@ -1,18 +1,21 @@
-use iced::widget::{button, column, container, pick_list, row, space, text, text_input};
-use iced::{Color, Element, Length, Theme, alignment};
+use iced::widget::{button, column, container, pick_list, row, space, text, text_input, tooltip};
+use iced::{Color, Element, Length, Padding, Theme, alignment};
 use time::{OffsetDateTime, UtcOffset};
 
 use crate::account::{AccountId, AccountProfile, CompetitiveRank, Shard};
 
 use super::super::components::{anchored_popover, compact_loading_indicator};
-use super::super::data::format_whole_number;
+use super::super::data::{AccountAvailability, format_whole_number};
 use super::super::{Message, PrimeApp};
 
 const ACCOUNT_MENU_WIDTH: f32 = 190.0;
 const ACCOUNT_MENU_TOP_OFFSET: f32 = 48.0;
 const ACCOUNT_MENU_RIGHT_INSET: f32 = 14.0;
+const ACCOUNT_TITLE_TEXT_SIZE: u32 = 22;
 const ACCOUNT_BADGE_HEIGHT: f32 = 22.0;
 const ACCOUNT_BADGE_PADDING: [u16; 2] = [0, 8];
+const ACCOUNT_AVAILABILITY_DOT_SIZE: f32 = 12.0;
+const ACCOUNT_AVAILABILITY_DOT_TOP_PADDING: f32 = 2.0;
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     let mut account_cards = column![].spacing(12).width(Length::Fill);
@@ -108,7 +111,9 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
     let is_selected = app.state.selected_account == Some(account.id);
     let is_account_menu_open = app.open_account_menu == Some(account.id);
     let is_launching = app.launching_account == Some(account.id);
-    let launch_in_progress = app.launching_account.is_some();
+    let is_checking_launch = app.launch_preflight_account == Some(account.id);
+    let launch_in_progress =
+        app.launching_account.is_some() || app.launch_preflight_account.is_some();
     let selected_label = if is_selected {
         "Selected"
     } else {
@@ -116,7 +121,12 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
     };
     let header = row![
         column![
-            text(&account.display_name).size(22),
+            row![
+                text(&account.display_name).size(ACCOUNT_TITLE_TEXT_SIZE),
+                account_availability_indicator(app, account)
+            ]
+            .spacing(8)
+            .align_y(alignment::Vertical::Center),
             row![
                 text(riot_tag).size(15),
                 level_badge(app, account),
@@ -164,6 +174,7 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
                 account.id,
                 app.loading_frame,
                 is_launching,
+                is_checking_launch,
                 launch_in_progress
             )
         ]
@@ -219,6 +230,7 @@ fn launch_button(
     account_id: AccountId,
     loading_frame: usize,
     is_launching: bool,
+    is_checking_launch: bool,
     launch_in_progress: bool,
 ) -> Element<'static, Message> {
     let content: Element<_> = if is_launching {
@@ -226,6 +238,14 @@ fn launch_button(
             .spacing(8)
             .align_y(alignment::Vertical::Center)
             .into()
+    } else if is_checking_launch {
+        row![
+            compact_loading_indicator(loading_frame),
+            text("Checking...")
+        ]
+        .spacing(8)
+        .align_y(alignment::Vertical::Center)
+        .into()
     } else {
         text("Launch VALORANT").into()
     };
@@ -233,6 +253,38 @@ fn launch_button(
     button(content)
         .on_press_maybe((!launch_in_progress).then_some(Message::LaunchAccount(account_id)))
         .into()
+}
+
+fn account_availability_indicator<'a>(
+    app: &'a PrimeApp,
+    account: &'a AccountProfile,
+) -> Element<'a, Message> {
+    let availability = app
+        .account_availability
+        .get(&account.id)
+        .cloned()
+        .unwrap_or_else(|| {
+            if app.account_availability_loading {
+                AccountAvailability::checking()
+            } else {
+                AccountAvailability::not_checked()
+            }
+        });
+    let color = account_availability_color(&availability);
+    let label = availability.label();
+    let dot = container(space())
+        .width(ACCOUNT_AVAILABILITY_DOT_SIZE)
+        .height(ACCOUNT_AVAILABILITY_DOT_SIZE)
+        .style(move |_| account_availability_dot_style(color));
+    let dot = container(dot)
+        .height(ACCOUNT_TITLE_TEXT_SIZE as f32)
+        .padding(Padding::default().top(ACCOUNT_AVAILABILITY_DOT_TOP_PADDING))
+        .align_y(alignment::Vertical::Center);
+    let tip = container(text(label).size(13))
+        .padding([6, 8])
+        .style(iced::widget::container::bordered_box);
+
+    tooltip(dot, tip, tooltip::Position::Right).into()
 }
 
 fn rank_badge<'a>(app: &PrimeApp, account: &'a AccountProfile) -> Element<'a, Message> {
@@ -388,6 +440,25 @@ fn rank_badge_style(theme: &Theme, accent: Option<Color>) -> iced::widget::conta
         }
     }
 
+    style
+}
+
+fn account_availability_color(availability: &AccountAvailability) -> Color {
+    match availability {
+        AccountAvailability::Available => Color::from_rgb8(77, 201, 116),
+        AccountAvailability::Unavailable { .. } => Color::from_rgb8(236, 89, 94),
+        AccountAvailability::Unknown { .. } => Color::from_rgb8(122, 130, 142),
+    }
+}
+
+fn account_availability_dot_style(color: Color) -> iced::widget::container::Style {
+    let mut style = iced::widget::container::Style {
+        background: Some(color.into()),
+        ..Default::default()
+    };
+    style.border.radius = iced::border::radius(ACCOUNT_AVAILABILITY_DOT_SIZE / 2.0);
+    style.border.width = 1.0;
+    style.border.color = Color::from_rgba8(255, 255, 255, 0.35);
     style
 }
 

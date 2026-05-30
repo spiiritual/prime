@@ -1,4 +1,4 @@
-use crate::account::Shard;
+use crate::account::{Shard, ValorantRegion};
 
 pub const ENTITLEMENTS_URL: &str = "https://entitlements.auth.riotgames.com/api/token/v1";
 pub const PLAYER_INFO_URL: &str = "https://auth.riotgames.com/userinfo";
@@ -16,6 +16,14 @@ pub fn pd_base_url(shard: Shard) -> String {
 
 pub fn shared_base_url(shard: Shard) -> String {
     format!("https://shared.{}.a.pvp.net", shard.as_str())
+}
+
+pub fn glz_base_url(region: ValorantRegion, shard: Shard) -> String {
+    format!(
+        "https://glz-{}-1.{}.a.pvp.net",
+        region.as_str(),
+        shard.as_str()
+    )
 }
 
 pub fn content_url(shard: Shard) -> String {
@@ -47,6 +55,21 @@ pub fn player_mmr_url(shard: Shard, puuid: &str) -> String {
 
 pub fn contracts_url(shard: Shard, puuid: &str) -> String {
     format!("{}/contracts/v1/contracts/{puuid}", pd_base_url(shard))
+}
+
+pub fn current_game_player_url(region: ValorantRegion, shard: Shard, puuid: &str) -> String {
+    format!(
+        "{}/core-game/v1/players/{puuid}",
+        glz_base_url(region, shard)
+    )
+}
+
+pub fn pregame_player_url(region: ValorantRegion, shard: Shard, puuid: &str) -> String {
+    format!("{}/pregame/v1/players/{puuid}", glz_base_url(region, shard))
+}
+
+pub fn party_player_url(region: ValorantRegion, shard: Shard, puuid: &str) -> String {
+    format!("{}/parties/v1/players/{puuid}", glz_base_url(region, shard))
 }
 
 #[cfg(test)]
@@ -106,6 +129,22 @@ mod tests {
         assert_eq!(
             contracts_url(Shard::Eu, "puuid"),
             "https://pd.eu.a.pvp.net/contracts/v1/contracts/puuid"
+        );
+    }
+
+    #[test]
+    fn builds_glz_activity_urls() {
+        assert_eq!(
+            current_game_player_url(ValorantRegion::Latam, Shard::Na, "puuid"),
+            "https://glz-latam-1.na.a.pvp.net/core-game/v1/players/puuid"
+        );
+        assert_eq!(
+            pregame_player_url(ValorantRegion::Eu, Shard::Eu, "puuid"),
+            "https://glz-eu-1.eu.a.pvp.net/pregame/v1/players/puuid"
+        );
+        assert_eq!(
+            party_player_url(ValorantRegion::Ap, Shard::Ap, "puuid"),
+            "https://glz-ap-1.ap.a.pvp.net/parties/v1/players/puuid"
         );
     }
 }

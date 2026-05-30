@@ -11,7 +11,8 @@ use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{check_for_update, download_and_prepare_update};
 
 use super::data::{
-    cache_account_api_context, check_riot_client_window_visible, fetch_account_ranks,
+    AccountAvailability, cache_account_api_context, check_riot_client_window_visible,
+    fetch_account_availabilities, fetch_account_availability, fetch_account_ranks,
     fetch_current_client_version, fetch_loadout, fetch_profile_identity, fetch_storefront,
     launch_account, non_empty_path, start_account_capture, start_verified_launcher_session_login,
 };
@@ -59,7 +60,11 @@ impl PrimeApp {
                 store_loading_account: None,
                 loadout_loading_account: None,
                 account_ranks_loading: false,
+                account_availability: Default::default(),
+                account_availability_loading: false,
                 launcher_capture_in_progress: false,
+                launch_preflight_account: None,
+                unavailable_launch_warning: None,
                 launching_account: None,
                 launch_progress_checking: false,
                 app_update_status: AppUpdateStatus::Checking,
@@ -129,6 +134,7 @@ impl PrimeApp {
                 self.show_import_account_prompt = false;
                 self.exported_account = None;
                 self.confirm_delete_account = None;
+                self.unavailable_launch_warning = None;
                 Task::batch([
                     self.load_active_tab(),
                     self.restore_active_tab_scroll_task(),
@@ -173,6 +179,7 @@ impl PrimeApp {
                 self.show_import_account_prompt = false;
                 self.exported_account = None;
                 self.confirm_delete_account = None;
+                self.unavailable_launch_warning = None;
                 self.store_summary = None;
                 self.loadout_summary = None;
                 self.status = self
@@ -301,6 +308,7 @@ impl PrimeApp {
 
                         self.status = format!("Added {}", account.summary());
                         self.state.push_account(account);
+                        self.account_availability.remove(&draft.account_id);
                         self.state.select_account(draft.account_id);
                         self.pending_account = None;
                         self.new_display_name.clear();
@@ -504,6 +512,7 @@ impl PrimeApp {
                         }
 
                         self.state.push_account(imported.account);
+                        self.account_availability.remove(&account_id);
                         self.state.select_account(account_id);
                         self.show_import_account_prompt = false;
                         self.import_account_input.clear();
@@ -570,6 +579,7 @@ impl PrimeApp {
 
                 let was_selected = self.state.selected_account == Some(id);
                 self.state.remove_account(id);
+                self.account_availability.remove(&id);
                 self.account_switcher_open = false;
                 self.open_account_menu = None;
                 if self
@@ -835,6 +845,35 @@ impl PrimeApp {
                 } else {
                     Task::none()
                 }
+            }
+            Message::AccountAvailabilityTimerTick(now) => {
+                self.now = now;
+
+                if self.active_tab != Tab::Accounts
+                    || self.account_availability_loading
+                    || self.launch_preflight_account.is_some()
+                {
+                    return Task::none();
+                }
+
+                self.fetch_account_availabilities_task()
+            }
+            Message::AccountAvailabilitiesLoaded(result) => {
+                self.account_availability_loading = false;
+
+                for account in result.accounts {
+                    if self
+                        .state
+                        .accounts
+                        .iter()
+                        .any(|profile| profile.id == account.account_id)
+                    {
+                        self.account_availability
+                            .insert(account.account_id, account.availability);
+                    }
+                }
+
+                Task::none()
             }
             Message::StorefrontLoaded(account_id, result) => {
                 let is_current_request = self.store_loading_account == Some(account_id);
@@ -1102,7 +1141,7 @@ impl PrimeApp {
                 Task::none()
             }
             Message::LaunchAccount(id) => {
-                if self.launching_account.is_some() {
+                if self.launching_account.is_some() || self.launch_preflight_account.is_some() {
                     return Task::none();
                 }
 
@@ -1117,32 +1156,120 @@ impl PrimeApp {
                     return Task::none();
                 };
 
-                let config = LaunchConfig {
-                    riot_client_path: self.state.riot_client_path.clone(),
-                    ..LaunchConfig::default()
-                };
-                let backup = account.launcher_session.clone();
                 let summary = account.summary();
 
-                self.state.select_account(id);
                 self.account_switcher_open = false;
                 self.open_account_menu = None;
+                self.show_add_account_prompt = false;
                 self.show_import_account_prompt = false;
                 self.exported_account = None;
                 self.confirm_delete_account = None;
-                self.store_summary = None;
-                self.loadout_summary = None;
-                self.launching_account = Some(id);
-                self.launch_progress_checking = false;
-                self.status = format!("Launching {summary}");
+                self.unavailable_launch_warning = None;
+                self.launch_preflight_account = Some(id);
+                self.status = format!("Checking availability for {summary}");
 
-                Task::batch([
-                    self.save_task(),
-                    Task::perform(
-                        async move { launch_account(config, backup).await },
-                        Message::LaunchFinished,
-                    ),
-                ])
+                let client_version = self.client_version_input.clone();
+                Task::perform(
+                    async move {
+                        let api = crate::riot::client::RiotApi::new().map_err(|_| ()).ok();
+
+                        match api {
+                            Some(api) => {
+                                fetch_account_availability(&api, account, client_version).await
+                            }
+                            None => super::data::AccountActivityCheck {
+                                account_id: id,
+                                availability: AccountAvailability::activity_check_failed(),
+                            },
+                        }
+                    },
+                    Message::LaunchPreflightChecked,
+                )
+            }
+            Message::LaunchPreflightChecked(check) => {
+                if self.launch_preflight_account != Some(check.account_id) {
+                    return Task::none();
+                }
+
+                self.launch_preflight_account = None;
+                self.account_availability
+                    .insert(check.account_id, check.availability.clone());
+
+                let Some(account) = self
+                    .state
+                    .accounts
+                    .iter()
+                    .find(|account| account.id == check.account_id)
+                    .cloned()
+                else {
+                    self.status = "Account profile no longer exists".to_string();
+                    return Task::none();
+                };
+
+                match launch_preflight_decision(&check.availability) {
+                    LaunchPreflightDecision::WarnUnavailable => {
+                        if let Some(reason) = check.availability.unavailable_reason() {
+                            self.unavailable_launch_warning =
+                                Some(super::UnavailableLaunchWarning {
+                                    account_id: account.id,
+                                    display_name: account.display_name,
+                                    reason: reason.to_string(),
+                                });
+                        }
+                        self.status =
+                            "Account appears unavailable; confirm launch to continue".to_string();
+                        Task::none()
+                    }
+                    LaunchPreflightDecision::Launch => {
+                        let summary = account.summary();
+                        self.start_account_launch(account, format!("Launching {summary}"))
+                    }
+                    LaunchPreflightDecision::LaunchInconclusive => {
+                        let summary = account.summary();
+                        self.start_account_launch(
+                            account,
+                            format!("Activity check inconclusive; launching {summary}"),
+                        )
+                    }
+                }
+            }
+            Message::CancelUnavailableLaunch => {
+                cancel_unavailable_launch_state(
+                    &mut self.unavailable_launch_warning,
+                    &mut self.launch_preflight_account,
+                    &mut self.launching_account,
+                    &mut self.launch_progress_checking,
+                );
+                self.status = "Canceled launch".to_string();
+                Task::none()
+            }
+            Message::LaunchAnyway(id) => {
+                if self.launching_account.is_some() || self.launch_preflight_account.is_some() {
+                    return Task::none();
+                }
+
+                let Some(warning) = self.unavailable_launch_warning.take() else {
+                    return Task::none();
+                };
+
+                if warning.account_id != id {
+                    self.unavailable_launch_warning = Some(warning);
+                    return Task::none();
+                }
+
+                let Some(account) = self
+                    .state
+                    .accounts
+                    .iter()
+                    .find(|account| account.id == id)
+                    .cloned()
+                else {
+                    self.status = "Account profile no longer exists".to_string();
+                    return Task::none();
+                };
+
+                let summary = account.summary();
+                self.start_account_launch(account, format!("Launching {summary} anyway"))
             }
             Message::LaunchProgressTick => {
                 if self.launching_account.is_none() || self.launch_progress_checking {
@@ -1264,7 +1391,18 @@ impl PrimeApp {
 
     fn load_active_tab(&mut self) -> Task<Message> {
         match self.active_tab {
-            Tab::Accounts if !self.account_ranks_loading => self.fetch_account_ranks_task(),
+            Tab::Accounts => Task::batch([
+                if self.account_ranks_loading {
+                    Task::none()
+                } else {
+                    self.fetch_account_ranks_task()
+                },
+                if self.account_availability_loading || self.launch_preflight_account.is_some() {
+                    Task::none()
+                } else {
+                    self.fetch_account_availabilities_task()
+                },
+            ]),
             Tab::Shop
                 if self.store_summary.is_none() && !self.selected_account_is_store_loading() =>
             {
@@ -1278,6 +1416,25 @@ impl PrimeApp {
             }
             _ => Task::none(),
         }
+    }
+
+    fn fetch_account_availabilities_task(&mut self) -> Task<Message> {
+        if self.state.accounts.is_empty() {
+            return Task::none();
+        }
+
+        if self.client_version_input.trim().is_empty() {
+            return Task::none();
+        }
+
+        self.account_availability_loading = true;
+        let accounts = self.state.accounts.clone();
+        let client_version = self.client_version_input.clone();
+
+        Task::perform(
+            fetch_account_availabilities(accounts, client_version),
+            Message::AccountAvailabilitiesLoaded,
+        )
     }
 
     fn fetch_account_ranks_task(&mut self) -> Task<Message> {
@@ -1332,6 +1489,37 @@ impl PrimeApp {
             fetch_loadout(account, self.client_version_input.clone(), image_cache),
             move |result| Message::LoadoutLoaded(account_id, result),
         )
+    }
+
+    fn start_account_launch(&mut self, account: AccountProfile, status: String) -> Task<Message> {
+        let id = account.id;
+        let config = LaunchConfig {
+            riot_client_path: self.state.riot_client_path.clone(),
+            ..LaunchConfig::default()
+        };
+        let backup = account.launcher_session.clone();
+
+        self.state.select_account(id);
+        self.account_switcher_open = false;
+        self.open_account_menu = None;
+        self.show_add_account_prompt = false;
+        self.show_import_account_prompt = false;
+        self.exported_account = None;
+        self.confirm_delete_account = None;
+        self.unavailable_launch_warning = None;
+        self.store_summary = None;
+        self.loadout_summary = None;
+        self.launching_account = Some(id);
+        self.launch_progress_checking = false;
+        self.status = status;
+
+        Task::batch([
+            self.save_task(),
+            Task::perform(
+                async move { launch_account(config, backup).await },
+                Message::LaunchFinished,
+            ),
+        ])
     }
 
     fn selected_account_is_store_loading(&self) -> bool {
@@ -1422,6 +1610,35 @@ impl PrimeApp {
         };
         Task::none()
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum LaunchPreflightDecision {
+    Launch,
+    LaunchInconclusive,
+    WarnUnavailable,
+}
+
+pub(super) fn launch_preflight_decision(
+    availability: &AccountAvailability,
+) -> LaunchPreflightDecision {
+    match availability {
+        AccountAvailability::Available => LaunchPreflightDecision::Launch,
+        AccountAvailability::Unavailable { .. } => LaunchPreflightDecision::WarnUnavailable,
+        AccountAvailability::Unknown { .. } => LaunchPreflightDecision::LaunchInconclusive,
+    }
+}
+
+pub(super) fn cancel_unavailable_launch_state(
+    unavailable_launch_warning: &mut Option<super::UnavailableLaunchWarning>,
+    launch_preflight_account: &mut Option<AccountId>,
+    launching_account: &mut Option<AccountId>,
+    launch_progress_checking: &mut bool,
+) {
+    *unavailable_launch_warning = None;
+    *launch_preflight_account = None;
+    *launching_account = None;
+    *launch_progress_checking = false;
 }
 
 fn alert_and_focus_latest_window() -> Task<Message> {

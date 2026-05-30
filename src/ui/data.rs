@@ -5,6 +5,7 @@ use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time};
 
 use crate::account::{
     AccountId, AccountProfile, AuthSession, CompetitiveRank, LauncherSessionBackup, Shard,
+    ValorantRegion,
 };
 use crate::image_cache::ImageCache;
 use crate::launch::{
@@ -12,7 +13,7 @@ use crate::launch::{
     launch_riot_login_capture, launch_target_window_is_visible, launch_valorant,
     riot_client_window_is_visible,
 };
-use crate::riot::client::{ApiCredentials, RiotApi};
+use crate::riot::client::{ApiCredentials, PlayerActivityEndpointPresence, RiotApi};
 use crate::riot::content::{
     AccessoryCatalog, BundleCatalog, ContractCatalog, CurrencyCatalog, ResolvedAccessory,
     ResolvedBundle, ResolvedContract, ResolvedContractReward, ResolvedCurrency, ResolvedSkin,
@@ -207,6 +208,41 @@ pub(super) fn shard_from_player_affinities(player_info: &PlayerInfoResponse) -> 
         .find_map(|value| Shard::from_live_affinity(value))
 }
 
+pub(super) async fn resolve_session_region(
+    api: &RiotApi,
+    session: &AuthSession,
+    player_info: Option<&PlayerInfoResponse>,
+) -> Result<ValorantRegion, String> {
+    if let Some(region) = player_info.and_then(region_from_player_affinities) {
+        return Ok(region);
+    }
+
+    let id_token = session
+        .id_token
+        .as_ref()
+        .filter(|token| !token.trim().is_empty())
+        .ok_or_else(|| {
+            "Riot session did not include an ID token for region resolution".to_string()
+        })?;
+
+    let geo = api
+        .riot_geo(&session.access_token, id_token)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    ValorantRegion::from_live_affinity(&geo.affinities.live)
+        .ok_or_else(|| "Riot Geo did not return a supported VALORANT region".to_string())
+}
+
+pub(super) fn region_from_player_affinities(
+    player_info: &PlayerInfoResponse,
+) -> Option<ValorantRegion> {
+    ["live", "pp", "pvp"]
+        .into_iter()
+        .filter_map(|key| player_info.affinity.get(key))
+        .find_map(|value| ValorantRegion::from_live_affinity(value))
+}
+
 pub(super) async fn start_account_capture(
     account_id: AccountId,
     backup_root: PathBuf,
@@ -357,6 +393,95 @@ pub(super) struct AccountRankFailure {
     pub(super) account_id: AccountId,
     pub(super) error: String,
 }
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct AccountAvailabilityRefresh {
+    pub(super) accounts: Vec<AccountActivityCheck>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct AccountActivityCheck {
+    pub(super) account_id: AccountId,
+    pub(super) availability: AccountAvailability,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum AccountActivity {
+    InMatch,
+    AgentSelect,
+    InLobby,
+    Available,
+    Unknown(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum AccountAvailability {
+    Available,
+    Unavailable { reason: String },
+    Unknown { reason: String },
+}
+
+impl AccountAvailability {
+    pub(super) fn not_checked() -> Self {
+        Self::Unknown {
+            reason: "not checked".to_string(),
+        }
+    }
+
+    pub(super) fn checking() -> Self {
+        Self::Unknown {
+            reason: "checking activity".to_string(),
+        }
+    }
+
+    pub(super) fn activity_check_failed() -> Self {
+        Self::Unknown {
+            reason: ACCOUNT_ACTIVITY_FAILED_REASON.to_string(),
+        }
+    }
+
+    pub(super) fn label(&self) -> String {
+        match self {
+            Self::Available => "Available".to_string(),
+            Self::Unavailable { reason } => format!("Unavailable ({reason})"),
+            Self::Unknown { reason } => format!("Unknown ({reason})"),
+        }
+    }
+
+    pub(super) fn unavailable_reason(&self) -> Option<&str> {
+        match self {
+            Self::Unavailable { reason } => Some(reason),
+            _ => None,
+        }
+    }
+}
+
+impl From<AccountActivity> for AccountAvailability {
+    fn from(activity: AccountActivity) -> Self {
+        match activity {
+            AccountActivity::InMatch => AccountAvailability::Unavailable {
+                reason: "in match".to_string(),
+            },
+            AccountActivity::AgentSelect => AccountAvailability::Unavailable {
+                reason: "agent select".to_string(),
+            },
+            AccountActivity::InLobby => AccountAvailability::Unavailable {
+                reason: "in lobby".to_string(),
+            },
+            AccountActivity::Available => AccountAvailability::Available,
+            AccountActivity::Unknown(reason) => AccountAvailability::Unknown { reason },
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum AccountActivityProbe {
+    Present,
+    NotFound,
+    Failed(String),
+}
+
+pub(super) const ACCOUNT_ACTIVITY_FAILED_REASON: &str = "activity check failed";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CapturedAccountDraft {
@@ -2068,6 +2193,119 @@ pub(super) async fn fetch_account_ranks(
     result
 }
 
+pub(super) async fn fetch_account_availabilities(
+    accounts: Vec<AccountProfile>,
+    client_version: String,
+) -> AccountAvailabilityRefresh {
+    let api = match RiotApi::new() {
+        Ok(api) => api,
+        Err(_) => {
+            return AccountAvailabilityRefresh {
+                accounts: accounts
+                    .into_iter()
+                    .map(|account| AccountActivityCheck {
+                        account_id: account.id,
+                        availability: AccountAvailability::activity_check_failed(),
+                    })
+                    .collect(),
+            };
+        }
+    };
+
+    let mut result = AccountAvailabilityRefresh::default();
+
+    for account in accounts {
+        result
+            .accounts
+            .push(fetch_account_availability(&api, account, client_version.clone()).await);
+    }
+
+    result
+}
+
+pub(super) async fn fetch_account_availability(
+    api: &RiotApi,
+    account: AccountProfile,
+    client_version: String,
+) -> AccountActivityCheck {
+    let account_id = account.id;
+    let availability = match resolve_credentials(api, &account, client_version).await {
+        Ok(resolved) => match resolved.region {
+            Some(region) => fetch_resolved_account_activity(api, &resolved.credentials, region)
+                .await
+                .into(),
+            None => AccountAvailability::activity_check_failed(),
+        },
+        Err(_) => AccountAvailability::activity_check_failed(),
+    };
+
+    AccountActivityCheck {
+        account_id,
+        availability,
+    }
+}
+
+async fn fetch_resolved_account_activity(
+    api: &RiotApi,
+    credentials: &ApiCredentials,
+    region: ValorantRegion,
+) -> AccountActivity {
+    let current_game = account_activity_probe(api.current_game_player(credentials, region).await);
+    if current_game != AccountActivityProbe::NotFound {
+        return classify_account_activity(
+            current_game,
+            AccountActivityProbe::NotFound,
+            AccountActivityProbe::NotFound,
+        );
+    }
+
+    let pregame = account_activity_probe(api.pregame_player(credentials, region).await);
+    if pregame != AccountActivityProbe::NotFound {
+        return classify_account_activity(
+            AccountActivityProbe::NotFound,
+            pregame,
+            AccountActivityProbe::NotFound,
+        );
+    }
+
+    let party = account_activity_probe(api.party_player(credentials, region).await);
+    classify_account_activity(
+        AccountActivityProbe::NotFound,
+        AccountActivityProbe::NotFound,
+        party,
+    )
+}
+
+fn account_activity_probe(
+    result: Result<PlayerActivityEndpointPresence, crate::riot::client::RiotApiError>,
+) -> AccountActivityProbe {
+    match result {
+        Ok(PlayerActivityEndpointPresence::Present) => AccountActivityProbe::Present,
+        Ok(PlayerActivityEndpointPresence::Missing) => AccountActivityProbe::NotFound,
+        Err(_) => AccountActivityProbe::Failed(ACCOUNT_ACTIVITY_FAILED_REASON.to_string()),
+    }
+}
+
+pub(super) fn classify_account_activity(
+    current_game: AccountActivityProbe,
+    pregame: AccountActivityProbe,
+    party: AccountActivityProbe,
+) -> AccountActivity {
+    match current_game {
+        AccountActivityProbe::Present => AccountActivity::InMatch,
+        AccountActivityProbe::Failed(error) => AccountActivity::Unknown(error),
+        AccountActivityProbe::NotFound => match pregame {
+            AccountActivityProbe::Present => AccountActivity::AgentSelect,
+            AccountActivityProbe::Failed(error) => AccountActivity::Unknown(error),
+            AccountActivityProbe::NotFound => match party {
+                AccountActivityProbe::Present => AccountActivity::InLobby,
+                AccountActivityProbe::Failed(error) => AccountActivity::Unknown(error),
+                AccountActivityProbe::NotFound => AccountActivity::Available,
+            },
+        },
+    }
+}
+
 async fn fetch_account_rank(
     api: &RiotApi,
     account: AccountProfile,
@@ -2385,7 +2623,13 @@ pub(super) async fn resolve_credentials(
                 .filter(|puuid| !puuid.trim().is_empty())
         })
         .ok_or_else(|| "selected account does not have a Riot PUUID".to_string())?;
-    let shard = resolve_session_shard(api, &session, player_info.as_ref(), account.shard).await;
+    let region = resolve_session_region(api, &session, player_info.as_ref())
+        .await
+        .ok();
+    let shard = match region {
+        Some(region) => region.shard(),
+        None => resolve_session_shard(api, &session, player_info.as_ref(), account.shard).await,
+    };
     let identity = match player_info {
         Some(info) => ApiIdentity {
             puuid: puuid.clone(),
@@ -2409,6 +2653,7 @@ pub(super) async fn resolve_credentials(
             shard,
             puuid,
         },
+        region,
         session,
         identity,
     })
@@ -2417,6 +2662,7 @@ pub(super) async fn resolve_credentials(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ResolvedApiCredentials {
     pub(super) credentials: ApiCredentials,
+    pub(super) region: Option<ValorantRegion>,
     pub(super) session: AuthSession,
     pub(super) identity: ApiIdentity,
 }

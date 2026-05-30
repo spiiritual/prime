@@ -54,14 +54,14 @@ impl Shard {
     }
 
     pub fn from_live_affinity(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "na" | "latam" | "br" => Some(Shard::Na),
-            "eu" => Some(Shard::Eu),
-            "ap" => Some(Shard::Ap),
-            "kr" => Some(Shard::Kr),
-            "pbe" => Some(Shard::Pbe),
-            _ => None,
-        }
+        ValorantRegion::from_live_affinity(value)
+            .map(ValorantRegion::shard)
+            .or_else(|| {
+                value
+                    .trim()
+                    .eq_ignore_ascii_case("pbe")
+                    .then_some(Shard::Pbe)
+            })
     }
 }
 
@@ -83,6 +83,56 @@ impl FromStr for Shard {
             "pbe" => Ok(Shard::Pbe),
             other => Err(AccountValidationError::UnknownShard(other.to_string())),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ValorantRegion {
+    Na,
+    Latam,
+    Br,
+    Eu,
+    Ap,
+    Kr,
+}
+
+impl ValorantRegion {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ValorantRegion::Na => "na",
+            ValorantRegion::Latam => "latam",
+            ValorantRegion::Br => "br",
+            ValorantRegion::Eu => "eu",
+            ValorantRegion::Ap => "ap",
+            ValorantRegion::Kr => "kr",
+        }
+    }
+
+    pub fn shard(self) -> Shard {
+        match self {
+            ValorantRegion::Na | ValorantRegion::Latam | ValorantRegion::Br => Shard::Na,
+            ValorantRegion::Eu => Shard::Eu,
+            ValorantRegion::Ap => Shard::Ap,
+            ValorantRegion::Kr => Shard::Kr,
+        }
+    }
+
+    pub fn from_live_affinity(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "na" => Some(ValorantRegion::Na),
+            "latam" => Some(ValorantRegion::Latam),
+            "br" => Some(ValorantRegion::Br),
+            "eu" => Some(ValorantRegion::Eu),
+            "ap" => Some(ValorantRegion::Ap),
+            "kr" => Some(ValorantRegion::Kr),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for ValorantRegion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -374,6 +424,19 @@ mod tests {
         assert_eq!(Shard::from_live_affinity("BR"), Some(Shard::Na));
         assert_eq!(Shard::from_live_affinity("eu"), Some(Shard::Eu));
         assert_eq!(Shard::from_live_affinity("unknown"), None);
+    }
+
+    #[test]
+    fn maps_live_affinity_to_region() {
+        assert_eq!(
+            ValorantRegion::from_live_affinity("latam"),
+            Some(ValorantRegion::Latam)
+        );
+        assert_eq!(
+            ValorantRegion::from_live_affinity("BR"),
+            Some(ValorantRegion::Br)
+        );
+        assert_eq!(ValorantRegion::from_live_affinity("pbe"), None);
     }
 
     #[test]

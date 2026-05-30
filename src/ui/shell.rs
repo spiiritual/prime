@@ -9,7 +9,7 @@ use crate::account::AccountProfile;
 use super::components::{anchored_popover, currency_balance_display, loading_indicator};
 use super::{
     AccountExportOutput, ImageViewerImage, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, Tab,
-    screens,
+    UnavailableLaunchWarning, screens,
 };
 use super::{loading_indicator_active, status_bar_visible};
 
@@ -59,6 +59,11 @@ impl PrimeApp {
                 .into()
         } else if let Some(account) = pending_delete_account {
             stack![content, delete_account_prompt_overlay(account)]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else if let Some(warning) = &self.unavailable_launch_warning {
+            stack![content, unavailable_launch_prompt_overlay(warning)]
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
@@ -509,6 +514,44 @@ fn delete_account_prompt_overlay(account: &AccountProfile) -> Element<'_, Messag
     )
     .padding(24)
     .width(560)
+    .style(add_account_prompt_style);
+
+    opaque(
+        container(prompt)
+            .padding(14)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center)
+            .style(add_account_prompt_scrim_style),
+    )
+}
+
+fn unavailable_launch_prompt_overlay(warning: &UnavailableLaunchWarning) -> Element<'_, Message> {
+    let prompt = container(
+        column![
+            column![
+                text(format!("Launch {} anyway?", warning.display_name)).size(20),
+                text(format!(
+                    "This account appears unavailable ({}). Launching may interrupt that active VALORANT session.",
+                    warning.reason
+                ))
+                .size(14)
+                .width(Length::Fill)
+            ]
+            .spacing(8)
+            .width(Length::Fill),
+            row![
+                space().width(Length::Fill),
+                button("Cancel").on_press(Message::CancelUnavailableLaunch),
+                button("Launch anyway").on_press(Message::LaunchAnyway(warning.account_id))
+            ]
+            .spacing(10)
+        ]
+        .spacing(18),
+    )
+    .padding(24)
+    .width(620)
     .style(add_account_prompt_style);
 
     opaque(

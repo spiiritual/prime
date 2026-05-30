@@ -6,6 +6,7 @@ mod shell;
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -19,12 +20,14 @@ use crate::storage::{AccountRepository, StoredState};
 use crate::updater::AvailableUpdate;
 
 use data::{
-    AccountRanksResult, CapturedAccountDraft, LoadoutResult, LoadoutSummary,
-    RefreshedProfileIdentity, StoreSummary, StorefrontResult,
+    AccountActivityCheck, AccountAvailability, AccountAvailabilityRefresh, AccountRanksResult,
+    CapturedAccountDraft, LoadoutResult, LoadoutSummary, RefreshedProfileIdentity, StoreSummary,
+    StorefrontResult,
 };
 
 const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
 const LAUNCH_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
+const ACCOUNT_AVAILABILITY_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const MAIN_PANEL_SCROLLABLE_ID: &str = "main-panel-scrollable";
 
 fn image_viewer_enabled() -> bool {
@@ -77,6 +80,13 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
         );
     }
 
+    if app.active_tab == Tab::Accounts && !app.state.accounts.is_empty() {
+        subscriptions.push(
+            iced::time::every(ACCOUNT_AVAILABILITY_REFRESH_INTERVAL)
+                .map(Message::AccountAvailabilityTimerTick),
+        );
+    }
+
     Subscription::batch(subscriptions)
 }
 
@@ -84,7 +94,9 @@ fn loading_indicator_active(app: &PrimeApp) -> bool {
     app.store_loading
         || app.loadout_loading
         || app.account_ranks_loading
+        || app.account_availability_loading
         || app.launcher_capture_in_progress
+        || app.launch_preflight_account.is_some()
         || app.launching_account.is_some()
         || app.app_update_status.is_busy()
         || image_viewer_enabled()
@@ -174,13 +186,24 @@ struct PrimeApp {
     store_loading_account: Option<AccountId>,
     loadout_loading_account: Option<AccountId>,
     account_ranks_loading: bool,
+    account_availability: HashMap<AccountId, AccountAvailability>,
+    account_availability_loading: bool,
     launcher_capture_in_progress: bool,
+    launch_preflight_account: Option<AccountId>,
+    unavailable_launch_warning: Option<UnavailableLaunchWarning>,
     launching_account: Option<AccountId>,
     launch_progress_checking: bool,
     app_update_status: AppUpdateStatus,
     image_cache_size_bytes: u64,
     loading_frame: usize,
     now: iced::time::Instant,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct UnavailableLaunchWarning {
+    account_id: AccountId,
+    display_name: String,
+    reason: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -447,6 +470,8 @@ enum Message {
     RefreshProfileIdentity(AccountId),
     ProfileIdentityLoaded(Result<RefreshedProfileIdentity, String>),
     AccountRanksLoaded(AccountRanksResult),
+    AccountAvailabilityTimerTick(iced::time::Instant),
+    AccountAvailabilitiesLoaded(AccountAvailabilityRefresh),
     StorefrontLoaded(AccountId, Result<StorefrontResult, String>),
     ShopTimerTick(iced::time::Instant),
     LoadingTick,
@@ -460,6 +485,9 @@ enum Message {
     ClearImageCache,
     ImageCacheCleared(Result<(), String>),
     LaunchAccount(AccountId),
+    LaunchPreflightChecked(AccountActivityCheck),
+    CancelUnavailableLaunch,
+    LaunchAnyway(AccountId),
     LaunchProgressTick,
     LaunchProgressChecked(Result<bool, String>),
     LaunchFinished(Result<LaunchTargetProcess, String>),

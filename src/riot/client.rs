@@ -1,8 +1,9 @@
+use reqwest::StatusCode;
 use reqwest::header::{ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, COOKIE, USER_AGENT};
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::account::Shard;
+use crate::account::{Shard, ValorantRegion};
 
 const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const USER_AGENT_VALUE: &str = concat!("prime/", env!("CARGO_PKG_VERSION"));
@@ -14,7 +15,8 @@ use super::auth::{AuthParseError, RedirectTokens, parse_redirect_tokens};
 use super::endpoints::{
     CLIENT_PLATFORM, ENTITLEMENTS_URL, HEADER_CLIENT_PLATFORM, HEADER_CLIENT_VERSION,
     HEADER_ENTITLEMENTS, PLAYER_INFO_URL, RIOT_GEO_URL, account_xp_url, content_url, contracts_url,
-    player_loadout_url, player_mmr_url, storefront_url, wallet_url,
+    current_game_player_url, party_player_url, player_loadout_url, player_mmr_url,
+    pregame_player_url, storefront_url, wallet_url,
 };
 use super::models::{
     AccountXpResponse, ContractsResponse, EntitlementResponse, GameContentResponse,
@@ -29,6 +31,12 @@ pub struct ApiCredentials {
     pub client_version: String,
     pub shard: Shard,
     pub puuid: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlayerActivityEndpointPresence {
+    Present,
+    Missing,
 }
 
 impl ApiCredentials {
@@ -267,6 +275,63 @@ impl RiotApi {
             .json()
             .await
             .map_err(RiotApiError::Http)
+    }
+
+    pub async fn current_game_player(
+        &self,
+        credentials: &ApiCredentials,
+        region: ValorantRegion,
+    ) -> Result<PlayerActivityEndpointPresence, RiotApiError> {
+        self.player_activity_presence(
+            current_game_player_url(region, credentials.shard, &credentials.puuid),
+            credentials,
+        )
+        .await
+    }
+
+    pub async fn pregame_player(
+        &self,
+        credentials: &ApiCredentials,
+        region: ValorantRegion,
+    ) -> Result<PlayerActivityEndpointPresence, RiotApiError> {
+        self.player_activity_presence(
+            pregame_player_url(region, credentials.shard, &credentials.puuid),
+            credentials,
+        )
+        .await
+    }
+
+    pub async fn party_player(
+        &self,
+        credentials: &ApiCredentials,
+        region: ValorantRegion,
+    ) -> Result<PlayerActivityEndpointPresence, RiotApiError> {
+        self.player_activity_presence(
+            party_player_url(region, credentials.shard, &credentials.puuid),
+            credentials,
+        )
+        .await
+    }
+
+    async fn player_activity_presence(
+        &self,
+        url: String,
+        credentials: &ApiCredentials,
+    ) -> Result<PlayerActivityEndpointPresence, RiotApiError> {
+        let response = self
+            .client
+            .get(url)
+            .headers(valorant_headers(credentials)?)
+            .send()
+            .await?;
+        let status = response.status();
+
+        if status == StatusCode::NOT_FOUND {
+            return Ok(PlayerActivityEndpointPresence::Missing);
+        }
+
+        response.error_for_status()?;
+        Ok(PlayerActivityEndpointPresence::Present)
     }
 }
 

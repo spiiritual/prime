@@ -4,9 +4,14 @@ use std::time::Duration;
 
 use tempfile::tempdir;
 
+use super::UnavailableLaunchWarning;
+use super::app::{
+    LaunchPreflightDecision, cancel_unavailable_launch_state, launch_preflight_decision,
+};
 use super::data::{
-    ApiIdentity, LoadoutSummary, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
-    StoreSummary, battle_pass_progress_from_responses, cache_account_api_context,
+    AccountActivity, AccountActivityProbe, AccountAvailability, ApiIdentity, LoadoutSummary,
+    StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay, StoreSummary,
+    battle_pass_progress_from_responses, cache_account_api_context, classify_account_activity,
     competitive_rank_from_mmr, format_whole_number, is_pending_launcher_capture_error,
     non_empty_path, rank_name_for_competitive_tier, require_launcher_session, weapon_category,
     weapon_order,
@@ -35,6 +40,110 @@ fn image_viewer_is_disabled_without_testing_feature() {
 #[test]
 fn image_viewer_can_be_enabled_for_testing_builds() {
     assert!(super::image_viewer_enabled());
+}
+
+#[test]
+fn account_activity_classification_uses_priority_order() {
+    assert_eq!(
+        classify_account_activity(
+            AccountActivityProbe::Present,
+            AccountActivityProbe::Present,
+            AccountActivityProbe::Present,
+        ),
+        AccountActivity::InMatch
+    );
+    assert_eq!(
+        classify_account_activity(
+            AccountActivityProbe::NotFound,
+            AccountActivityProbe::Present,
+            AccountActivityProbe::Present,
+        ),
+        AccountActivity::AgentSelect
+    );
+    assert_eq!(
+        classify_account_activity(
+            AccountActivityProbe::NotFound,
+            AccountActivityProbe::NotFound,
+            AccountActivityProbe::Present,
+        ),
+        AccountActivity::InLobby
+    );
+}
+
+#[test]
+fn account_activity_classification_treats_all_missing_as_available() {
+    assert_eq!(
+        classify_account_activity(
+            AccountActivityProbe::NotFound,
+            AccountActivityProbe::NotFound,
+            AccountActivityProbe::NotFound,
+        ),
+        AccountActivity::Available
+    );
+}
+
+#[test]
+fn account_activity_classification_treats_errors_as_unknown() {
+    assert_eq!(
+        classify_account_activity(
+            AccountActivityProbe::Failed("activity check failed".to_string()),
+            AccountActivityProbe::NotFound,
+            AccountActivityProbe::NotFound,
+        ),
+        AccountActivity::Unknown("activity check failed".to_string())
+    );
+    assert_eq!(
+        AccountAvailability::from(AccountActivity::Unknown(
+            "activity check failed".to_string()
+        ))
+        .label(),
+        "Unknown (activity check failed)"
+    );
+}
+
+#[test]
+fn launch_preflight_decision_allows_available_and_unknown_but_warns_unavailable() {
+    assert_eq!(
+        launch_preflight_decision(&AccountAvailability::Available),
+        LaunchPreflightDecision::Launch
+    );
+    assert_eq!(
+        launch_preflight_decision(&AccountAvailability::Unknown {
+            reason: "activity check failed".to_string()
+        }),
+        LaunchPreflightDecision::LaunchInconclusive
+    );
+    assert_eq!(
+        launch_preflight_decision(&AccountAvailability::Unavailable {
+            reason: "in match".to_string()
+        }),
+        LaunchPreflightDecision::WarnUnavailable
+    );
+}
+
+#[test]
+fn cancel_unavailable_launch_clears_launch_state() {
+    let account_id = AccountId::new();
+    let mut warning = Some(UnavailableLaunchWarning {
+        account_id,
+        display_name: "Main".to_string(),
+        reason: "in match".to_string(),
+    });
+    let mut preflight = Some(account_id);
+    let mut launching = Some(account_id);
+    let mut progress_checking = true;
+
+    cancel_unavailable_launch_state(
+        &mut warning,
+        &mut preflight,
+        &mut launching,
+        &mut progress_checking,
+    );
+
+    assert_eq!(warning, None);
+    assert_eq!(preflight, None);
+    assert_eq!(launching, None);
+    assert!(!progress_checking);
 }
 
 #[test]
