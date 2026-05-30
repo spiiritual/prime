@@ -21,7 +21,7 @@ use crate::riot::content::{
 use crate::riot::launcher_session::{
     CapturedLauncherSession, LauncherSessionError, apply_launcher_session_backup,
     capture_current_launcher_session, clear_existing_launcher_data_dirs, launcher_cookie_header,
-    read_backup_cookies,
+    read_backup_cookies, remove_launcher_session_backup,
 };
 use crate::riot::models::{
     AccessoryStoreOffer, BonusStoreOffer, ContractsResponse, GameContentResponse,
@@ -130,6 +130,27 @@ pub(super) async fn start_launcher_session_login(
     .await
 }
 
+pub(super) async fn start_verified_launcher_session_login(
+    account_id: AccountId,
+    backup_root: PathBuf,
+    config: LaunchConfig,
+) -> Result<CapturedLauncherSession, String> {
+    let mut captured =
+        start_launcher_session_login(account_id, backup_root.clone(), config).await?;
+    match resolve_captured_launcher_identity(&captured.backup, Shard::default()).await {
+        Ok(identity) => {
+            captured.backup.puuid = identity.puuid;
+            Ok(captured)
+        }
+        Err(error) => {
+            let _ = remove_launcher_session_backup(backup_root, account_id);
+            Err(format!(
+                "captured remembered login, but Prime could not resolve the account identity: {error}. Try again, or import a fresh redirect token from Settings."
+            ))
+        }
+    }
+}
+
 pub(super) async fn wait_for_launcher_session_capture(
     account_id: AccountId,
     backup_root: PathBuf,
@@ -191,9 +212,19 @@ pub(super) async fn start_account_capture(
     backup_root: PathBuf,
     config: LaunchConfig,
 ) -> Result<CapturedAccountDraft, String> {
-    let captured = start_launcher_session_login(account_id, backup_root, config).await?;
-    close_riot_client_after_capture().await?;
-    Ok(enrich_captured_account(captured).await)
+    let captured = start_launcher_session_login(account_id, backup_root.clone(), config).await?;
+    if let Err(error) = close_riot_client_after_capture().await {
+        let _ = remove_launcher_session_backup(backup_root, account_id);
+        return Err(error);
+    }
+
+    match enrich_captured_account(captured).await {
+        Ok(draft) => Ok(draft),
+        Err(error) => {
+            let _ = remove_launcher_session_backup(backup_root, account_id);
+            Err(error)
+        }
+    }
 }
 
 async fn close_riot_client_after_capture() -> Result<(), String> {
@@ -205,23 +236,38 @@ async fn close_riot_client_after_capture() -> Result<(), String> {
 
 pub(super) async fn enrich_captured_account(
     captured: CapturedLauncherSession,
-) -> CapturedAccountDraft {
+) -> Result<CapturedAccountDraft, String> {
     let mut draft = CapturedAccountDraft::new(captured.account_id, captured.backup);
-    let Err(error) = enrich_captured_account_identity(&mut draft).await else {
-        return draft;
-    };
-
-    draft.identity_warning = Some(format!(
-        "Captured login, but Riot identity lookup failed: {error}. Confirm the account details manually."
-    ));
-    draft
+    enrich_captured_account_identity(&mut draft)
+        .await
+        .map_err(|error| {
+            format!(
+                "captured remembered login, but Prime could not resolve the account identity: {error}. Try again, or import a fresh redirect token from Settings."
+            )
+        })?;
+    Ok(draft)
 }
 
 pub(super) async fn enrich_captured_account_identity(
     draft: &mut CapturedAccountDraft,
 ) -> Result<(), String> {
+    let identity = resolve_captured_launcher_identity(&draft.backup, draft.shard).await?;
+
+    draft.puuid = identity.puuid.clone();
+    draft.backup.puuid = identity.puuid;
+    draft.game_name = Some(identity.game_name);
+    draft.tag_line = Some(identity.tag_line);
+    draft.shard = identity.shard;
+    draft.session = Some(identity.session);
+    Ok(())
+}
+
+async fn resolve_captured_launcher_identity(
+    backup: &LauncherSessionBackup,
+    fallback_shard: Shard,
+) -> Result<CapturedLauncherIdentity, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
-    let cookies = read_backup_cookies(&draft.backup).map_err(|error| error.to_string())?;
+    let cookies = read_backup_cookies(backup).map_err(|error| error.to_string())?;
     let cookie_header = launcher_cookie_header(&cookies).map_err(|error| error.to_string())?;
     let mut session = api
         .launcher_reauth(&cookie_header)
@@ -232,11 +278,13 @@ pub(super) async fn enrich_captured_account_identity(
         .player_info(&session.access_token)
         .await
         .map_err(|error| error.to_string())?;
+    let puuid = player_info.sub.trim().to_string();
 
-    draft.puuid = player_info.sub.clone();
-    draft.game_name = Some(player_info.acct.game_name.clone());
-    draft.tag_line = Some(player_info.acct.tag_line.clone());
-    draft.shard = resolve_session_shard(&api, &session, Some(&player_info), draft.shard).await;
+    if puuid.is_empty() {
+        return Err("Riot player info did not include a PUUID".to_string());
+    }
+
+    let shard = resolve_session_shard(&api, &session, Some(&player_info), fallback_shard).await;
 
     if session
         .entitlements_token
@@ -247,8 +295,21 @@ pub(super) async fn enrich_captured_account_identity(
         session.entitlements_token = Some(entitlement.entitlements_token);
     }
 
-    draft.session = Some(session);
-    Ok(())
+    Ok(CapturedLauncherIdentity {
+        session,
+        puuid,
+        game_name: player_info.acct.game_name,
+        tag_line: player_info.acct.tag_line,
+        shard,
+    })
+}
+
+struct CapturedLauncherIdentity {
+    session: AuthSession,
+    puuid: String,
+    game_name: String,
+    tag_line: String,
+    shard: Shard,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -306,7 +367,6 @@ pub(super) struct CapturedAccountDraft {
     pub(super) tag_line: Option<String>,
     pub(super) shard: Shard,
     pub(super) session: Option<AuthSession>,
-    pub(super) identity_warning: Option<String>,
 }
 
 impl CapturedAccountDraft {
@@ -321,7 +381,6 @@ impl CapturedAccountDraft {
             tag_line: None,
             shard: Shard::default(),
             session: None,
-            identity_warning: None,
         }
     }
 

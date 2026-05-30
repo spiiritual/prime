@@ -13,7 +13,7 @@ use crate::updater::{check_for_update, download_and_prepare_update};
 use super::data::{
     cache_account_api_context, check_riot_client_window_visible, fetch_account_ranks,
     fetch_current_client_version, fetch_loadout, fetch_profile_identity, fetch_storefront,
-    launch_account, non_empty_path, start_account_capture, start_launcher_session_login,
+    launch_account, non_empty_path, start_account_capture, start_verified_launcher_session_login,
 };
 use super::{
     AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, MAIN_PANEL_SCROLLABLE_ID,
@@ -254,9 +254,8 @@ impl PrimeApp {
                             .unwrap_or_else(|| "New account".to_string());
                         self.new_username = draft.riot_id().unwrap_or_else(|| draft.puuid.clone());
                         self.new_shard = draft.shard;
-                        self.status = draft.identity_warning.clone().unwrap_or_else(|| {
-                            "Captured login. Confirm the account details to save it.".to_string()
-                        });
+                        self.status =
+                            "Captured login. Confirm the account details to save it.".to_string();
                         self.pending_account = Some(draft);
                         alert_and_focus_latest_window()
                     }
@@ -670,7 +669,9 @@ impl PrimeApp {
                 self.launcher_capture_in_progress = true;
 
                 Task::perform(
-                    async move { start_launcher_session_login(account_id, backup_root, config).await },
+                    async move {
+                        start_verified_launcher_session_login(account_id, backup_root, config).await
+                    },
                     Message::LauncherSessionLoginStarted,
                 )
             }

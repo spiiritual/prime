@@ -41,7 +41,7 @@ pub fn ready_launcher_data_dir(data_dirs: impl IntoIterator<Item = PathBuf>) -> 
             return false;
         };
 
-        cookie_value(&cookies, "ssid").is_some() && cookie_value(&cookies, "sub").is_some()
+        cookie_value(&cookies, "ssid").is_some()
     })
 }
 
@@ -64,7 +64,6 @@ pub fn capture_launcher_session_from_data_dir(
         return Err(LauncherSessionError::MissingSsid);
     }
 
-    let puuid = cookie_value(&cookies, "sub").ok_or(LauncherSessionError::MissingSub)?;
     let backup_data_dir = backup_root
         .as_ref()
         .join(account_id.to_string())
@@ -77,7 +76,9 @@ pub fn capture_launcher_session_from_data_dir(
         backup: LauncherSessionBackup {
             data_dir: backup_data_dir,
             captured_at_unix: OffsetDateTime::now_utc().unix_timestamp(),
-            puuid,
+            // Riot Client no longer persists the account PUUID in this file; the UI resolves it
+            // through launcher reauth before saving the backup to an account profile.
+            puuid: String::new(),
         },
     })
 }
@@ -388,8 +389,6 @@ pub enum LauncherSessionError {
     PrivateSettingsFormat { line: usize, reason: String },
     #[error("the Riot Client login did not include an ssid cookie; login with Remember Me enabled")]
     MissingSsid,
-    #[error("the Riot Client login did not include a sub cookie")]
-    MissingSub,
     #[error(
         "captured launcher session backup does not exist at {0}; re-capture this account's login"
     )]
@@ -498,13 +497,20 @@ rso-authenticator:
     }
 
     #[test]
-    fn captures_data_folder_backup_and_puuid() {
+    fn captures_remembered_login_data_folder_backup() {
         let account_id = AccountId::new();
         let source = tempdir().expect("source");
         let backup_root = tempdir().expect("backup");
         fs::write(
             source.path().join(PRIVATE_SETTINGS_FILE),
-            sample_private_settings(),
+            r#"
+riot-login:
+  persist:
+    session:
+      cookies:
+        - name: "ssid"
+          value: "ssid-value"
+"#,
         )
         .expect("settings");
         fs::create_dir(source.path().join("Config")).expect("nested dir");
@@ -515,7 +521,7 @@ rso-authenticator:
                 .expect("capture");
 
         assert_eq!(captured.account_id, account_id);
-        assert_eq!(captured.backup.puuid, "puuid-value");
+        assert!(captured.backup.puuid.is_empty());
         assert!(
             captured
                 .backup
@@ -534,7 +540,7 @@ rso-authenticator:
     }
 
     #[test]
-    fn ready_launcher_data_dir_requires_ssid_and_sub() {
+    fn ready_launcher_data_dir_requires_remembered_ssid() {
         let first = tempdir().expect("first");
         let second = tempdir().expect("second");
         fs::write(
@@ -544,14 +550,21 @@ riot-login:
   persist:
     session:
       cookies:
-        - name: "ssid"
-          value: "ssid-value"
+        - name: "tdid"
+          value: "tdid-value"
 "#,
         )
         .expect("first settings");
         fs::write(
             second.path().join(PRIVATE_SETTINGS_FILE),
-            sample_private_settings(),
+            r#"
+riot-login:
+  persist:
+    session:
+      cookies:
+        - name: "ssid"
+          value: "ssid-value"
+"#,
         )
         .expect("second settings");
 
