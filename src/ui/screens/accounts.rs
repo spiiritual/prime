@@ -31,7 +31,7 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     }
 
     let controls = row![
-        button("Add account").on_press(Message::AddAccount),
+        add_account_button(app),
         button("Import account").on_press_maybe(
             (!app.import_account_in_progress).then_some(Message::OpenImportAccount)
         )
@@ -76,6 +76,24 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     }
 
     content.into()
+}
+
+fn add_account_button(app: &PrimeApp) -> Element<'static, Message> {
+    let content: Element<_> = if app.launcher_capture_in_progress {
+        row![
+            compact_loading_indicator(app.loading_frame),
+            text("Capturing login...")
+        ]
+        .spacing(8)
+        .align_y(alignment::Vertical::Center)
+        .into()
+    } else {
+        text("Add account").into()
+    };
+
+    button(content)
+        .on_press_maybe((!app.launcher_capture_in_progress).then_some(Message::AddAccount))
+        .into()
 }
 
 fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, Message> {

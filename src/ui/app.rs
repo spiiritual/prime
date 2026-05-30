@@ -195,6 +195,11 @@ impl PrimeApp {
                 Task::none()
             }
             Message::AddAccount => {
+                if self.launcher_capture_in_progress {
+                    self.status = "Launcher login capture is already in progress".to_string();
+                    return Task::none();
+                }
+
                 self.show_add_account_prompt = true;
                 self.show_import_account_prompt = false;
                 self.exported_account = None;
