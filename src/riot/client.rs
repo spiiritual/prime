@@ -1,12 +1,16 @@
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, COOKIE, LOCATION};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, COOKIE, USER_AGENT};
+use serde::Deserialize;
 use thiserror::Error;
 
 use crate::account::Shard;
 
 const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const USER_AGENT_VALUE: &str = concat!("prime/", env!("CARGO_PKG_VERSION"));
+const RIOT_CLIENT_AUTHORIZATION_URL: &str = "https://auth.riotgames.com/api/v1/authorization";
+const RIOT_CLIENT_REAUTH_USER_AGENT: &str =
+    "RiotGamesApi/24.3.0.3124 rso-auth (Windows;10;;Home, x64) riot_client/0";
 
-use super::auth::{AuthParseError, COOKIE_REAUTH_URL, RedirectTokens, parse_redirect_tokens};
+use super::auth::{AuthParseError, RedirectTokens, parse_redirect_tokens};
 use super::endpoints::{
     CLIENT_PLATFORM, ENTITLEMENTS_URL, HEADER_CLIENT_PLATFORM, HEADER_CLIENT_VERSION,
     HEADER_ENTITLEMENTS, PLAYER_INFO_URL, RIOT_GEO_URL, account_xp_url, content_url, contracts_url,
@@ -52,7 +56,6 @@ impl ApiCredentials {
 #[derive(Clone)]
 pub struct RiotApi {
     client: reqwest::Client,
-    no_redirect_client: reqwest::Client,
 }
 
 impl RiotApi {
@@ -62,34 +65,39 @@ impl RiotApi {
             .timeout(HTTP_TIMEOUT)
             .user_agent(USER_AGENT_VALUE)
             .build()?;
-        let no_redirect_client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(HTTP_TIMEOUT)
-            .user_agent(USER_AGENT_VALUE)
-            .build()?;
 
-        Ok(Self {
-            client,
-            no_redirect_client,
-        })
+        Ok(Self { client })
     }
 
-    pub async fn cookie_reauth(&self, cookie_header: &str) -> Result<RedirectTokens, RiotApiError> {
+    pub async fn launcher_reauth(
+        &self,
+        cookie_header: &str,
+    ) -> Result<RedirectTokens, RiotApiError> {
         let response = self
-            .no_redirect_client
-            .get(COOKIE_REAUTH_URL)
+            .client
+            .post(RIOT_CLIENT_AUTHORIZATION_URL)
+            .header(ACCEPT, "application/json")
+            .header(CACHE_CONTROL, "no-cache")
+            .header(CONTENT_TYPE, "application/json")
             .header(COOKIE, cookie_header)
+            .header(USER_AGENT, RIOT_CLIENT_REAUTH_USER_AGENT)
+            .json(&serde_json::json!({
+                "acr_values": "",
+                "claims": "",
+                "client_id": "riot-client",
+                "code_challenge": "",
+                "code_challenge_method": "",
+                "nonce": "1",
+                "redirect_uri": "http://localhost/redirect",
+                "response_type": "token id_token",
+                "scope": "openid lol lol_region link ban account offline_access",
+            }))
             .send()
-            .await?;
-        let location = response
-            .headers()
-            .get(LOCATION)
-            .ok_or(RiotApiError::MissingRedirectLocation)?
-            .to_str()
-            .map_err(|_| RiotApiError::InvalidRedirectLocation)?
-            .to_string();
+            .await?
+            .error_for_status()?;
+        let body = response.text().await?;
 
-        parse_redirect_tokens(&location).map_err(RiotApiError::AuthParse)
+        parse_riot_client_authorization_tokens(&body)
     }
 
     pub async fn entitlement(
@@ -262,6 +270,33 @@ impl RiotApi {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct RiotClientAuthorizationResponse {
+    response: Option<RiotClientAuthorizationResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RiotClientAuthorizationResult {
+    parameters: Option<RiotClientAuthorizationParameters>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RiotClientAuthorizationParameters {
+    uri: Option<String>,
+}
+
+fn parse_riot_client_authorization_tokens(body: &str) -> Result<RedirectTokens, RiotApiError> {
+    let response: RiotClientAuthorizationResponse = serde_json::from_str(body)?;
+    let redirect_uri = response
+        .response
+        .and_then(|response| response.parameters)
+        .and_then(|parameters| parameters.uri)
+        .filter(|uri| !uri.trim().is_empty())
+        .ok_or(RiotApiError::RiotClientReauthRejected)?;
+
+    parse_redirect_tokens(&redirect_uri).map_err(RiotApiError::AuthParse)
+}
+
 pub fn valorant_headers(
     credentials: &ApiCredentials,
 ) -> Result<reqwest::header::HeaderMap, RiotApiError> {
@@ -285,11 +320,11 @@ pub enum RiotApiError {
     MissingField(&'static str),
     #[error("invalid header value: {0}")]
     Header(#[from] reqwest::header::InvalidHeaderValue),
-    #[error("cookie reauth response did not include a redirect location")]
-    MissingRedirectLocation,
-    #[error("cookie reauth redirect location header was not valid UTF-8")]
-    InvalidRedirectLocation,
-    #[error("cookie reauth redirect did not contain Riot tokens: {0}")]
+    #[error("captured Riot Client cookies were not accepted; recapture the Riot Client session")]
+    RiotClientReauthRejected,
+    #[error("Riot Client authorization response was not valid JSON: {0}")]
+    AuthResponseJson(#[from] serde_json::Error),
+    #[error("Riot authorization redirect did not contain Riot tokens: {0}")]
     AuthParse(#[from] AuthParseError),
     #[error(
         "Riot API HTTP error: {}",
@@ -333,5 +368,34 @@ mod tests {
         );
         assert_eq!(headers[HEADER_ENTITLEMENTS], "entitlement");
         assert_eq!(headers[AUTHORIZATION], "Bearer access");
+    }
+
+    #[test]
+    fn parses_riot_client_authorization_response_uri() {
+        let tokens = parse_riot_client_authorization_tokens(
+            r#"{
+                "type": "response",
+                "response": {
+                    "mode": "fragment",
+                    "parameters": {
+                        "uri": "http://localhost/redirect#access_token=access&id_token=id&expires_in=3600&token_type=Bearer&scope=openid%20account"
+                    }
+                }
+            }"#,
+        )
+        .expect("tokens");
+
+        assert_eq!(tokens.access_token, "access");
+        assert_eq!(tokens.id_token.as_deref(), Some("id"));
+        assert_eq!(tokens.expires_in_seconds, Some(3600));
+        assert_eq!(tokens.scope.as_deref(), Some("openid account"));
+    }
+
+    #[test]
+    fn rejects_riot_client_authorization_response_without_uri() {
+        let err =
+            parse_riot_client_authorization_tokens(r#"{"type":"auth"}"#).expect_err("missing uri");
+
+        assert!(matches!(err, RiotApiError::RiotClientReauthRejected));
     }
 }

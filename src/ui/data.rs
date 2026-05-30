@@ -224,7 +224,7 @@ pub(super) async fn enrich_captured_account_identity(
     let cookies = read_backup_cookies(&draft.backup).map_err(|error| error.to_string())?;
     let cookie_header = launcher_cookie_header(&cookies).map_err(|error| error.to_string())?;
     let mut session = api
-        .cookie_reauth(&cookie_header)
+        .launcher_reauth(&cookie_header)
         .await
         .map(|tokens| tokens.into_session())
         .map_err(|error| error.to_string())?;
@@ -2046,7 +2046,7 @@ pub(super) async fn fetch_profile_identity(
     account: AccountProfile,
 ) -> Result<RefreshedProfileIdentity, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
-    let session = active_api_session(&api, &account).await?;
+    let session = refreshed_api_session(&api, &account).await?;
     let player_info = api
         .player_info(&session.access_token)
         .await
@@ -2379,6 +2379,24 @@ pub(super) async fn active_api_session(
         );
     };
 
+    launcher_api_session(api, backup).await
+}
+
+pub(super) async fn refreshed_api_session(
+    api: &RiotApi,
+    account: &AccountProfile,
+) -> Result<AuthSession, String> {
+    if let Some(backup) = &account.launcher_session {
+        return launcher_api_session(api, backup).await;
+    }
+
+    active_api_session(api, account).await
+}
+
+async fn launcher_api_session(
+    api: &RiotApi,
+    backup: &LauncherSessionBackup,
+) -> Result<AuthSession, String> {
     if !backup.is_ready() {
         return Err(
             "selected account launcher session is incomplete, missing Riot private settings, or its backup folder is missing; re-capture selected login"
@@ -2388,12 +2406,12 @@ pub(super) async fn active_api_session(
 
     let cookies = read_backup_cookies(backup).map_err(|error| error.to_string())?;
     let cookie_header = launcher_cookie_header(&cookies).map_err(|error| error.to_string())?;
-    api.cookie_reauth(&cookie_header)
+    api.launcher_reauth(&cookie_header)
         .await
         .map(|tokens| tokens.into_session())
         .map_err(|error| {
             format!(
-                "launcher session reauth failed; recapture the Riot Client session or import a fresh redirect token: {error}"
+                "launcher session reauth failed: {error}. Recapture the Riot Client session or import a fresh redirect token."
             )
         })
 }
@@ -2457,6 +2475,7 @@ pub(super) fn cache_account_api_context(
 
     account.shard = identity.shard;
     account.session = Some(session);
+    account.mark_refreshed_now();
 
     match (identity.game_name, identity.tag_line) {
         (Some(game_name), Some(tag_line)) => account

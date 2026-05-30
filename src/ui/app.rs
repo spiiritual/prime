@@ -733,6 +733,7 @@ impl PrimeApp {
                             }
 
                             account.session = Some(identity.session);
+                            account.mark_refreshed_now();
                             self.status = format!("Refreshed {}", account.summary());
                             return Task::batch([self.save_task(), self.load_active_tab()]);
                         }

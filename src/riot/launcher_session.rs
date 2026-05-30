@@ -444,7 +444,7 @@ rso-authenticator:
     }
 
     #[test]
-    fn builds_cookie_reauth_header() {
+    fn builds_launcher_cookie_header() {
         let cookies = parse_private_settings_cookies(sample_private_settings()).expect("cookies");
 
         let header = launcher_cookie_header(&cookies).expect("cookie header");

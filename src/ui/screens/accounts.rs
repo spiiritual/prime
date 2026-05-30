@@ -1,5 +1,6 @@
 use iced::widget::{button, column, container, pick_list, row, space, text, text_input};
 use iced::{Color, Element, Length, Theme, alignment};
+use time::{OffsetDateTime, UtcOffset};
 
 use crate::account::{AccountId, AccountProfile, CompetitiveRank, Shard};
 
@@ -122,6 +123,11 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
         text(format!(
             "Riot shard: {} | {} | {}",
             account.shard, session_label, selected_label
+        ))
+        .size(13),
+        text(format!(
+            "Last refreshed: {}",
+            last_refreshed_label(account.last_refreshed_at_unix)
         ))
         .size(13),
     ]
@@ -305,6 +311,38 @@ fn account_menu(account_id: AccountId) -> Element<'static, Message> {
     .into()
 }
 
+fn last_refreshed_label(timestamp: Option<i64>) -> String {
+    let Some(timestamp) = timestamp else {
+        return "Never".to_string();
+    };
+    let Ok(refreshed_at) = OffsetDateTime::from_unix_timestamp(timestamp) else {
+        return "Unknown".to_string();
+    };
+    let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+
+    format_refreshed_at(refreshed_at, offset)
+}
+
+fn format_refreshed_at(refreshed_at: OffsetDateTime, offset: UtcOffset) -> String {
+    let refreshed_at = refreshed_at.to_offset(offset);
+    let hour = refreshed_at.hour();
+    let hour_12 = match hour % 12 {
+        0 => 12,
+        value => value,
+    };
+    let period = if hour < 12 { "AM" } else { "PM" };
+
+    format!(
+        "{:04}-{:02}-{:02} {}:{:02} {}",
+        refreshed_at.year(),
+        u8::from(refreshed_at.month()),
+        refreshed_at.day(),
+        hour_12,
+        refreshed_at.minute(),
+        period
+    )
+}
+
 fn account_card_style(theme: &Theme, selected: bool) -> iced::widget::container::Style {
     let mut style = iced::widget::container::bordered_box(theme);
 
@@ -333,6 +371,31 @@ fn rank_badge_style(theme: &Theme, accent: Option<Color>) -> iced::widget::conta
     }
 
     style
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_last_refreshed_time() {
+        assert_eq!(last_refreshed_label(None), "Never");
+        assert!(!last_refreshed_label(Some(1_800_000_000)).contains("UTC"));
+        assert_eq!(
+            format_refreshed_at(
+                OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap(),
+                UtcOffset::from_hms(-5, 0, 0).unwrap(),
+            ),
+            "2027-01-15 3:00 AM"
+        );
+        assert_eq!(
+            format_refreshed_at(
+                OffsetDateTime::from_unix_timestamp(1_800_032_400).unwrap(),
+                UtcOffset::UTC,
+            ),
+            "2027-01-15 5:00 PM"
+        );
+    }
 }
 
 fn level_badge_style(theme: &Theme) -> iced::widget::container::Style {
