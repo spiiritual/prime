@@ -2,7 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -238,6 +238,210 @@ impl CompetitiveRank {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccountPenaltyDuration {
+    pub ends_at_unix: Option<i64>,
+    pub games_remaining: Option<i64>,
+}
+
+impl AccountPenaltyDuration {
+    pub fn new(ends_at_unix: Option<i64>, games_remaining: Option<i64>) -> Self {
+        Self {
+            ends_at_unix,
+            games_remaining: games_remaining.filter(|games| *games > 0),
+        }
+    }
+
+    pub fn unknown() -> Self {
+        Self::default()
+    }
+
+    fn label_at(&self, now: OffsetDateTime) -> Option<String> {
+        let time_label = self.ends_at_unix.map(|ends_at_unix| {
+            let seconds = ends_at_unix.saturating_sub(now.unix_timestamp());
+
+            if seconds <= 0 {
+                "Ends soon".to_string()
+            } else {
+                format!("Ends in {}", format_penalty_duration(seconds))
+            }
+        });
+        match (time_label, self.games_remaining) {
+            (Some(time_label), Some(1)) => Some(format!("{time_label} (1 game remaining)")),
+            (Some(time_label), Some(games)) => {
+                Some(format!("{time_label} ({games} games remaining)"))
+            }
+            (Some(time_label), None) => Some(time_label),
+            (None, Some(1)) => Some("Ends after 1 game".to_string()),
+            (None, Some(games)) => Some(format!("Ends after {games} games")),
+            (None, None) => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AccountPenalty {
+    pub rating_name: Option<String>,
+    pub duration: AccountPenaltyDuration,
+}
+
+impl AccountPenalty {
+    pub fn new(rating_name: Option<String>, duration: AccountPenaltyDuration) -> Self {
+        Self {
+            rating_name: rating_name.and_then(non_empty_string),
+            duration,
+        }
+    }
+
+    fn tooltip_label_at(&self, now: OffsetDateTime) -> String {
+        let base = match self.rating_name.as_ref() {
+            Some(rating_name) => format!("Penalized: {rating_name}"),
+            None => "Penalized".to_string(),
+        };
+
+        penalty_tooltip_label(base, &self.duration, now)
+    }
+
+    fn tooltip_summary_at(&self, now: OffsetDateTime) -> String {
+        let base = match self.rating_name.as_ref() {
+            Some(rating_name) => format!("Penalized: {rating_name}"),
+            None => "Penalized".to_string(),
+        };
+
+        match self.duration.label_at(now) {
+            Some(duration_label) => format!("{base} - {duration_label}"),
+            None => base,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "status", deny_unknown_fields)]
+pub enum AccountPenaltyStatus {
+    #[default]
+    Unchecked,
+    NotPenalized,
+    Penalized {
+        penalties: Vec<AccountPenalty>,
+    },
+}
+
+impl AccountPenaltyStatus {
+    pub fn penalized(rating_name: Option<String>) -> Self {
+        Self::penalized_for(rating_name, AccountPenaltyDuration::unknown())
+    }
+
+    pub fn penalized_for(rating_name: Option<String>, duration: AccountPenaltyDuration) -> Self {
+        Self::penalized_many(vec![AccountPenalty::new(rating_name, duration)])
+    }
+
+    pub fn penalized_many(penalties: Vec<AccountPenalty>) -> Self {
+        let penalties = penalties
+            .into_iter()
+            .map(|penalty| AccountPenalty::new(penalty.rating_name, penalty.duration))
+            .collect::<Vec<_>>();
+
+        Self::Penalized {
+            penalties: if penalties.is_empty() {
+                vec![AccountPenalty::new(None, AccountPenaltyDuration::unknown())]
+            } else {
+                penalties
+            },
+        }
+    }
+
+    pub fn is_penalized(&self) -> bool {
+        matches!(self, Self::Penalized { .. })
+    }
+
+    pub fn tooltip_label(&self) -> Option<String> {
+        self.tooltip_label_at(OffsetDateTime::now_utc())
+    }
+
+    pub fn tooltip_label_at(&self, now: OffsetDateTime) -> Option<String> {
+        match self {
+            Self::Penalized { penalties } if penalties.len() == 1 => penalties
+                .first()
+                .map(|penalty| penalty.tooltip_label_at(now)),
+            Self::Penalized { penalties } => Some(
+                penalties
+                    .iter()
+                    .map(|penalty| penalty.tooltip_summary_at(now))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            ),
+            Self::Unchecked | Self::NotPenalized => None,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AccountPenaltyStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "snake_case", tag = "status", deny_unknown_fields)]
+        enum RawAccountPenaltyStatus {
+            Unchecked,
+            NotPenalized,
+            Penalized {
+                #[serde(default)]
+                penalties: Vec<AccountPenalty>,
+                rating_name: Option<String>,
+                #[serde(default)]
+                duration: AccountPenaltyDuration,
+            },
+        }
+
+        match RawAccountPenaltyStatus::deserialize(deserializer)? {
+            RawAccountPenaltyStatus::Unchecked => Ok(Self::Unchecked),
+            RawAccountPenaltyStatus::NotPenalized => Ok(Self::NotPenalized),
+            RawAccountPenaltyStatus::Penalized {
+                penalties,
+                rating_name,
+                duration,
+            } => {
+                if penalties.is_empty() {
+                    Ok(Self::penalized_for(rating_name, duration))
+                } else {
+                    Ok(Self::penalized_many(penalties))
+                }
+            }
+        }
+    }
+}
+
+fn penalty_tooltip_label(
+    base: String,
+    duration: &AccountPenaltyDuration,
+    now: OffsetDateTime,
+) -> String {
+    match duration.label_at(now) {
+        Some(duration_label) => format!("{base}\n{duration_label}"),
+        None => base,
+    }
+}
+
+fn format_penalty_duration(seconds: i64) -> String {
+    let days = seconds / 86_400;
+    let hours = (seconds % 86_400) / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let seconds = seconds % 60;
+
+    if days > 0 {
+        format!("{days}d {hours}h {minutes}m")
+    } else if hours > 0 {
+        format!("{hours}h {minutes}m {seconds}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {seconds}s")
+    } else {
+        format!("{seconds}s")
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccountProfile {
@@ -251,6 +455,8 @@ pub struct AccountProfile {
     pub session: Option<AuthSession>,
     pub launcher_session: Option<LauncherSessionBackup>,
     pub competitive_rank: Option<CompetitiveRank>,
+    #[serde(default)]
+    pub penalty_status: AccountPenaltyStatus,
     pub account_level: Option<i64>,
     #[serde(default)]
     pub last_refreshed_at_unix: Option<i64>,
@@ -279,6 +485,7 @@ impl AccountProfile {
             session: None,
             launcher_session: None,
             competitive_rank: None,
+            penalty_status: AccountPenaltyStatus::default(),
             account_level: None,
             last_refreshed_at_unix: None,
         })
@@ -562,5 +769,119 @@ mod tests {
         let rank = CompetitiveRank::new(15, "Gold 1", 42, Some("season".to_string()));
 
         assert_eq!(rank.label(), "Gold 1 - 42 RR");
+    }
+
+    #[test]
+    fn new_account_has_unchecked_penalty_status() {
+        let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+
+        assert_eq!(account.penalty_status, AccountPenaltyStatus::Unchecked);
+        assert!(!account.penalty_status.is_penalized());
+    }
+
+    #[test]
+    fn penalty_status_tooltip_uses_rating_name_when_available() {
+        assert_eq!(
+            AccountPenaltyStatus::penalized(Some("AFK".to_string())).tooltip_label(),
+            Some("Penalized: AFK".to_string())
+        );
+        assert_eq!(
+            AccountPenaltyStatus::penalized(Some("  ".to_string())).tooltip_label(),
+            Some("Penalized".to_string())
+        );
+    }
+
+    #[test]
+    fn penalty_status_tooltip_includes_duration_when_available() {
+        let now = OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+
+        assert_eq!(
+            AccountPenaltyStatus::penalized_for(
+                Some("AFK".to_string()),
+                AccountPenaltyDuration::new(Some(1_800_003_661), Some(2)),
+            )
+            .tooltip_label_at(now),
+            Some("Penalized: AFK\nEnds in 1h 1m 1s (2 games remaining)".to_string())
+        );
+        assert_eq!(
+            AccountPenaltyStatus::penalized_for(None, AccountPenaltyDuration::new(None, Some(1)),)
+                .tooltip_label_at(now),
+            Some("Penalized\nEnds after 1 game".to_string())
+        );
+    }
+
+    #[test]
+    fn penalty_status_tooltip_lists_multiple_penalties() {
+        let now = OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+
+        assert_eq!(
+            AccountPenaltyStatus::penalized_many(vec![
+                AccountPenalty::new(
+                    Some("comms".to_string()),
+                    AccountPenaltyDuration::new(Some(1_800_003_600), None),
+                ),
+                AccountPenalty::new(
+                    Some("AFK".to_string()),
+                    AccountPenaltyDuration::new(Some(1_800_007_200), Some(1)),
+                )
+            ])
+            .tooltip_label_at(now),
+            Some(
+                "Penalized: comms - Ends in 1h 0m 0s\nPenalized: AFK - Ends in 2h 0m 0s (1 game remaining)"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn penalty_status_loads_without_duration() {
+        let status: AccountPenaltyStatus = serde_json::from_value(serde_json::json!({
+            "status": "penalized",
+            "rating_name": "comms"
+        }))
+        .expect("legacy penalty status");
+
+        assert_eq!(
+            status,
+            AccountPenaltyStatus::penalized(Some("comms".to_string()))
+        );
+    }
+
+    #[test]
+    fn penalty_status_loads_current_penalty_list() {
+        let status: AccountPenaltyStatus = serde_json::from_value(serde_json::json!({
+            "status": "penalized",
+            "penalties": [
+                {
+                    "rating_name": "comms",
+                    "duration": {
+                        "ends_at_unix": 1_800_003_600i64,
+                        "games_remaining": null
+                    }
+                },
+                {
+                    "rating_name": "AFK",
+                    "duration": {
+                        "ends_at_unix": null,
+                        "games_remaining": 1
+                    }
+                }
+            ]
+        }))
+        .expect("current penalty status");
+
+        assert_eq!(
+            status,
+            AccountPenaltyStatus::penalized_many(vec![
+                AccountPenalty::new(
+                    Some("comms".to_string()),
+                    AccountPenaltyDuration::new(Some(1_800_003_600), None)
+                ),
+                AccountPenalty::new(
+                    Some("AFK".to_string()),
+                    AccountPenaltyDuration::new(None, Some(1))
+                )
+            ])
+        );
     }
 }

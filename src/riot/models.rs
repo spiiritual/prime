@@ -145,6 +145,75 @@ pub struct CompetitiveUpdate {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
+pub struct PlayerPenaltiesResponse {
+    pub subject: String,
+    pub penalties: Vec<PlayerPenalty>,
+    pub infractions: Vec<PlayerInfraction>,
+    pub version: i64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct PlayerPenalty {
+    #[serde(rename = "ID")]
+    pub id: String,
+    pub issuing_game_start_unix_millis: i64,
+    #[serde(rename = "IssuingMatchID")]
+    pub issuing_match_id: String,
+    pub expiry: Option<String>,
+    pub games_remaining: i64,
+    pub apply_to_all_platforms: bool,
+    pub apply_to_platforms: Vec<String>,
+    pub apply_to_platform_groups: Vec<String>,
+    #[serde(rename = "InfractionID")]
+    pub infraction_id: String,
+    pub origin: String,
+    pub forgiveness_ineligible: bool,
+    pub is_automated_detection: bool,
+    pub penalty_info: Option<serde_json::Value>,
+    pub delayed_penalty_effect: Option<serde_json::Value>,
+    pub game_ban_effect: Option<serde_json::Value>,
+    pub queue_delay_effect: Option<serde_json::Value>,
+    pub queue_restriction_effect: Option<QueueRestrictionEffect>,
+    pub ranked_rating_penalty_effect: Option<serde_json::Value>,
+    pub riot_restriction_effect: Option<serde_json::Value>,
+    #[serde(rename = "RMSNotifyEffect")]
+    pub rms_notify_effect: Option<serde_json::Value>,
+    pub warning_effect: Option<serde_json::Value>,
+    #[serde(rename = "XPMultiplierEffect")]
+    pub xp_multiplier_effect: Option<serde_json::Value>,
+    pub premier_restriction_effect: Option<PremierRestrictionEffect>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct QueueRestrictionEffect {
+    #[serde(rename = "QueueIDs")]
+    pub queue_ids: Vec<String>,
+    #[serde(rename = "RecordID")]
+    pub record_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct PremierRestrictionEffect {
+    pub restriction_type: String,
+    #[serde(rename = "SeasonID")]
+    pub season_id: String,
+    pub source: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
+pub struct PlayerInfraction {
+    #[serde(rename = "ID")]
+    pub id: String,
+    pub name: String,
+    pub rating_name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "PascalCase")]
 pub struct ContractsResponse {
     pub version: i64,
     pub subject: String,
@@ -748,6 +817,66 @@ mod tests {
                 .as_ref()
                 .map(|update| update.season_id.as_str()),
             Some("season-a")
+        );
+    }
+
+    #[test]
+    fn deserializes_player_penalties_response() {
+        let json = serde_json::json!({
+            "Subject": "puuid",
+            "Penalties": [{
+                "ID": "penalty-id",
+                "IssuingGameStartUnixMillis": 1_800_000_000_000i64,
+                "IssuingMatchID": "match-id",
+                "Expiry": "2099-01-01T00:00:00Z",
+                "GamesRemaining": 2,
+                "ApplyToAllPlatforms": true,
+                "ApplyToPlatforms": ["PC"],
+                "ApplyToPlatformGroups": ["riot"],
+                "InfractionID": "infraction-id",
+                "Origin": "automated",
+                "ForgivenessIneligible": false,
+                "IsAutomatedDetection": true,
+                "PenaltyInfo": {"kind": "test"},
+                "DelayedPenaltyEffect": null,
+                "GameBanEffect": null,
+                "QueueDelayEffect": null,
+                "QueueRestrictionEffect": {
+                    "QueueIDs": ["competitive"],
+                    "RecordID": "record-id"
+                },
+                "RankedRatingPenaltyEffect": null,
+                "RiotRestrictionEffect": null,
+                "RMSNotifyEffect": null,
+                "WarningEffect": null,
+                "XPMultiplierEffect": null,
+                "PremierRestrictionEffect": {
+                    "RestrictionType": "premier",
+                    "SeasonID": "season-id",
+                    "Source": "source"
+                }
+            }],
+            "Infractions": [{
+                "ID": "infraction-id",
+                "Name": "queue dodge",
+                "RatingName": "Queue Dodge"
+            }],
+            "Version": 7
+        });
+
+        let penalties: PlayerPenaltiesResponse =
+            serde_json::from_value(json).expect("penalties response");
+
+        assert_eq!(penalties.subject, "puuid");
+        assert_eq!(penalties.version, 7);
+        let queue_restriction = penalties.penalties[0]
+            .queue_restriction_effect
+            .as_ref()
+            .expect("queue restriction");
+        assert_eq!(queue_restriction.queue_ids, ["competitive"]);
+        assert_eq!(
+            penalties.infractions[0].rating_name,
+            "Queue Dodge".to_string()
         );
     }
 }

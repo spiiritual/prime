@@ -16,6 +16,7 @@ const ACCOUNT_BADGE_HEIGHT: f32 = 22.0;
 const ACCOUNT_BADGE_PADDING: [u16; 2] = [0, 8];
 const ACCOUNT_AVAILABILITY_DOT_SIZE: f32 = 12.0;
 const ACCOUNT_AVAILABILITY_DOT_TOP_PADDING: f32 = 2.0;
+const ACCOUNT_PENALTY_BADGE_SIZE: f32 = 20.0;
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     let mut account_cards = column![].spacing(12).width(Length::Fill);
@@ -119,24 +120,18 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
     } else {
         "Not selected"
     };
+    let detail_badges = row![
+        text(riot_tag).size(15),
+        level_badge(app, account),
+        rank_badge(app, account)
+    ]
+    .spacing(8)
+    .align_y(alignment::Vertical::Center);
+
     let header = row![
-        column![
-            row![
-                text(&account.display_name).size(ACCOUNT_TITLE_TEXT_SIZE),
-                account_availability_indicator(app, account)
-            ]
-            .spacing(8)
-            .align_y(alignment::Vertical::Center),
-            row![
-                text(riot_tag).size(15),
-                level_badge(app, account),
-                rank_badge(app, account)
-            ]
-            .spacing(8)
-            .align_y(alignment::Vertical::Center)
-        ]
-        .spacing(4)
-        .width(Length::Fill),
+        column![account_status_row(app, account), detail_badges]
+            .spacing(4)
+            .width(Length::Fill),
         button(text("..."))
             .style(move |theme, status| {
                 account_menu_button_style(theme, status, is_account_menu_open)
@@ -194,6 +189,21 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
         ACCOUNT_MENU_TOP_OFFSET,
         ACCOUNT_MENU_RIGHT_INSET,
     )
+}
+
+fn account_status_row<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, Message> {
+    let mut status = row![
+        text(&account.display_name).size(ACCOUNT_TITLE_TEXT_SIZE),
+        account_availability_indicator(app, account)
+    ]
+    .spacing(8)
+    .align_y(alignment::Vertical::Center);
+
+    if let Some(indicator) = penalty_indicator(account) {
+        status = status.push(indicator);
+    }
+
+    status.into()
 }
 
 fn level_badge(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Message> {
@@ -301,6 +311,24 @@ fn rank_badge<'a>(app: &PrimeApp, account: &'a AccountProfile) -> Element<'a, Me
     } else {
         neutral_rank_badge("Unavailable")
     }
+}
+
+fn penalty_indicator(account: &AccountProfile) -> Option<Element<'static, Message>> {
+    let label = account.penalty_status.tooltip_label()?;
+    let badge = container(text("!").size(13))
+        .width(ACCOUNT_PENALTY_BADGE_SIZE)
+        .height(ACCOUNT_PENALTY_BADGE_SIZE)
+        .align_x(alignment::Horizontal::Center)
+        .align_y(alignment::Vertical::Center)
+        .style(penalty_badge_style);
+    let badge = container(badge)
+        .height(ACCOUNT_TITLE_TEXT_SIZE as f32)
+        .align_y(alignment::Vertical::Center);
+    let tip = container(text(label).size(13))
+        .padding([6, 8])
+        .style(iced::widget::container::bordered_box);
+
+    Some(tooltip(badge, tip, tooltip::Position::Right).into())
 }
 
 fn rank_badge_label<'a>(
@@ -459,6 +487,18 @@ fn account_availability_dot_style(color: Color) -> iced::widget::container::Styl
     style.border.radius = iced::border::radius(ACCOUNT_AVAILABILITY_DOT_SIZE / 2.0);
     style.border.width = 1.0;
     style.border.color = Color::from_rgba8(255, 255, 255, 0.35);
+    style
+}
+
+fn penalty_badge_style(_: &Theme) -> iced::widget::container::Style {
+    let mut style = iced::widget::container::Style {
+        background: Some(Color::from_rgba8(224, 87, 92, 0.20).into()),
+        text_color: Some(Color::from_rgb8(255, 224, 224)),
+        ..Default::default()
+    };
+    style.border.radius = iced::border::radius(ACCOUNT_PENALTY_BADGE_SIZE / 2.0);
+    style.border.width = 1.0;
+    style.border.color = Color::from_rgb8(224, 87, 92);
     style
 }
 

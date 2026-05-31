@@ -16,12 +16,12 @@ use super::endpoints::{
     CLIENT_PLATFORM, ENTITLEMENTS_URL, HEADER_CLIENT_PLATFORM, HEADER_CLIENT_VERSION,
     HEADER_ENTITLEMENTS, PLAYER_INFO_URL, RIOT_GEO_URL, account_xp_url, content_url, contracts_url,
     current_game_player_url, party_player_url, player_loadout_url, player_mmr_url,
-    pregame_player_url, storefront_url, wallet_url,
+    player_penalties_url, pregame_player_url, storefront_url, wallet_url,
 };
 use super::models::{
     AccountXpResponse, ContractsResponse, EntitlementResponse, GameContentResponse,
-    PlayerInfoResponse, PlayerLoadoutResponse, PlayerMmrResponse, RiotGeoResponse,
-    StorefrontResponse, WalletResponse,
+    PlayerInfoResponse, PlayerLoadoutResponse, PlayerMmrResponse, PlayerPenaltiesResponse,
+    RiotGeoResponse, StorefrontResponse, WalletResponse,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -234,6 +234,23 @@ impl RiotApi {
 
         self.client
             .get(player_mmr_url(credentials.shard, &credentials.puuid))
+            .headers(valorant_headers(credentials)?)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await
+            .map_err(RiotApiError::Http)
+    }
+
+    pub async fn player_penalties(
+        &self,
+        credentials: &ApiCredentials,
+    ) -> Result<PlayerPenaltiesResponse, RiotApiError> {
+        credentials.validate()?;
+
+        self.client
+            .get(player_penalties_url(credentials.shard))
             .headers(valorant_headers(credentials)?)
             .send()
             .await?

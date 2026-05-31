@@ -1,7 +1,7 @@
 use iced::widget::operation;
 use iced::{Task, clipboard, window};
 
-use crate::account::{AccountId, AccountProfile, Shard};
+use crate::account::{AccountId, AccountPenaltyStatus, AccountProfile, CompetitiveRank, Shard};
 use crate::account_transfer::{export_account, import_account};
 use crate::image_cache::ImageCache;
 use crate::launch::{LaunchConfig, LaunchTargetProcess};
@@ -11,10 +11,11 @@ use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{check_for_update, download_and_prepare_update};
 
 use super::data::{
-    AccountAvailability, cache_account_api_context, check_riot_client_window_visible,
-    fetch_account_availabilities, fetch_account_availability, fetch_account_ranks,
-    fetch_current_client_version, fetch_loadout, fetch_profile_identity, fetch_storefront,
-    launch_account, non_empty_path, start_account_capture, start_verified_launcher_session_login,
+    AccountAvailability, AccountRankResult, cache_account_api_context,
+    check_riot_client_window_visible, fetch_account_availabilities, fetch_account_availability,
+    fetch_account_ranks, fetch_current_client_version, fetch_loadout, fetch_profile_identity,
+    fetch_storefront, launch_account, non_empty_path, start_account_capture,
+    start_verified_launcher_session_login,
 };
 use super::{
     AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, MAIN_PANEL_SCROLLABLE_ID,
@@ -773,15 +774,18 @@ impl PrimeApp {
                 let mut context_failures = 0usize;
 
                 for rank in result.ranks {
-                    let account_id = rank.account_id;
-                    let rank_partial = rank.rank.is_err() || rank.account_level.is_err();
-
-                    if let Err(error) = cache_account_api_context(
-                        &mut self.state,
+                    let AccountRankResult {
                         account_id,
-                        rank.session,
-                        rank.identity,
-                    ) {
+                        rank,
+                        account_level,
+                        penalty_status,
+                        session,
+                        identity,
+                    } = rank;
+
+                    if let Err(error) =
+                        cache_account_api_context(&mut self.state, account_id, session, identity)
+                    {
                         context_failures += 1;
                         self.status =
                             format!("Account details loaded, but profile update failed: {error}");
@@ -794,23 +798,18 @@ impl PrimeApp {
                         .iter_mut()
                         .find(|account| account.id == account_id)
                     {
-                        let mut account_updated = false;
+                        let update = apply_account_detail_results(
+                            account,
+                            rank,
+                            account_level,
+                            penalty_status,
+                        );
 
-                        if let Ok(competitive_rank) = rank.rank {
-                            account.competitive_rank = competitive_rank;
-                            account_updated = true;
-                        }
-
-                        if let Ok(account_level) = rank.account_level {
-                            account.account_level = Some(account_level);
-                            account_updated = true;
-                        }
-
-                        if account_updated {
+                        if update.updated {
                             updated += 1;
                         }
 
-                        if rank_partial {
+                        if update.partial {
                             partial += 1;
                         }
                     }
@@ -1610,6 +1609,39 @@ impl PrimeApp {
         };
         Task::none()
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct AccountDetailUpdate {
+    pub(super) updated: bool,
+    pub(super) partial: bool,
+}
+
+pub(super) fn apply_account_detail_results(
+    account: &mut AccountProfile,
+    rank: Result<Option<CompetitiveRank>, String>,
+    account_level: Result<i64, String>,
+    penalty_status: Result<AccountPenaltyStatus, String>,
+) -> AccountDetailUpdate {
+    let partial = rank.is_err() || account_level.is_err() || penalty_status.is_err();
+    let mut updated = false;
+
+    if let Ok(competitive_rank) = rank {
+        account.competitive_rank = competitive_rank;
+        updated = true;
+    }
+
+    if let Ok(account_level) = account_level {
+        account.account_level = Some(account_level);
+        updated = true;
+    }
+
+    if let Ok(penalty_status) = penalty_status {
+        account.penalty_status = penalty_status;
+        updated = true;
+    }
+
+    AccountDetailUpdate { updated, partial }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

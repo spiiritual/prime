@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use time::format_description::well_known::Rfc3339;
 use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time};
 
 use crate::account::{
-    AccountId, AccountProfile, AuthSession, CompetitiveRank, LauncherSessionBackup, Shard,
-    ValorantRegion,
+    AccountId, AccountPenalty, AccountPenaltyDuration, AccountPenaltyStatus, AccountProfile,
+    AuthSession, CompetitiveRank, LauncherSessionBackup, Shard, ValorantRegion,
 };
 use crate::image_cache::ImageCache;
 use crate::launch::{
@@ -27,7 +28,8 @@ use crate::riot::launcher_session::{
 use crate::riot::models::{
     AccessoryStoreOffer, BonusStoreOffer, ContractsResponse, GameContentResponse,
     GameContentSeason, MmrSeasonInfo, PlayerContract, PlayerInfoResponse, PlayerLoadoutResponse,
-    PlayerMmrResponse, StoreBundle, StoreOffer, StorefrontResponse, WalletResponse,
+    PlayerMmrResponse, PlayerPenaltiesResponse, StoreBundle, StoreOffer, StorefrontResponse,
+    WalletResponse,
 };
 use crate::storage::StoredState;
 
@@ -384,6 +386,7 @@ pub(super) struct AccountRankResult {
     pub(super) account_id: AccountId,
     pub(super) rank: Result<Option<CompetitiveRank>, String>,
     pub(super) account_level: Result<i64, String>,
+    pub(super) penalty_status: Result<AccountPenaltyStatus, String>,
     pub(super) session: AuthSession,
     pub(super) identity: ApiIdentity,
 }
@@ -1303,6 +1306,78 @@ pub(super) fn competitive_rank_from_mmr(response: &PlayerMmrResponse) -> Option<
         .iter()
         .find(|(_, season)| season_has_rank_data(season))
         .map(|(season_id, season)| competitive_rank_from_season(season_id, season))
+}
+
+pub(super) fn penalty_status_from_response(
+    response: &PlayerPenaltiesResponse,
+    now: OffsetDateTime,
+) -> AccountPenaltyStatus {
+    let mut active_penalties = Vec::new();
+
+    for penalty in &response.penalties {
+        let expiry = penalty.expiry.as_deref().and_then(parse_penalty_expiry);
+
+        if !penalty_is_active(penalty.expiry.as_deref(), expiry, now) {
+            continue;
+        }
+
+        active_penalties.push(ActivePenaltySummary {
+            penalty: AccountPenalty::new(
+                response
+                    .infractions
+                    .iter()
+                    .find(|infraction| infraction.id == penalty.infraction_id)
+                    .and_then(|infraction| non_empty_string(infraction.rating_name.clone())),
+                AccountPenaltyDuration::new(
+                    expiry.map(|expiry| expiry.unix_timestamp()),
+                    Some(penalty.games_remaining),
+                ),
+            ),
+            sort_key: penalty_duration_sort_key(expiry, penalty.games_remaining),
+        });
+    }
+
+    if active_penalties.is_empty() {
+        AccountPenaltyStatus::NotPenalized
+    } else {
+        active_penalties.sort_by_key(|penalty| penalty.sort_key);
+        AccountPenaltyStatus::penalized_many(
+            active_penalties
+                .into_iter()
+                .map(|summary| summary.penalty)
+                .collect(),
+        )
+    }
+}
+
+struct ActivePenaltySummary {
+    penalty: AccountPenalty,
+    sort_key: (i8, i64),
+}
+
+fn penalty_duration_sort_key(expiry: Option<OffsetDateTime>, games_remaining: i64) -> (i8, i64) {
+    if let Some(expiry) = expiry {
+        (0, expiry.unix_timestamp())
+    } else if games_remaining > 0 {
+        (1, games_remaining)
+    } else {
+        (2, 0)
+    }
+}
+
+fn penalty_is_active(
+    raw_expiry: Option<&str>,
+    expiry: Option<OffsetDateTime>,
+    now: OffsetDateTime,
+) -> bool {
+    match (raw_expiry, expiry) {
+        (_, Some(expiry)) => expiry > now,
+        (Some(_), None) | (None, None) => true,
+    }
+}
+
+fn parse_penalty_expiry(expiry: &str) -> Option<OffsetDateTime> {
+    OffsetDateTime::parse(expiry.trim(), &Rfc3339).ok()
 }
 
 fn competitive_rank_from_season(season_id: &str, season: &MmrSeasonInfo) -> CompetitiveRank {
@@ -2323,10 +2398,17 @@ async fn fetch_account_rank(
         .await
         .map(|response| response.progress.level)
         .map_err(|error| error.to_string());
+    let penalty_status = api
+        .player_penalties(&resolved.credentials)
+        .await
+        .map(|response| penalty_status_from_response(&response, OffsetDateTime::now_utc()))
+        .map_err(|error| error.to_string());
 
-    if let (Err(rank_error), Err(level_error)) = (&rank, &account_level) {
+    if let (Err(rank_error), Err(level_error), Err(penalty_error)) =
+        (&rank, &account_level, &penalty_status)
+    {
         return Err(format!(
-            "rank unavailable: {rank_error}; level unavailable: {level_error}"
+            "rank unavailable: {rank_error}; level unavailable: {level_error}; penalty status unavailable: {penalty_error}"
         ));
     }
 
@@ -2334,6 +2416,7 @@ async fn fetch_account_rank(
         account_id,
         rank,
         account_level,
+        penalty_status,
         session: resolved.session,
         identity: resolved.identity,
     })

@@ -53,6 +53,10 @@ pub fn player_mmr_url(shard: Shard, puuid: &str) -> String {
     format!("{}/mmr/v1/players/{puuid}", pd_base_url(shard))
 }
 
+pub fn player_penalties_url(shard: Shard) -> String {
+    format!("{}/restrictions/v3/penalties", pd_base_url(shard))
+}
+
 pub fn contracts_url(shard: Shard, puuid: &str) -> String {
     format!("{}/contracts/v1/contracts/{puuid}", pd_base_url(shard))
 }
@@ -113,6 +117,14 @@ mod tests {
         assert_eq!(
             player_mmr_url(Shard::Na, "puuid"),
             "https://pd.na.a.pvp.net/mmr/v1/players/puuid"
+        );
+    }
+
+    #[test]
+    fn builds_documented_player_penalties_url() {
+        assert_eq!(
+            player_penalties_url(Shard::Na),
+            "https://pd.na.a.pvp.net/restrictions/v3/penalties"
         );
     }
 
