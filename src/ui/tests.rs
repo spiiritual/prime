@@ -1205,6 +1205,7 @@ fn cache_account_api_context_updates_matching_account() {
         &mut state,
         account_id,
         session.clone(),
+        None,
         ApiIdentity {
             puuid: "puuid".to_string(),
             game_name: Some("Player".to_string()),
@@ -1221,6 +1222,41 @@ fn cache_account_api_context_updates_matching_account() {
 }
 
 #[test]
+fn cache_account_api_context_updates_refreshed_launcher_session() {
+    let mut state = StoredState::default();
+    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let account_id = account.id;
+    account.launcher_session = Some(LauncherSessionBackup {
+        data_dir: "old-backup".into(),
+        captured_at_unix: 100,
+        puuid: "puuid".to_string(),
+    });
+    state.push_account(account);
+    let session = AuthSession::new("access", None, None, "Bearer", Some(3600), 100);
+    let launcher_session = LauncherSessionBackup {
+        data_dir: "new-backup".into(),
+        captured_at_unix: 200,
+        puuid: "puuid".to_string(),
+    };
+
+    cache_account_api_context(
+        &mut state,
+        account_id,
+        session,
+        Some(launcher_session.clone()),
+        ApiIdentity {
+            puuid: "puuid".to_string(),
+            game_name: None,
+            tag_line: None,
+            shard: Shard::Na,
+        },
+    )
+    .expect("cache api context");
+
+    assert_eq!(state.accounts[0].launcher_session, Some(launcher_session));
+}
+
+#[test]
 fn cache_account_api_context_rejects_missing_account() {
     let mut state = StoredState::default();
     let session = AuthSession::new("access", None, None, "Bearer", Some(3600), 100);
@@ -1229,6 +1265,7 @@ fn cache_account_api_context_rejects_missing_account() {
         &mut state,
         AccountId::new(),
         session,
+        None,
         ApiIdentity {
             puuid: "puuid".to_string(),
             game_name: None,

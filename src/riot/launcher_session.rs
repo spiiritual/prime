@@ -102,6 +102,46 @@ pub fn apply_launcher_session_backup_to_dir(
     replace_dir_contents(&backup.data_dir, target_data_dir.as_ref())
 }
 
+pub fn sync_current_launcher_session_backup(
+    backup: &LauncherSessionBackup,
+) -> Result<LauncherSessionBackup, LauncherSessionError> {
+    let source_data_dir = ready_launcher_data_dir(default_data_dirs())
+        .ok_or(LauncherSessionError::PrivateSettingsNotFound)?;
+
+    sync_launcher_session_backup_from_data_dir(backup, source_data_dir)
+}
+
+pub fn sync_launcher_session_backup_from_data_dir(
+    backup: &LauncherSessionBackup,
+    source_data_dir: impl AsRef<Path>,
+) -> Result<LauncherSessionBackup, LauncherSessionError> {
+    if !backup.data_dir.exists() {
+        return Err(LauncherSessionError::BackupMissing(backup.data_dir.clone()));
+    }
+
+    let source_data_dir = source_data_dir.as_ref();
+    let settings_path = source_data_dir.join(PRIVATE_SETTINGS_FILE);
+    let settings = fs::read_to_string(&settings_path).map_err(|source| {
+        LauncherSessionError::ReadPrivateSettings {
+            path: settings_path,
+            source,
+        }
+    })?;
+    let cookies = parse_private_settings_cookies(&settings)?;
+
+    if cookie_value(&cookies, "ssid").is_none() {
+        return Err(LauncherSessionError::MissingSsid);
+    }
+
+    replace_dir_contents(source_data_dir, &backup.data_dir)?;
+
+    Ok(LauncherSessionBackup {
+        data_dir: backup.data_dir.clone(),
+        captured_at_unix: OffsetDateTime::now_utc().unix_timestamp(),
+        puuid: backup.puuid.clone(),
+    })
+}
+
 pub fn read_backup_cookies(
     backup: &LauncherSessionBackup,
 ) -> Result<Vec<LauncherCookie>, LauncherSessionError> {
@@ -124,6 +164,43 @@ pub fn read_backup_cookies(
     })?;
 
     parse_private_settings_cookies(&settings)
+}
+
+pub fn persist_refreshed_launcher_cookies(
+    backup: &LauncherSessionBackup,
+    refreshed_cookies: &[LauncherCookie],
+) -> Result<(), LauncherSessionError> {
+    if !backup.data_dir.exists() {
+        return Err(LauncherSessionError::BackupMissing(backup.data_dir.clone()));
+    }
+
+    let settings_path = backup.data_dir.join(PRIVATE_SETTINGS_FILE);
+    if !settings_path.is_file() {
+        return Err(LauncherSessionError::BackupPrivateSettingsMissing(
+            settings_path,
+        ));
+    }
+
+    let settings = fs::read_to_string(&settings_path).map_err(|source| {
+        LauncherSessionError::ReadPrivateSettings {
+            path: settings_path.clone(),
+            source,
+        }
+    })?;
+    let updated = update_private_settings_cookie_values(&settings, refreshed_cookies)?;
+    let cookies = parse_private_settings_cookies(&updated)?;
+    launcher_cookie_header(&cookies)?;
+
+    if updated != settings {
+        fs::write(&settings_path, updated).map_err(|source| {
+            LauncherSessionError::WritePrivateSettings {
+                path: settings_path,
+                source,
+            }
+        })?;
+    }
+
+    Ok(())
 }
 
 pub fn clear_existing_launcher_data_dirs() -> Result<usize, LauncherSessionError> {
@@ -155,6 +232,34 @@ pub fn launcher_cookie_header(cookies: &[LauncherCookie]) -> Result<String, Laun
     }
 
     Ok(usable.join("; "))
+}
+
+pub fn parse_set_cookie_headers<'a>(
+    headers: impl IntoIterator<Item = &'a str>,
+) -> Vec<LauncherCookie> {
+    headers
+        .into_iter()
+        .filter_map(parse_set_cookie_header)
+        .collect()
+}
+
+fn parse_set_cookie_header(header: &str) -> Option<LauncherCookie> {
+    let pair = header
+        .split_once(';')
+        .map(|(pair, _)| pair)
+        .unwrap_or(header)
+        .trim();
+    let (name, value) = pair.split_once('=')?;
+    let name = name.trim();
+
+    if name.is_empty() {
+        return None;
+    }
+
+    Some(LauncherCookie {
+        name: name.to_string(),
+        value: value.trim().to_string(),
+    })
 }
 
 pub fn parse_private_settings_cookies(
@@ -233,6 +338,181 @@ pub fn cookie_value(cookies: &[LauncherCookie], name: &str) -> Option<String> {
         .iter()
         .find(|cookie| cookie.name.eq_ignore_ascii_case(name))
         .map(|cookie| cookie.value.clone())
+}
+
+fn update_private_settings_cookie_values(
+    contents: &str,
+    refreshed_cookies: &[LauncherCookie],
+) -> Result<String, LauncherSessionError> {
+    if refreshed_cookies
+        .iter()
+        .all(|cookie| cookie.name.trim().is_empty() || cookie.value.trim().is_empty())
+    {
+        return Ok(contents.to_string());
+    }
+
+    let newline = if contents.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let trailing_newline = contents.ends_with('\n');
+    let mut lines = contents
+        .lines()
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
+        .collect::<Vec<_>>();
+    let mut cookies_indent = None;
+    let mut pending: Option<PendingCookieValueLine> = None;
+
+    for line_index in 0..lines.len() {
+        let line = lines[line_index].clone();
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if line
+            .chars()
+            .take_while(|ch| ch.is_whitespace())
+            .any(|ch| ch == '\t')
+        {
+            return Err(LauncherSessionError::PrivateSettingsFormat {
+                line: line_index + 1,
+                reason: "tabs are not valid indentation".to_string(),
+            });
+        }
+
+        let indent = line.chars().take_while(|ch| *ch == ' ').count();
+
+        if let Some(active_indent) = cookies_indent
+            && (indent < active_indent || indent == active_indent && !trimmed.starts_with("- "))
+        {
+            flush_pending_cookie_value_line(&mut lines, &mut pending, refreshed_cookies);
+            cookies_indent = None;
+        }
+
+        if cookies_indent.is_none() {
+            if yaml_key_value(trimmed)
+                .is_some_and(|(key, value)| key == "cookies" && value.is_empty())
+            {
+                cookies_indent = Some(indent);
+            }
+            continue;
+        }
+
+        let starts_new_entry = trimmed.starts_with("- ");
+        if starts_new_entry {
+            flush_pending_cookie_value_line(&mut lines, &mut pending, refreshed_cookies);
+        } else if pending
+            .as_ref()
+            .is_some_and(|pending| indent < pending.item_indent)
+        {
+            flush_pending_cookie_value_line(&mut lines, &mut pending, refreshed_cookies);
+        }
+
+        let normalized = trimmed.strip_prefix("- ").unwrap_or(trimmed);
+        let Some((key, value)) = yaml_key_value(normalized) else {
+            continue;
+        };
+
+        if !matches!(key, "name" | "value") {
+            continue;
+        }
+
+        let pending = pending.get_or_insert_with(|| PendingCookieValueLine::new(indent));
+        match key {
+            "name" if !value.is_empty() => pending.name = Some(unquote_yaml_scalar(value)),
+            "value" => pending.value_line = Some(line_index),
+            _ => {}
+        }
+    }
+
+    flush_pending_cookie_value_line(&mut lines, &mut pending, refreshed_cookies);
+
+    let mut updated = lines.join(newline);
+    if trailing_newline {
+        updated.push_str(newline);
+    }
+
+    Ok(updated)
+}
+
+fn yaml_key_value(line: &str) -> Option<(&str, &str)> {
+    let (key, value) = line.split_once(':')?;
+    Some((key.trim(), value.trim()))
+}
+
+#[derive(Default)]
+struct PendingCookieValueLine {
+    item_indent: usize,
+    name: Option<String>,
+    value_line: Option<usize>,
+}
+
+impl PendingCookieValueLine {
+    fn new(item_indent: usize) -> Self {
+        Self {
+            item_indent,
+            name: None,
+            value_line: None,
+        }
+    }
+}
+
+fn flush_pending_cookie_value_line(
+    lines: &mut [String],
+    pending: &mut Option<PendingCookieValueLine>,
+    refreshed_cookies: &[LauncherCookie],
+) {
+    let Some(pending) = pending.take() else {
+        return;
+    };
+    let (Some(name), Some(value_line)) = (pending.name, pending.value_line) else {
+        return;
+    };
+
+    let mut refreshed_value = None;
+    for cookie in refreshed_cookies {
+        if cookie.name.eq_ignore_ascii_case(&name) && !cookie.value.trim().is_empty() {
+            refreshed_value = Some(cookie.value.trim());
+        }
+    }
+
+    if let Some(value) = refreshed_value {
+        let old_value = yaml_key_value(lines[value_line].trim_start())
+            .map(|(_, old_value)| unquote_yaml_scalar(old_value))
+            .unwrap_or_default();
+
+        if old_value != value {
+            lines[value_line] = replace_yaml_value_line(&lines[value_line], value);
+        }
+    }
+}
+
+fn replace_yaml_value_line(line: &str, value: &str) -> String {
+    let indent_len = line.chars().take_while(|ch| *ch == ' ').count();
+    let indent = &line[..indent_len];
+    let trimmed = line.trim_start();
+    let key = trimmed
+        .split_once(':')
+        .map(|(key, _)| key)
+        .unwrap_or("value");
+
+    format!("{indent}{key}: {}", quote_yaml_scalar(value))
+}
+
+fn quote_yaml_scalar(value: &str) -> String {
+    let escaped = value
+        .chars()
+        .flat_map(|ch| match ch {
+            '\\' => ['\\', '\\'].into_iter().collect::<Vec<_>>(),
+            '"' => ['\\', '"'].into_iter().collect::<Vec<_>>(),
+            _ => [ch].into_iter().collect::<Vec<_>>(),
+        })
+        .collect::<String>();
+
+    format!("\"{escaped}\"")
 }
 
 pub fn default_data_dirs() -> Vec<PathBuf> {
@@ -385,6 +665,8 @@ pub enum LauncherSessionError {
     PrivateSettingsNotFound,
     #[error("failed to read Riot private settings file at {path}: {source}")]
     ReadPrivateSettings { path: PathBuf, source: io::Error },
+    #[error("failed to write Riot private settings file at {path}: {source}")]
+    WritePrivateSettings { path: PathBuf, source: io::Error },
     #[error("failed to parse Riot private settings YAML at line {line}: {reason}")]
     PrivateSettingsFormat { line: usize, reason: String },
     #[error("the Riot Client login did not include an ssid cookie; login with Remember Me enabled")]
@@ -450,6 +732,191 @@ rso-authenticator:
 
         assert!(header.contains("ssid=ssid-value"));
         assert!(header.contains("sub=puuid-value"));
+    }
+
+    #[test]
+    fn parses_set_cookie_headers_as_name_value_pairs() {
+        let cookies = parse_set_cookie_headers([
+            "ssid=new-ssid; Path=/; HttpOnly",
+            "empty=; Max-Age=0",
+            "malformed",
+            "=missing-name",
+            "ssid=latest-ssid; Secure",
+        ]);
+
+        assert_eq!(
+            cookies,
+            vec![
+                LauncherCookie {
+                    name: "ssid".to_string(),
+                    value: "new-ssid".to_string()
+                },
+                LauncherCookie {
+                    name: "empty".to_string(),
+                    value: String::new()
+                },
+                LauncherCookie {
+                    name: "ssid".to_string(),
+                    value: "latest-ssid".to_string()
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn updates_private_settings_cookie_values_without_rewriting_unrelated_yaml() {
+        let original = concat!(
+            "riot-login:\n",
+            "  persist:\n",
+            "    session:\n",
+            "      cookies:\n",
+            "        - domain: \"auth.riotgames.com\"\n",
+            "          name: \"ssid\"\n",
+            "          scope: \"rso\"\n",
+            "          value: \"old-ssid\"\n",
+            "        - domain: \"auth.riotgames.com\"\n",
+            "          name: \"sub\"\n",
+            "          value: \"old-sub\"\n",
+            "        - domain: \"auth.riotgames.com\"\n",
+            "          name: \"clid\"\n",
+            "          value: \"old-clid\"\n",
+            "rso-authenticator:\n",
+            "  tdid:\n",
+            "    name: \"ssid\"\n",
+            "    value: \"not-a-cookie-list\"\n",
+        );
+        let refreshed = vec![
+            LauncherCookie {
+                name: "ssid".to_string(),
+                value: "first-ssid".to_string(),
+            },
+            LauncherCookie {
+                name: "sub".to_string(),
+                value: String::new(),
+            },
+            LauncherCookie {
+                name: "clid".to_string(),
+                value: "new-clid".to_string(),
+            },
+            LauncherCookie {
+                name: "missing".to_string(),
+                value: "ignored".to_string(),
+            },
+            LauncherCookie {
+                name: "ssid".to_string(),
+                value: "latest-ssid".to_string(),
+            },
+        ];
+
+        let updated =
+            update_private_settings_cookie_values(original, &refreshed).expect("update cookies");
+
+        assert_eq!(
+            updated,
+            concat!(
+                "riot-login:\n",
+                "  persist:\n",
+                "    session:\n",
+                "      cookies:\n",
+                "        - domain: \"auth.riotgames.com\"\n",
+                "          name: \"ssid\"\n",
+                "          scope: \"rso\"\n",
+                "          value: \"latest-ssid\"\n",
+                "        - domain: \"auth.riotgames.com\"\n",
+                "          name: \"sub\"\n",
+                "          value: \"old-sub\"\n",
+                "        - domain: \"auth.riotgames.com\"\n",
+                "          name: \"clid\"\n",
+                "          value: \"new-clid\"\n",
+                "rso-authenticator:\n",
+                "  tdid:\n",
+                "    name: \"ssid\"\n",
+                "    value: \"not-a-cookie-list\"\n",
+            )
+        );
+    }
+
+    #[test]
+    fn persisting_refreshed_cookies_keeps_missing_ssid_invalid() {
+        let dir = tempdir().expect("backup dir");
+        fs::write(
+            dir.path().join(PRIVATE_SETTINGS_FILE),
+            r#"
+riot-login:
+  persist:
+    session:
+      cookies:
+        - name: "clid"
+          value: "old-clid"
+"#,
+        )
+        .expect("settings");
+        let backup = LauncherSessionBackup {
+            data_dir: dir.path().to_path_buf(),
+            captured_at_unix: 100,
+            puuid: "puuid-value".to_string(),
+        };
+
+        let err = persist_refreshed_launcher_cookies(
+            &backup,
+            &[LauncherCookie {
+                name: "clid".to_string(),
+                value: "new-clid".to_string(),
+            }],
+        )
+        .expect_err("missing ssid");
+
+        assert!(matches!(err, LauncherSessionError::MissingSsid));
+    }
+
+    #[test]
+    fn persisting_refreshed_cookies_keeps_settings_when_riot_returned_none() {
+        let dir = tempdir().expect("backup dir");
+        fs::write(
+            dir.path().join(PRIVATE_SETTINGS_FILE),
+            sample_private_settings(),
+        )
+        .expect("settings");
+        let backup = LauncherSessionBackup {
+            data_dir: dir.path().to_path_buf(),
+            captured_at_unix: 100,
+            puuid: "puuid-value".to_string(),
+        };
+
+        persist_refreshed_launcher_cookies(&backup, &[]).expect("persist unchanged cookies");
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join(PRIVATE_SETTINGS_FILE)).expect("settings"),
+            sample_private_settings()
+        );
+    }
+
+    #[test]
+    fn updates_cookie_entries_indented_like_riot_client_yaml() {
+        let original = concat!(
+            "riot-login:\n",
+            "    session:\n",
+            "        cookies:\n",
+            "        -   domain: \"auth.riotgames.com\"\n",
+            "            name: \"ssid\"\n",
+            "            value: \"old-ssid\"\n",
+            "        -   domain: \"auth.riotgames.com\"\n",
+            "            name: \"asid\"\n",
+            "            value: \"old-asid\"\n",
+            "    other: true\n",
+        );
+
+        let updated = update_private_settings_cookie_values(
+            original,
+            &[LauncherCookie {
+                name: "ssid".to_string(),
+                value: "new-ssid".to_string(),
+            }],
+        )
+        .expect("update cookies");
+
+        assert!(updated.contains("value: \"new-ssid\""));
+        assert!(updated.contains("value: \"old-asid\""));
     }
 
     #[test]
@@ -620,6 +1087,54 @@ riot-login:
         assert_eq!(
             fs::read_to_string(target.path().join(PRIVATE_SETTINGS_FILE)).expect("new file"),
             "new"
+        );
+    }
+
+    #[test]
+    fn syncs_live_launcher_data_back_to_backup() {
+        let source = tempdir().expect("source");
+        let backup_dir = tempdir().expect("backup");
+        fs::write(
+            source.path().join(PRIVATE_SETTINGS_FILE),
+            r#"
+riot-login:
+  persist:
+    session:
+      cookies:
+        - name: "ssid"
+          value: "live-ssid"
+        - name: "sub"
+          value: "live-puuid"
+"#,
+        )
+        .expect("settings");
+        fs::create_dir(source.path().join("Config")).expect("source nested dir");
+        fs::write(source.path().join("Config").join("state.bin"), "live")
+            .expect("source nested file");
+        fs::write(backup_dir.path().join(PRIVATE_SETTINGS_FILE), "old").expect("old settings");
+        fs::write(backup_dir.path().join("old.txt"), "old").expect("old file");
+        let backup = LauncherSessionBackup {
+            data_dir: backup_dir.path().to_path_buf(),
+            captured_at_unix: 100,
+            puuid: "account-puuid".to_string(),
+        };
+
+        let synced = sync_launcher_session_backup_from_data_dir(&backup, source.path())
+            .expect("sync backup");
+
+        assert_eq!(synced.data_dir, backup.data_dir);
+        assert_eq!(synced.puuid, "account-puuid");
+        assert!(synced.captured_at_unix >= backup.captured_at_unix);
+        assert!(!backup_dir.path().join("old.txt").exists());
+        assert_eq!(
+            fs::read_to_string(backup_dir.path().join("Config").join("state.bin"))
+                .expect("nested file"),
+            "live"
+        );
+        assert!(
+            fs::read_to_string(backup_dir.path().join(PRIVATE_SETTINGS_FILE))
+                .expect("settings")
+                .contains("live-ssid")
         );
     }
 

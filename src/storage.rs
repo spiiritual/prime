@@ -225,7 +225,6 @@ mod tests {
         let mut account =
             AccountProfile::new("Main", Some("player".to_string()), Shard::Na).expect("account");
         account.account_level = Some(123);
-        account.last_refreshed_at_unix = Some(1_800_000_000);
         let mut state = StoredState::default();
         let id = account.id;
         state.push_account(account);
@@ -237,10 +236,21 @@ mod tests {
         assert_eq!(loaded.selected_account, Some(id));
         assert_eq!(loaded.accounts[0].display_name, "Main");
         assert_eq!(loaded.accounts[0].account_level, Some(123));
-        assert_eq!(
-            loaded.accounts[0].last_refreshed_at_unix,
-            Some(1_800_000_000)
-        );
+    }
+
+    #[test]
+    fn save_drops_legacy_last_refreshed_time() {
+        let dir = tempdir().expect("temp dir");
+        let repo = AccountRepository::new(dir.path().join("accounts.json"));
+        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        account.last_refreshed_at_unix = Some(1_800_000_000);
+        let mut state = StoredState::default();
+        state.push_account(account);
+
+        repo.save(&state).expect("save");
+        let saved = fs::read_to_string(repo.path()).expect("saved json");
+
+        assert!(!saved.contains("last_refreshed_at_unix"));
     }
 
     #[test]

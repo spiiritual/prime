@@ -148,11 +148,7 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
             account.shard, session_label, selected_label
         ))
         .size(13),
-        text(format!(
-            "Last refreshed: {}",
-            last_refreshed_label(account.last_refreshed_at_unix)
-        ))
-        .size(13),
+        last_refreshed_row(app, account),
     ]
     .spacing(10)
     .width(Length::Fill);
@@ -331,6 +327,25 @@ fn penalty_indicator(account: &AccountProfile) -> Option<Element<'static, Messag
     Some(tooltip(badge, tip, tooltip::Position::Right).into())
 }
 
+fn last_refreshed_row<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, Message> {
+    if app.profile_identity_refreshing_account == Some(account.id) {
+        return row![
+            compact_loading_indicator(app.loading_frame),
+            text("Last refreshed: Refreshing...").size(13)
+        ]
+        .spacing(6)
+        .align_y(alignment::Vertical::Center)
+        .into();
+    }
+
+    text(format!(
+        "Last refreshed: {}",
+        last_refreshed_label(launcher_session_captured_at_unix(account))
+    ))
+    .size(13)
+    .into()
+}
+
 fn rank_badge_label<'a>(
     rank_name: &'a str,
     ranked_rating: i64,
@@ -419,6 +434,13 @@ fn last_refreshed_label(timestamp: Option<i64>) -> String {
     let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
 
     format_refreshed_at(refreshed_at, offset)
+}
+
+fn launcher_session_captured_at_unix(account: &AccountProfile) -> Option<i64> {
+    account
+        .launcher_session
+        .as_ref()
+        .map(|backup| backup.captured_at_unix)
 }
 
 fn format_refreshed_at(refreshed_at: OffsetDateTime, offset: UtcOffset) -> String {
@@ -524,6 +546,19 @@ mod tests {
             ),
             "2027-01-15 5:00 PM"
         );
+    }
+
+    #[test]
+    fn last_refreshed_uses_launcher_capture_time() {
+        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        account.last_refreshed_at_unix = Some(50);
+        account.launcher_session = Some(crate::account::LauncherSessionBackup {
+            data_dir: std::path::PathBuf::from("backup"),
+            captured_at_unix: 100,
+            puuid: "puuid".to_string(),
+        });
+
+        assert_eq!(launcher_session_captured_at_unix(&account), Some(100));
     }
 }
 

@@ -1,9 +1,12 @@
 use reqwest::StatusCode;
-use reqwest::header::{ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, COOKIE, USER_AGENT};
+use reqwest::header::{
+    ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, COOKIE, SET_COOKIE, USER_AGENT,
+};
 use serde::Deserialize;
 use thiserror::Error;
 
 use crate::account::{Shard, ValorantRegion};
+use crate::riot::launcher_session::{LauncherCookie, parse_set_cookie_headers};
 
 const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const USER_AGENT_VALUE: &str = concat!("prime/", env!("CARGO_PKG_VERSION"));
@@ -66,6 +69,12 @@ pub struct RiotApi {
     client: reqwest::Client,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LauncherReauth {
+    pub tokens: RedirectTokens,
+    pub refreshed_cookies: Vec<LauncherCookie>,
+}
+
 impl RiotApi {
     pub fn new() -> Result<Self, RiotApiError> {
         let client = reqwest::Client::builder()
@@ -80,7 +89,7 @@ impl RiotApi {
     pub async fn launcher_reauth(
         &self,
         cookie_header: &str,
-    ) -> Result<RedirectTokens, RiotApiError> {
+    ) -> Result<LauncherReauth, RiotApiError> {
         let response = self
             .client
             .post(RIOT_CLIENT_AUTHORIZATION_URL)
@@ -103,9 +112,20 @@ impl RiotApi {
             .send()
             .await?
             .error_for_status()?;
+        let refreshed_cookies = parse_set_cookie_headers(
+            response
+                .headers()
+                .get_all(SET_COOKIE)
+                .iter()
+                .filter_map(|value| value.to_str().ok()),
+        );
         let body = response.text().await?;
+        let tokens = parse_riot_client_authorization_tokens(&body)?;
 
-        parse_riot_client_authorization_tokens(&body)
+        Ok(LauncherReauth {
+            tokens,
+            refreshed_cookies,
+        })
     }
 
     pub async fn entitlement(

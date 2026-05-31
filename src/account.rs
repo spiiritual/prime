@@ -459,6 +459,7 @@ pub struct AccountProfile {
     pub penalty_status: AccountPenaltyStatus,
     pub account_level: Option<i64>,
     #[serde(default)]
+    #[serde(skip_serializing)]
     pub last_refreshed_at_unix: Option<i64>,
 }
 
@@ -568,10 +569,6 @@ impl AccountProfile {
         self.tag_line = non_empty_string(tag_line.into());
 
         Ok(())
-    }
-
-    pub fn mark_refreshed_now(&mut self) {
-        self.last_refreshed_at_unix = Some(OffsetDateTime::now_utc().unix_timestamp());
     }
 }
 
@@ -732,22 +729,6 @@ mod tests {
 
         assert_eq!(account.puuid.as_deref(), Some("puuid-a"));
         assert_eq!(account.riot_id().as_deref(), Some("Player#NA1"));
-    }
-
-    #[test]
-    fn new_account_has_no_last_refreshed_time() {
-        let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
-
-        assert_eq!(account.last_refreshed_at_unix, None);
-    }
-
-    #[test]
-    fn mark_refreshed_now_records_timestamp() {
-        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
-
-        account.mark_refreshed_now();
-
-        assert!(account.last_refreshed_at_unix.is_some());
     }
 
     #[test]

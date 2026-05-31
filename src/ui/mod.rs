@@ -15,14 +15,13 @@ use iced::{Size, Subscription, Theme, window};
 
 use crate::account::{AccountId, Shard};
 use crate::image_cache::ImageCache;
-use crate::launch::LaunchTargetProcess;
 use crate::storage::{AccountRepository, StoredState};
 use crate::updater::AvailableUpdate;
 
 use data::{
     AccountActivityCheck, AccountAvailability, AccountAvailabilityRefresh, AccountRanksResult,
-    CapturedAccountDraft, LoadoutResult, LoadoutSummary, RefreshedProfileIdentity, StoreSummary,
-    StorefrontResult,
+    CapturedAccountDraft, LaunchAccountResult, LoadoutResult, LoadoutSummary,
+    RefreshedProfileIdentity, StoreSummary, StorefrontResult,
 };
 
 const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
@@ -93,6 +92,7 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
 fn loading_indicator_active(app: &PrimeApp) -> bool {
     app.store_loading
         || app.loadout_loading
+        || app.profile_identity_refreshing_account.is_some()
         || app.account_ranks_loading
         || app.account_availability_loading
         || app.launcher_capture_in_progress
@@ -185,6 +185,7 @@ struct PrimeApp {
     loadout_loading: bool,
     store_loading_account: Option<AccountId>,
     loadout_loading_account: Option<AccountId>,
+    profile_identity_refreshing_account: Option<AccountId>,
     account_ranks_loading: bool,
     account_availability: HashMap<AccountId, AccountAvailability>,
     account_availability_loading: bool,
@@ -490,7 +491,7 @@ enum Message {
     LaunchAnyway(AccountId),
     LaunchProgressTick,
     LaunchProgressChecked(Result<bool, String>),
-    LaunchFinished(Result<LaunchTargetProcess, String>),
+    LaunchFinished(Result<LaunchAccountResult, String>),
     CheckForAppUpdate,
     AppUpdateChecked {
         user_requested: bool,

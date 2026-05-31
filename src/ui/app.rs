@@ -60,6 +60,7 @@ impl PrimeApp {
                 loadout_loading: false,
                 store_loading_account: None,
                 loadout_loading_account: None,
+                profile_identity_refreshing_account: None,
                 account_ranks_loading: false,
                 account_availability: Default::default(),
                 account_availability_loading: false,
@@ -725,6 +726,7 @@ impl PrimeApp {
                 self.show_import_account_prompt = false;
                 self.exported_account = None;
                 self.confirm_delete_account = None;
+                self.profile_identity_refreshing_account = Some(account_id);
                 self.status = format!("Refreshing Riot profile identity for {summary}");
                 Task::perform(
                     fetch_profile_identity(account),
@@ -732,6 +734,8 @@ impl PrimeApp {
                 )
             }
             Message::ProfileIdentityLoaded(result) => {
+                self.profile_identity_refreshing_account = None;
+
                 match result {
                     Ok(identity) => {
                         if let Some(account) = self
@@ -750,7 +754,9 @@ impl PrimeApp {
                             }
 
                             account.session = Some(identity.session);
-                            account.mark_refreshed_now();
+                            if let Some(launcher_session) = identity.launcher_session {
+                                account.launcher_session = Some(launcher_session);
+                            }
                             self.status = format!("Refreshed {}", account.summary());
                             return Task::batch([self.save_task(), self.load_active_tab()]);
                         }
@@ -780,12 +786,17 @@ impl PrimeApp {
                         account_level,
                         penalty_status,
                         session,
+                        launcher_session,
                         identity,
                     } = rank;
 
-                    if let Err(error) =
-                        cache_account_api_context(&mut self.state, account_id, session, identity)
-                    {
+                    if let Err(error) = cache_account_api_context(
+                        &mut self.state,
+                        account_id,
+                        session,
+                        launcher_session,
+                        identity,
+                    ) {
                         context_failures += 1;
                         self.status =
                             format!("Account details loaded, but profile update failed: {error}");
@@ -894,6 +905,7 @@ impl PrimeApp {
                                 &mut self.state,
                                 result.account_id,
                                 result.session,
+                                result.launcher_session,
                                 result.identity,
                             )
                             .is_ok()
@@ -908,6 +920,7 @@ impl PrimeApp {
                             &mut self.state,
                             result.account_id,
                             result.session,
+                            result.launcher_session,
                             result.identity,
                         ) {
                             self.status =
@@ -989,6 +1002,7 @@ impl PrimeApp {
                                 &mut self.state,
                                 result.account_id,
                                 result.session,
+                                result.launcher_session,
                                 result.identity,
                             )
                             .is_ok()
@@ -1003,6 +1017,7 @@ impl PrimeApp {
                             &mut self.state,
                             result.account_id,
                             result.session,
+                            result.launcher_session,
                             result.identity,
                         ) {
                             self.status =
@@ -1295,10 +1310,41 @@ impl PrimeApp {
                 Task::none()
             }
             Message::LaunchFinished(result) => match result {
-                Ok(LaunchTargetProcess::Valorant) => {
+                Ok(result) if result.target == LaunchTargetProcess::Valorant => {
+                    let launched_account = self.launching_account.take();
+                    self.launch_progress_checking = false;
+                    let mut saved_backup = false;
+
+                    if let (Some(account_id), Some(backup)) =
+                        (launched_account, result.synced_backup)
+                        && let Some(account) = self
+                            .state
+                            .accounts
+                            .iter_mut()
+                            .find(|account| account.id == account_id)
+                    {
+                        account.launcher_session = Some(backup);
+                        saved_backup = true;
+                    }
+
+                    self.status = match result.sync_warning {
+                        Some(warning) => {
+                            format!(
+                                "Could not sync launcher session after VALORANT window detected: {warning}"
+                            )
+                        }
+                        None => "VALORANT window detected; launcher session updated".to_string(),
+                    };
+
+                    if saved_backup {
+                        self.save_task()
+                    } else {
+                        Task::none()
+                    }
+                }
+                Ok(_) => {
                     self.launching_account = None;
                     self.launch_progress_checking = false;
-                    self.status = "VALORANT window detected".to_string();
                     Task::none()
                 }
                 Err(error) => {

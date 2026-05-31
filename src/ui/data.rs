@@ -14,6 +14,7 @@ use crate::launch::{
     launch_riot_login_capture, launch_target_window_is_visible, launch_valorant,
     riot_client_window_is_visible,
 };
+use crate::riot::client::LauncherReauth;
 use crate::riot::client::{ApiCredentials, PlayerActivityEndpointPresence, RiotApi};
 use crate::riot::content::{
     AccessoryCatalog, BundleCatalog, ContractCatalog, CurrencyCatalog, ResolvedAccessory,
@@ -23,7 +24,8 @@ use crate::riot::content::{
 use crate::riot::launcher_session::{
     CapturedLauncherSession, LauncherSessionError, apply_launcher_session_backup,
     capture_current_launcher_session, clear_existing_launcher_data_dirs, launcher_cookie_header,
-    read_backup_cookies, remove_launcher_session_backup,
+    persist_refreshed_launcher_cookies, read_backup_cookies, remove_launcher_session_backup,
+    sync_current_launcher_session_backup,
 };
 use crate::riot::models::{
     AccessoryStoreOffer, BonusStoreOffer, ContractsResponse, GameContentResponse,
@@ -36,11 +38,26 @@ use crate::storage::StoredState;
 pub(super) async fn launch_account(
     config: LaunchConfig,
     backup: Option<LauncherSessionBackup>,
-) -> Result<LaunchTargetProcess, String> {
+) -> Result<LaunchAccountResult, String> {
     let backup = require_launcher_session(backup)?;
 
-    prepare_account_launch(config, backup).await?;
-    wait_for_launch_target_window(VALORANT_OPEN_TIMEOUT, VALORANT_OPEN_POLL_INTERVAL).await
+    prepare_account_launch(config, backup.clone()).await?;
+    let target =
+        wait_for_launch_target_window(VALORANT_OPEN_TIMEOUT, VALORANT_OPEN_POLL_INTERVAL).await?;
+    let sync = sync_launcher_session_after_launch(backup).await;
+
+    Ok(LaunchAccountResult {
+        target,
+        synced_backup: sync.as_ref().ok().cloned(),
+        sync_warning: sync.err(),
+    })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct LaunchAccountResult {
+    pub(super) target: LaunchTargetProcess,
+    pub(super) synced_backup: Option<LauncherSessionBackup>,
+    pub(super) sync_warning: Option<String>,
 }
 
 async fn prepare_account_launch(
@@ -54,6 +71,15 @@ async fn prepare_account_launch(
     })
     .await
     .map_err(|error| format!("failed to join VALORANT launch preparation task: {error}"))?
+}
+
+async fn sync_launcher_session_after_launch(
+    backup: LauncherSessionBackup,
+) -> Result<LauncherSessionBackup, String> {
+    tokio::task::spawn_blocking(move || sync_current_launcher_session_backup(&backup))
+        .await
+        .map_err(|error| format!("failed to join launcher session backup sync task: {error}"))?
+        .map_err(|error| error.to_string())
 }
 
 pub(super) fn require_launcher_session(
@@ -310,8 +336,9 @@ async fn resolve_captured_launcher_identity(
     let mut session = api
         .launcher_reauth(&cookie_header)
         .await
-        .map(|tokens| tokens.into_session())
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())
+        .and_then(|reauth| persist_launcher_reauth_session(backup, reauth))?
+        .session;
     let player_info = api
         .player_info(&session.access_token)
         .await
@@ -354,6 +381,7 @@ struct CapturedLauncherIdentity {
 pub(super) struct RefreshedProfileIdentity {
     pub(super) account_id: AccountId,
     pub(super) session: AuthSession,
+    pub(super) launcher_session: Option<LauncherSessionBackup>,
     pub(super) puuid: String,
     pub(super) game_name: String,
     pub(super) tag_line: String,
@@ -364,6 +392,7 @@ pub(super) struct StorefrontResult {
     pub(super) account_id: AccountId,
     pub(super) summary: StoreSummary,
     pub(super) session: AuthSession,
+    pub(super) launcher_session: Option<LauncherSessionBackup>,
     pub(super) identity: ApiIdentity,
 }
 
@@ -372,6 +401,7 @@ pub(super) struct LoadoutResult {
     pub(super) account_id: AccountId,
     pub(super) summary: LoadoutSummary,
     pub(super) session: AuthSession,
+    pub(super) launcher_session: Option<LauncherSessionBackup>,
     pub(super) identity: ApiIdentity,
 }
 
@@ -388,6 +418,7 @@ pub(super) struct AccountRankResult {
     pub(super) account_level: Result<i64, String>,
     pub(super) penalty_status: Result<AccountPenaltyStatus, String>,
     pub(super) session: AuthSession,
+    pub(super) launcher_session: Option<LauncherSessionBackup>,
     pub(super) identity: ApiIdentity,
 }
 
@@ -2157,6 +2188,7 @@ pub(super) async fn fetch_storefront(
         account_id: account.id,
         summary,
         session: resolved.session,
+        launcher_session: resolved.launcher_session,
         identity: resolved.identity,
     })
 }
@@ -2203,6 +2235,7 @@ pub(super) async fn fetch_loadout(
         account_id: account.id,
         summary,
         session: resolved.session,
+        launcher_session: resolved.launcher_session,
         identity: resolved.identity,
     })
 }
@@ -2418,6 +2451,7 @@ async fn fetch_account_rank(
         account_level,
         penalty_status,
         session: resolved.session,
+        launcher_session: resolved.launcher_session,
         identity: resolved.identity,
     })
 }
@@ -2426,7 +2460,8 @@ pub(super) async fn fetch_profile_identity(
     account: AccountProfile,
 ) -> Result<RefreshedProfileIdentity, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
-    let session = refreshed_api_session(&api, &account).await?;
+    let api_session = refreshed_api_session(&api, &account).await?;
+    let session = api_session.session;
     let player_info = api
         .player_info(&session.access_token)
         .await
@@ -2435,6 +2470,7 @@ pub(super) async fn fetch_profile_identity(
     Ok(RefreshedProfileIdentity {
         account_id: account.id,
         session,
+        launcher_session: api_session.launcher_session,
         puuid: player_info.sub,
         game_name: player_info.acct.game_name,
         tag_line: player_info.acct.tag_line,
@@ -2677,7 +2713,8 @@ pub(super) async fn resolve_credentials(
     account: &AccountProfile,
     client_version: String,
 ) -> Result<ResolvedApiCredentials, String> {
-    let mut session = active_api_session(api, account).await?;
+    let api_session = active_api_session(api, account).await?;
+    let mut session = api_session.session;
     let player_info = api.player_info(&session.access_token).await.ok();
 
     let entitlements_token = entitlement_token(api, &session).await?;
@@ -2738,6 +2775,7 @@ pub(super) async fn resolve_credentials(
         },
         region,
         session,
+        launcher_session: api_session.launcher_session,
         identity,
     })
 }
@@ -2747,17 +2785,27 @@ pub(super) struct ResolvedApiCredentials {
     pub(super) credentials: ApiCredentials,
     pub(super) region: Option<ValorantRegion>,
     pub(super) session: AuthSession,
+    pub(super) launcher_session: Option<LauncherSessionBackup>,
     pub(super) identity: ApiIdentity,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ApiSession {
+    pub(super) session: AuthSession,
+    pub(super) launcher_session: Option<LauncherSessionBackup>,
 }
 
 pub(super) async fn active_api_session(
     api: &RiotApi,
     account: &AccountProfile,
-) -> Result<AuthSession, String> {
+) -> Result<ApiSession, String> {
     if let Some(session) = &account.session
         && !session.is_expired()
     {
-        return Ok(session.clone());
+        return Ok(ApiSession {
+            session: session.clone(),
+            launcher_session: None,
+        });
     }
 
     let Some(backup) = &account.launcher_session else {
@@ -2773,7 +2821,7 @@ pub(super) async fn active_api_session(
 pub(super) async fn refreshed_api_session(
     api: &RiotApi,
     account: &AccountProfile,
-) -> Result<AuthSession, String> {
+) -> Result<ApiSession, String> {
     if let Some(backup) = &account.launcher_session {
         return launcher_api_session(api, backup).await;
     }
@@ -2784,7 +2832,7 @@ pub(super) async fn refreshed_api_session(
 async fn launcher_api_session(
     api: &RiotApi,
     backup: &LauncherSessionBackup,
-) -> Result<AuthSession, String> {
+) -> Result<ApiSession, String> {
     if !backup.is_ready() {
         return Err(
             "selected account launcher session is incomplete, missing Riot private settings, or its backup folder is missing; re-capture selected login"
@@ -2794,14 +2842,31 @@ async fn launcher_api_session(
 
     let cookies = read_backup_cookies(backup).map_err(|error| error.to_string())?;
     let cookie_header = launcher_cookie_header(&cookies).map_err(|error| error.to_string())?;
-    api.launcher_reauth(&cookie_header)
-        .await
-        .map(|tokens| tokens.into_session())
-        .map_err(|error| {
+    let reauth = api.launcher_reauth(&cookie_header).await.map_err(|error| {
             format!(
                 "launcher session reauth failed: {error}. Recapture the Riot Client session or import a fresh redirect token."
             )
-        })
+        })?;
+
+    persist_launcher_reauth_session(backup, reauth)
+}
+
+fn persist_launcher_reauth_session(
+    backup: &LauncherSessionBackup,
+    reauth: LauncherReauth,
+) -> Result<ApiSession, String> {
+    persist_refreshed_launcher_cookies(backup, &reauth.refreshed_cookies).map_err(|error| {
+        format!("launcher session reauth succeeded, but Prime could not save refreshed launcher cookies: {error}")
+    })?;
+
+    Ok(ApiSession {
+        session: reauth.tokens.into_session(),
+        launcher_session: Some(LauncherSessionBackup {
+            data_dir: backup.data_dir.clone(),
+            captured_at_unix: OffsetDateTime::now_utc().unix_timestamp(),
+            puuid: backup.puuid.clone(),
+        }),
+    })
 }
 
 pub(super) async fn entitlement_token(
@@ -2851,6 +2916,7 @@ pub(super) fn cache_account_api_context(
     state: &mut StoredState,
     account_id: AccountId,
     session: AuthSession,
+    launcher_session: Option<LauncherSessionBackup>,
     identity: ApiIdentity,
 ) -> Result<(), String> {
     let Some(account) = state
@@ -2863,7 +2929,9 @@ pub(super) fn cache_account_api_context(
 
     account.shard = identity.shard;
     account.session = Some(session);
-    account.mark_refreshed_now();
+    if let Some(launcher_session) = launcher_session {
+        account.launcher_session = Some(launcher_session);
+    }
 
     match (identity.game_name, identity.tag_line) {
         (Some(game_name), Some(tag_line)) => account
