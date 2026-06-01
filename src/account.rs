@@ -404,6 +404,7 @@ impl<'de> Deserialize<'de> for AccountPenaltyStatus {
                 rating_name,
                 duration,
             } => {
+                // Compatibility: older persisted penalty state stored one rating/duration pair.
                 if penalties.is_empty() {
                     Ok(Self::penalized_for(rating_name, duration))
                 } else {
@@ -460,6 +461,7 @@ pub struct AccountProfile {
     pub account_level: Option<i64>,
     #[serde(default)]
     #[serde(skip_serializing)]
+    // Compatibility: accepted for old in-memory/test profiles, but never written.
     pub last_refreshed_at_unix: Option<i64>,
 }
 

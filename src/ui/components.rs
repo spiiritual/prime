@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget::Tree,
@@ -366,7 +366,7 @@ pub(super) fn asset_background_image<'a>(
 
 fn preview_image_button<'a>(
     image: impl Into<Element<'a, Message>>,
-    path: &PathBuf,
+    path: &Path,
     height: f32,
     title: String,
     high_res: Option<ImageViewerSource>,
@@ -380,7 +380,7 @@ fn preview_image_button<'a>(
             .height(height)
             .style(preview_image_button_style)
             .on_press(Message::OpenImageViewer(ImageViewerRequest::new(
-                path.clone(),
+                path.to_path_buf(),
                 title,
                 high_res,
             )))

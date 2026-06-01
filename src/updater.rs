@@ -42,15 +42,11 @@ pub enum UpdateStrategy {
 }
 
 pub async fn check_for_update() -> Result<Option<AvailableUpdate>, UpdateError> {
-    tokio::task::spawn_blocking(check_for_update_blocking)
-        .await?
-        .map_err(UpdateError::from)
+    tokio::task::spawn_blocking(check_for_update_blocking).await?
 }
 
 pub async fn download_and_prepare_update(update: AvailableUpdate) -> Result<(), UpdateError> {
-    tokio::task::spawn_blocking(move || download_and_prepare_update_blocking(update))
-        .await?
-        .map_err(UpdateError::from)
+    tokio::task::spawn_blocking(move || download_and_prepare_update_blocking(update)).await?
 }
 
 fn check_for_update_blocking() -> Result<Option<AvailableUpdate>, UpdateError> {

@@ -34,69 +34,37 @@ impl ValorantContentApi {
     }
 
     pub async fn skin_catalog(&self) -> Result<SkinCatalog, ContentError> {
-        let response: ApiResponse<Vec<WeaponSkin>> = self
-            .client
-            .get(WEAPON_SKINS_URL)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
+        let skins = self
+            .content_data::<Vec<WeaponSkin>>(WEAPON_SKINS_URL)
             .await?;
         let tiers = self.content_tier_catalog().await?;
 
-        Ok(SkinCatalog::from_skins_and_tiers(response.data, &tiers))
+        Ok(SkinCatalog::from_skins_and_tiers(skins, &tiers))
     }
 
     pub async fn weapon_catalog(&self) -> Result<WeaponCatalog, ContentError> {
-        let response: ApiResponse<Vec<Weapon>> = self
-            .client
-            .get(WEAPONS_URL)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-
-        Ok(WeaponCatalog::from_weapons(response.data))
+        Ok(WeaponCatalog::from_weapons(
+            self.content_data::<Vec<Weapon>>(WEAPONS_URL).await?,
+        ))
     }
 
     pub async fn currency_catalog(&self) -> Result<CurrencyCatalog, ContentError> {
-        let response: ApiResponse<Vec<Currency>> = self
-            .client
-            .get(CURRENCIES_URL)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-
-        Ok(CurrencyCatalog::from_currencies(response.data))
+        Ok(CurrencyCatalog::from_currencies(
+            self.content_data::<Vec<Currency>>(CURRENCIES_URL).await?,
+        ))
     }
 
     pub async fn bundle_catalog(&self) -> Result<BundleCatalog, ContentError> {
-        let response: ApiResponse<Vec<Bundle>> = self
-            .client
-            .get(BUNDLES_URL)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-
-        Ok(BundleCatalog::from_bundles(response.data))
+        Ok(BundleCatalog::from_bundles(
+            self.content_data::<Vec<Bundle>>(BUNDLES_URL).await?,
+        ))
     }
 
     pub async fn content_tier_catalog(&self) -> Result<ContentTierCatalog, ContentError> {
-        let response: ApiResponse<Vec<ContentTier>> = self
-            .client
-            .get(CONTENT_TIERS_URL)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-
-        Ok(ContentTierCatalog::from_tiers(response.data))
+        Ok(ContentTierCatalog::from_tiers(
+            self.content_data::<Vec<ContentTier>>(CONTENT_TIERS_URL)
+                .await?,
+        ))
     }
 
     pub async fn accessory_catalog(&self) -> Result<AccessoryCatalog, ContentError> {
@@ -126,16 +94,10 @@ impl ValorantContentApi {
     }
 
     pub async fn client_version(&self) -> Result<String, ContentError> {
-        let response: ApiResponse<ValorantVersion> = self
-            .client
-            .get(VERSION_URL)
-            .send()
+        Ok(self
+            .content_data::<ValorantVersion>(VERSION_URL)
             .await?
-            .error_for_status()?
-            .json()
-            .await?;
-
-        Ok(response.data.riot_client_version)
+            .riot_client_version)
     }
 
     async fn content_data<T>(&self, url: &str) -> Result<T, ContentError>

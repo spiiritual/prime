@@ -524,44 +524,6 @@ fn penalty_badge_style(_: &Theme) -> iced::widget::container::Style {
     style
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn formats_last_refreshed_time() {
-        assert_eq!(last_refreshed_label(None), "Never");
-        assert!(!last_refreshed_label(Some(1_800_000_000)).contains("UTC"));
-        assert_eq!(
-            format_refreshed_at(
-                OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap(),
-                UtcOffset::from_hms(-5, 0, 0).unwrap(),
-            ),
-            "2027-01-15 3:00 AM"
-        );
-        assert_eq!(
-            format_refreshed_at(
-                OffsetDateTime::from_unix_timestamp(1_800_032_400).unwrap(),
-                UtcOffset::UTC,
-            ),
-            "2027-01-15 5:00 PM"
-        );
-    }
-
-    #[test]
-    fn last_refreshed_uses_launcher_capture_time() {
-        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
-        account.last_refreshed_at_unix = Some(50);
-        account.launcher_session = Some(crate::account::LauncherSessionBackup {
-            data_dir: std::path::PathBuf::from("backup"),
-            captured_at_unix: 100,
-            puuid: "puuid".to_string(),
-        });
-
-        assert_eq!(launcher_session_captured_at_unix(&account), Some(100));
-    }
-}
-
 fn level_badge_style(theme: &Theme) -> iced::widget::container::Style {
     let mut style = iced::widget::container::bordered_box(theme);
     let accent = Color::from_rgb8(95, 176, 224);
@@ -619,4 +581,42 @@ fn account_menu_button_style(
     }
 
     iced::widget::button::secondary(theme, status)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_last_refreshed_time() {
+        assert_eq!(last_refreshed_label(None), "Never");
+        assert!(!last_refreshed_label(Some(1_800_000_000)).contains("UTC"));
+        assert_eq!(
+            format_refreshed_at(
+                OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap(),
+                UtcOffset::from_hms(-5, 0, 0).unwrap(),
+            ),
+            "2027-01-15 3:00 AM"
+        );
+        assert_eq!(
+            format_refreshed_at(
+                OffsetDateTime::from_unix_timestamp(1_800_032_400).unwrap(),
+                UtcOffset::UTC,
+            ),
+            "2027-01-15 5:00 PM"
+        );
+    }
+
+    #[test]
+    fn last_refreshed_uses_launcher_capture_time() {
+        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        account.last_refreshed_at_unix = Some(50);
+        account.launcher_session = Some(crate::account::LauncherSessionBackup {
+            data_dir: std::path::PathBuf::from("backup"),
+            captured_at_unix: 100,
+            puuid: "puuid".to_string(),
+        });
+
+        assert_eq!(launcher_session_captured_at_unix(&account), Some(100));
+    }
 }

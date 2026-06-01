@@ -626,7 +626,7 @@ mod tests {
         assert!(matches!(
             err,
             AccountTransferError::UnsupportedLauncherPath(path)
-                if path == PathBuf::from("../escape.txt")
+                if path == std::path::Path::new("../escape.txt")
         ));
     }
 
@@ -688,7 +688,7 @@ mod tests {
         assert!(matches!(
             err,
             AccountTransferError::IncompleteImportedLauncherSession(path)
-                if path == PathBuf::from(PRIVATE_SETTINGS_FILE)
+                if path == std::path::Path::new(PRIVATE_SETTINGS_FILE)
         ));
         assert!(!import_root.path().join(account_id.to_string()).exists());
         assert!(

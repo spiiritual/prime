@@ -2,7 +2,7 @@ use reqwest::StatusCode;
 use reqwest::header::{
     ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, COOKIE, SET_COOKIE, USER_AGENT,
 };
-use serde::Deserialize;
+use serde::{Deserialize, de::DeserializeOwned};
 use thiserror::Error;
 
 use crate::account::{Shard, ValorantRegion};
@@ -181,113 +181,96 @@ impl RiotApi {
         &self,
         credentials: &ApiCredentials,
     ) -> Result<StorefrontResponse, RiotApiError> {
-        credentials.validate()?;
-
-        self.client
-            .post(storefront_url(credentials.shard, &credentials.puuid))
-            .headers(valorant_headers(credentials)?)
-            .json(&serde_json::json!({}))
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await
-            .map_err(RiotApiError::Http)
+        self.post_valorant_json(
+            storefront_url(credentials.shard, &credentials.puuid),
+            credentials,
+        )
+        .await
     }
 
     pub async fn wallet(
         &self,
         credentials: &ApiCredentials,
     ) -> Result<WalletResponse, RiotApiError> {
-        credentials.validate()?;
-
-        self.client
-            .get(wallet_url(credentials.shard, &credentials.puuid))
-            .headers(valorant_headers(credentials)?)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await
-            .map_err(RiotApiError::Http)
+        self.get_valorant_json(
+            wallet_url(credentials.shard, &credentials.puuid),
+            credentials,
+        )
+        .await
     }
 
     pub async fn player_loadout(
         &self,
         credentials: &ApiCredentials,
     ) -> Result<PlayerLoadoutResponse, RiotApiError> {
-        credentials.validate()?;
-
-        self.client
-            .get(player_loadout_url(credentials.shard, &credentials.puuid))
-            .headers(valorant_headers(credentials)?)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await
-            .map_err(RiotApiError::Http)
+        self.get_valorant_json(
+            player_loadout_url(credentials.shard, &credentials.puuid),
+            credentials,
+        )
+        .await
     }
 
     pub async fn account_xp(
         &self,
         credentials: &ApiCredentials,
     ) -> Result<AccountXpResponse, RiotApiError> {
-        credentials.validate()?;
-
-        self.client
-            .get(account_xp_url(credentials.shard, &credentials.puuid))
-            .headers(valorant_headers(credentials)?)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await
-            .map_err(RiotApiError::Http)
+        self.get_valorant_json(
+            account_xp_url(credentials.shard, &credentials.puuid),
+            credentials,
+        )
+        .await
     }
 
     pub async fn player_mmr(
         &self,
         credentials: &ApiCredentials,
     ) -> Result<PlayerMmrResponse, RiotApiError> {
-        credentials.validate()?;
-
-        self.client
-            .get(player_mmr_url(credentials.shard, &credentials.puuid))
-            .headers(valorant_headers(credentials)?)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await
-            .map_err(RiotApiError::Http)
+        self.get_valorant_json(
+            player_mmr_url(credentials.shard, &credentials.puuid),
+            credentials,
+        )
+        .await
     }
 
     pub async fn player_penalties(
         &self,
         credentials: &ApiCredentials,
     ) -> Result<PlayerPenaltiesResponse, RiotApiError> {
-        credentials.validate()?;
-
-        self.client
-            .get(player_penalties_url(credentials.shard))
-            .headers(valorant_headers(credentials)?)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
+        self.get_valorant_json(player_penalties_url(credentials.shard), credentials)
             .await
-            .map_err(RiotApiError::Http)
     }
 
     pub async fn contracts(
         &self,
         credentials: &ApiCredentials,
     ) -> Result<ContractsResponse, RiotApiError> {
+        self.get_valorant_json(
+            contracts_url(credentials.shard, &credentials.puuid),
+            credentials,
+        )
+        .await
+    }
+
+    pub async fn game_content(
+        &self,
+        credentials: &ApiCredentials,
+    ) -> Result<GameContentResponse, RiotApiError> {
+        self.get_valorant_json(content_url(credentials.shard), credentials)
+            .await
+    }
+
+    async fn get_valorant_json<T>(
+        &self,
+        url: String,
+        credentials: &ApiCredentials,
+    ) -> Result<T, RiotApiError>
+    where
+        T: DeserializeOwned,
+    {
         credentials.validate()?;
 
         self.client
-            .get(contracts_url(credentials.shard, &credentials.puuid))
+            .get(url)
             .headers(valorant_headers(credentials)?)
             .send()
             .await?
@@ -297,15 +280,20 @@ impl RiotApi {
             .map_err(RiotApiError::Http)
     }
 
-    pub async fn game_content(
+    async fn post_valorant_json<T>(
         &self,
+        url: String,
         credentials: &ApiCredentials,
-    ) -> Result<GameContentResponse, RiotApiError> {
+    ) -> Result<T, RiotApiError>
+    where
+        T: DeserializeOwned,
+    {
         credentials.validate()?;
 
         self.client
-            .get(content_url(credentials.shard))
+            .post(url)
             .headers(valorant_headers(credentials)?)
+            .json(&serde_json::json!({}))
             .send()
             .await?
             .error_for_status()?

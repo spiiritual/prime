@@ -211,18 +211,18 @@ fn offer_price_line(offer: &StoreOfferDisplay) -> Element<'_, Message> {
         return text("Price unavailable").size(14).into();
     };
 
-    if let Some(original_price) = &offer.original_price {
-        if original_price != price {
-            return rich_text::<(), Message, Theme, iced::Renderer>([
-                span(original_price.label())
-                    .strikethrough(true)
-                    .color(Color::from_rgb8(158, 164, 176)),
-                span(" "),
-                span(price.label()).color(Color::WHITE),
-            ])
-            .size(14)
-            .into();
-        }
+    if let Some(original_price) = &offer.original_price
+        && original_price != price
+    {
+        return rich_text::<(), Message, Theme, iced::Renderer>([
+            span(original_price.label())
+                .strikethrough(true)
+                .color(Color::from_rgb8(158, 164, 176)),
+            span(" "),
+            span(price.label()).color(Color::WHITE),
+        ])
+        .size(14)
+        .into();
     }
 
     text(price.label()).size(14).into()

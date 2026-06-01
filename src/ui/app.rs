@@ -130,12 +130,7 @@ impl PrimeApp {
             Message::TabSelected(tab) => {
                 self.active_tab = tab;
                 self.image_viewer = None;
-                self.account_switcher_open = false;
-                self.open_account_menu = None;
-                self.show_add_account_prompt = false;
-                self.show_import_account_prompt = false;
-                self.exported_account = None;
-                self.confirm_delete_account = None;
+                self.close_account_surfaces();
                 self.unavailable_launch_warning = None;
                 Task::batch([
                     self.load_active_tab(),
@@ -158,11 +153,7 @@ impl PrimeApp {
                     self.account_switcher_open = false;
                 } else {
                     self.account_switcher_open = !self.account_switcher_open;
-                    self.open_account_menu = None;
-                    self.show_add_account_prompt = false;
-                    self.show_import_account_prompt = false;
-                    self.exported_account = None;
-                    self.confirm_delete_account = None;
+                    self.close_account_action_surfaces();
                 }
 
                 Task::none()
@@ -174,16 +165,10 @@ impl PrimeApp {
                     return Task::none();
                 }
 
-                self.account_switcher_open = false;
                 self.image_viewer = None;
-                self.open_account_menu = None;
-                self.show_add_account_prompt = false;
-                self.show_import_account_prompt = false;
-                self.exported_account = None;
-                self.confirm_delete_account = None;
+                self.close_account_surfaces();
                 self.unavailable_launch_warning = None;
-                self.store_summary = None;
-                self.loadout_summary = None;
+                self.clear_selected_account_views();
                 self.status = self
                     .state
                     .selected_account()
@@ -209,12 +194,8 @@ impl PrimeApp {
                     return Task::none();
                 }
 
+                self.close_account_surfaces();
                 self.show_add_account_prompt = true;
-                self.show_import_account_prompt = false;
-                self.exported_account = None;
-                self.account_switcher_open = false;
-                self.open_account_menu = None;
-                self.confirm_delete_account = None;
                 self.status =
                     "Before Riot Client opens, confirm that you will tick Stay signed in."
                         .to_string();
@@ -233,13 +214,8 @@ impl PrimeApp {
                     ..LaunchConfig::default()
                 };
                 let backup_root = self.repo.launcher_backups_dir();
-                self.show_add_account_prompt = false;
-                self.show_import_account_prompt = false;
-                self.exported_account = None;
                 self.pending_account = None;
-                self.account_switcher_open = false;
-                self.open_account_menu = None;
-                self.confirm_delete_account = None;
+                self.close_account_surfaces();
                 self.new_display_name.clear();
                 self.new_username.clear();
                 self.status =
@@ -339,12 +315,7 @@ impl PrimeApp {
                 }
 
                 self.pending_account = None;
-                self.account_switcher_open = false;
-                self.open_account_menu = None;
-                self.show_add_account_prompt = false;
-                self.show_import_account_prompt = false;
-                self.exported_account = None;
-                self.confirm_delete_account = None;
+                self.close_account_surfaces();
                 self.new_display_name.clear();
                 self.new_username.clear();
                 self.status = "Discarded captured account draft".to_string();
@@ -382,12 +353,7 @@ impl PrimeApp {
                 let account_id = account.id;
                 let display_name = account.display_name.clone();
                 let summary = account.summary();
-                self.account_switcher_open = false;
-                self.open_account_menu = None;
-                self.show_add_account_prompt = false;
-                self.show_import_account_prompt = false;
-                self.confirm_delete_account = None;
-                self.exported_account = None;
+                self.close_account_surfaces();
                 self.status = format!("Exporting {summary}");
 
                 Task::perform(
@@ -429,12 +395,8 @@ impl PrimeApp {
                 Task::none()
             }
             Message::OpenImportAccount => {
+                self.close_account_surfaces();
                 self.show_import_account_prompt = true;
-                self.show_add_account_prompt = false;
-                self.exported_account = None;
-                self.account_switcher_open = false;
-                self.open_account_menu = None;
-                self.confirm_delete_account = None;
                 self.status = "Paste an account export to import it".to_string();
                 Task::none()
             }
@@ -518,8 +480,7 @@ impl PrimeApp {
                         self.state.select_account(account_id);
                         self.show_import_account_prompt = false;
                         self.import_account_input.clear();
-                        self.store_summary = None;
-                        self.loadout_summary = None;
+                        self.clear_selected_account_views();
                         self.status = format!("Imported {summary}{id_note}");
                         return Task::batch([self.save_task(), self.load_active_tab()]);
                     }
@@ -532,19 +493,10 @@ impl PrimeApp {
             }
             Message::RequestDeleteAccount(id) => {
                 if self.state.accounts.iter().any(|account| account.id == id) {
-                    self.account_switcher_open = false;
-                    self.open_account_menu = None;
-                    self.show_add_account_prompt = false;
-                    self.show_import_account_prompt = false;
-                    self.exported_account = None;
+                    self.close_account_surfaces();
                     self.confirm_delete_account = Some(id);
                 } else {
-                    self.account_switcher_open = false;
-                    self.open_account_menu = None;
-                    self.show_add_account_prompt = false;
-                    self.show_import_account_prompt = false;
-                    self.exported_account = None;
-                    self.confirm_delete_account = None;
+                    self.close_account_surfaces();
                     self.status = "Account profile no longer exists".to_string();
                 }
 
@@ -594,8 +546,7 @@ impl PrimeApp {
                 self.confirm_delete_account = None;
 
                 if was_selected {
-                    self.store_summary = None;
-                    self.loadout_summary = None;
+                    self.clear_selected_account_views();
                 }
 
                 self.status = format!("Deleted {}", account.summary());
@@ -675,11 +626,7 @@ impl PrimeApp {
                 };
                 let backup_root = self.repo.launcher_backups_dir();
                 let summary = account.summary();
-                self.account_switcher_open = false;
-                self.open_account_menu = None;
-                self.show_import_account_prompt = false;
-                self.exported_account = None;
-                self.confirm_delete_account = None;
+                self.close_account_surfaces();
                 self.status = format!(
                     "Opening Riot Client and waiting for remembered login capture for {summary}"
                 );
@@ -721,11 +668,7 @@ impl PrimeApp {
                 };
 
                 let summary = account.summary();
-                self.account_switcher_open = false;
-                self.open_account_menu = None;
-                self.show_import_account_prompt = false;
-                self.exported_account = None;
-                self.confirm_delete_account = None;
+                self.close_account_surfaces();
                 self.profile_identity_refreshing_account = Some(account_id);
                 self.status = format!("Refreshing Riot profile identity for {summary}");
                 Task::perform(
@@ -1172,12 +1115,7 @@ impl PrimeApp {
 
                 let summary = account.summary();
 
-                self.account_switcher_open = false;
-                self.open_account_menu = None;
-                self.show_add_account_prompt = false;
-                self.show_import_account_prompt = false;
-                self.exported_account = None;
-                self.confirm_delete_account = None;
+                self.close_account_surfaces();
                 self.unavailable_launch_warning = None;
                 self.launch_preflight_account = Some(id);
                 self.status = format!("Checking availability for {summary}");
@@ -1434,6 +1372,24 @@ impl PrimeApp {
         }
     }
 
+    fn close_account_action_surfaces(&mut self) {
+        self.open_account_menu = None;
+        self.show_add_account_prompt = false;
+        self.show_import_account_prompt = false;
+        self.exported_account = None;
+        self.confirm_delete_account = None;
+    }
+
+    fn close_account_surfaces(&mut self) {
+        self.account_switcher_open = false;
+        self.close_account_action_surfaces();
+    }
+
+    fn clear_selected_account_views(&mut self) {
+        self.store_summary = None;
+        self.loadout_summary = None;
+    }
+
     fn load_active_tab(&mut self) -> Task<Message> {
         match self.active_tab {
             Tab::Accounts => Task::batch([
@@ -1545,15 +1501,9 @@ impl PrimeApp {
         let backup = account.launcher_session.clone();
 
         self.state.select_account(id);
-        self.account_switcher_open = false;
-        self.open_account_menu = None;
-        self.show_add_account_prompt = false;
-        self.show_import_account_prompt = false;
-        self.exported_account = None;
-        self.confirm_delete_account = None;
+        self.close_account_surfaces();
         self.unavailable_launch_warning = None;
-        self.store_summary = None;
-        self.loadout_summary = None;
+        self.clear_selected_account_views();
         self.launching_account = Some(id);
         self.launch_progress_checking = false;
         self.status = status;
