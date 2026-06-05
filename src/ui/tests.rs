@@ -646,6 +646,110 @@ fn penalty_status_includes_all_active_penalties() {
     );
 }
 
+#[test]
+fn penalty_status_uses_premier_effect_in_display_name() {
+    let now = time::OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+    let response: PlayerPenaltiesResponse = serde_json::from_value(serde_json::json!({
+        "Subject": "puuid",
+        "Penalties": [{
+            "ID": "penalty-id",
+            "IssuingGameStartUnixMillis": 1_800_000_000_000i64,
+            "IssuingMatchID": "match-id",
+            "Expiry": "2027-02-01T00:00:00Z",
+            "GamesRemaining": 0,
+            "ApplyToAllPlatforms": true,
+            "ApplyToPlatforms": ["PC"],
+            "ApplyToPlatformGroups": ["riot"],
+            "InfractionID": "infraction-id",
+            "Origin": "automated",
+            "ForgivenessIneligible": false,
+            "IsAutomatedDetection": true,
+            "PenaltyInfo": null,
+            "DelayedPenaltyEffect": null,
+            "GameBanEffect": null,
+            "QueueDelayEffect": null,
+            "QueueRestrictionEffect": null,
+            "RankedRatingPenaltyEffect": null,
+            "RiotRestrictionEffect": null,
+            "RMSNotifyEffect": null,
+            "WarningEffect": null,
+            "XPMultiplierEffect": null,
+            "PremierRestrictionEffect": {
+                "RestrictionType": "DISQUALIFIED",
+                "SeasonID": "season-id",
+                "Source": "COMMS_RESTRICTION"
+            }
+        }],
+        "Infractions": [{
+            "ID": "infraction-id",
+            "Name": "comms",
+            "RatingName": "comms"
+        }],
+        "Version": 1
+    }))
+    .expect("penalty response");
+
+    assert_eq!(
+        penalty_status_from_response(&response, now),
+        AccountPenaltyStatus::penalized_for(
+            Some("Premier Disqualification".to_string()),
+            AccountPenaltyDuration::new(Some(expiry_timestamp("2027-02-01T00:00:00Z")), None)
+        )
+    );
+}
+
+#[test]
+fn penalty_status_humanizes_unknown_premier_restriction_type() {
+    let now = time::OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+    let response: PlayerPenaltiesResponse = serde_json::from_value(serde_json::json!({
+        "Subject": "puuid",
+        "Penalties": [{
+            "ID": "penalty-id",
+            "IssuingGameStartUnixMillis": 1_800_000_000_000i64,
+            "IssuingMatchID": "match-id",
+            "Expiry": "2027-02-01T00:00:00Z",
+            "GamesRemaining": 0,
+            "ApplyToAllPlatforms": true,
+            "ApplyToPlatforms": ["PC"],
+            "ApplyToPlatformGroups": ["riot"],
+            "InfractionID": "infraction-id",
+            "Origin": "automated",
+            "ForgivenessIneligible": false,
+            "IsAutomatedDetection": true,
+            "PenaltyInfo": null,
+            "DelayedPenaltyEffect": null,
+            "GameBanEffect": null,
+            "QueueDelayEffect": null,
+            "QueueRestrictionEffect": null,
+            "RankedRatingPenaltyEffect": null,
+            "RiotRestrictionEffect": null,
+            "RMSNotifyEffect": null,
+            "WarningEffect": null,
+            "XPMultiplierEffect": null,
+            "PremierRestrictionEffect": {
+                "RestrictionType": "MATCHMAKING_LOCK",
+                "SeasonID": "season-id",
+                "Source": "source"
+            }
+        }],
+        "Infractions": [{
+            "ID": "infraction-id",
+            "Name": "unknown",
+            "RatingName": "unknown"
+        }],
+        "Version": 1
+    }))
+    .expect("penalty response");
+
+    assert_eq!(
+        penalty_status_from_response(&response, now),
+        AccountPenaltyStatus::penalized_for(
+            Some("Premier Matchmaking Lock".to_string()),
+            AccountPenaltyDuration::new(Some(expiry_timestamp("2027-02-01T00:00:00Z")), None)
+        )
+    );
+}
+
 fn expiry_timestamp(value: &str) -> i64 {
     time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
         .unwrap()

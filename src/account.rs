@@ -2,7 +2,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::IgnoredAny};
 use thiserror::Error;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -377,44 +377,6 @@ impl AccountPenaltyStatus {
     }
 }
 
-impl<'de> Deserialize<'de> for AccountPenaltyStatus {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(rename_all = "snake_case", tag = "status", deny_unknown_fields)]
-        enum RawAccountPenaltyStatus {
-            Unchecked,
-            NotPenalized,
-            Penalized {
-                #[serde(default)]
-                penalties: Vec<AccountPenalty>,
-                rating_name: Option<String>,
-                #[serde(default)]
-                duration: AccountPenaltyDuration,
-            },
-        }
-
-        match RawAccountPenaltyStatus::deserialize(deserializer)? {
-            RawAccountPenaltyStatus::Unchecked => Ok(Self::Unchecked),
-            RawAccountPenaltyStatus::NotPenalized => Ok(Self::NotPenalized),
-            RawAccountPenaltyStatus::Penalized {
-                penalties,
-                rating_name,
-                duration,
-            } => {
-                // Compatibility: older persisted penalty state stored one rating/duration pair.
-                if penalties.is_empty() {
-                    Ok(Self::penalized_for(rating_name, duration))
-                } else {
-                    Ok(Self::penalized_many(penalties))
-                }
-            }
-        }
-    }
-}
-
 fn penalty_tooltip_label(
     base: String,
     duration: &AccountPenaltyDuration,
@@ -457,12 +419,22 @@ pub struct AccountProfile {
     pub launcher_session: Option<LauncherSessionBackup>,
     pub competitive_rank: Option<CompetitiveRank>,
     #[serde(default)]
+    #[serde(skip_serializing)]
+    #[serde(deserialize_with = "discard_cached_penalty_status")]
     pub penalty_status: AccountPenaltyStatus,
     pub account_level: Option<i64>,
     #[serde(default)]
     #[serde(skip_serializing)]
     // Compatibility: accepted for old in-memory/test profiles, but never written.
     pub last_refreshed_at_unix: Option<i64>,
+}
+
+fn discard_cached_penalty_status<'de, D>(deserializer: D) -> Result<AccountPenaltyStatus, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    IgnoredAny::deserialize(deserializer)?;
+    Ok(AccountPenaltyStatus::Unchecked)
 }
 
 impl AccountProfile {
@@ -813,58 +785,6 @@ mod tests {
                 "Penalized: comms - Ends in 1h 0m 0s\nPenalized: AFK - Ends in 2h 0m 0s (1 game remaining)"
                     .to_string()
             )
-        );
-    }
-
-    #[test]
-    fn penalty_status_loads_without_duration() {
-        let status: AccountPenaltyStatus = serde_json::from_value(serde_json::json!({
-            "status": "penalized",
-            "rating_name": "comms"
-        }))
-        .expect("legacy penalty status");
-
-        assert_eq!(
-            status,
-            AccountPenaltyStatus::penalized(Some("comms".to_string()))
-        );
-    }
-
-    #[test]
-    fn penalty_status_loads_current_penalty_list() {
-        let status: AccountPenaltyStatus = serde_json::from_value(serde_json::json!({
-            "status": "penalized",
-            "penalties": [
-                {
-                    "rating_name": "comms",
-                    "duration": {
-                        "ends_at_unix": 1_800_003_600i64,
-                        "games_remaining": null
-                    }
-                },
-                {
-                    "rating_name": "AFK",
-                    "duration": {
-                        "ends_at_unix": null,
-                        "games_remaining": 1
-                    }
-                }
-            ]
-        }))
-        .expect("current penalty status");
-
-        assert_eq!(
-            status,
-            AccountPenaltyStatus::penalized_many(vec![
-                AccountPenalty::new(
-                    Some("comms".to_string()),
-                    AccountPenaltyDuration::new(Some(1_800_003_600), None)
-                ),
-                AccountPenalty::new(
-                    Some("AFK".to_string()),
-                    AccountPenaltyDuration::new(None, Some(1))
-                )
-            ])
         );
     }
 }

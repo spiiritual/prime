@@ -3,6 +3,7 @@ use crate::account::{Shard, ValorantRegion};
 pub const ENTITLEMENTS_URL: &str = "https://entitlements.auth.riotgames.com/api/token/v1";
 pub const PLAYER_INFO_URL: &str = "https://auth.riotgames.com/userinfo";
 pub const RIOT_GEO_URL: &str = "https://riot-geo.pas.si.riotgames.com/pas/v1/product/valorant";
+pub const PLAYER_PREFERENCES_VERSION: &str = "v3";
 
 pub const HEADER_CLIENT_PLATFORM: &str = "X-Riot-ClientPlatform";
 pub const HEADER_CLIENT_VERSION: &str = "X-Riot-ClientVersion";
@@ -23,6 +24,47 @@ pub fn glz_base_url(region: ValorantRegion, shard: Shard) -> String {
         "https://glz-{}-1.{}.a.pvp.net",
         region.as_str(),
         shard.as_str()
+    )
+}
+
+pub fn player_preferences_base_url(affinity: &str) -> Option<&'static str> {
+    match affinity.trim().to_ascii_lowercase().as_str() {
+        "us" => Some("https://player-preferences-usw2.pp.sgp.pvp.net"),
+        "eu" => Some("https://player-preferences-euc1.pp.sgp.pvp.net"),
+        "asia" => Some("https://player-preferences-apne1.pp.sgp.pvp.net"),
+        "sea" => Some("https://player-preferences-apse1.pp.sgp.pvp.net"),
+        _ => None,
+    }
+}
+
+pub fn player_preferences_base_url_for_region(region: ValorantRegion) -> &'static str {
+    match region {
+        ValorantRegion::Na | ValorantRegion::Latam | ValorantRegion::Br => {
+            player_preferences_base_url("us").expect("known player preferences affinity")
+        }
+        ValorantRegion::Eu => {
+            player_preferences_base_url("eu").expect("known player preferences affinity")
+        }
+        ValorantRegion::Ap | ValorantRegion::Kr => {
+            player_preferences_base_url("asia").expect("known player preferences affinity")
+        }
+    }
+}
+
+pub fn player_preference_get_url(base_url: &str, preference_type: &str) -> String {
+    format!(
+        "{}/playerPref/{}/getPreference/{}",
+        base_url.trim_end_matches('/'),
+        PLAYER_PREFERENCES_VERSION,
+        preference_type
+    )
+}
+
+pub fn player_preference_save_url(base_url: &str) -> String {
+    format!(
+        "{}/playerPref/{}/savePreference",
+        base_url.trim_end_matches('/'),
+        PLAYER_PREFERENCES_VERSION
     )
 }
 
@@ -157,6 +199,41 @@ mod tests {
         assert_eq!(
             party_player_url(ValorantRegion::Ap, Shard::Ap, "puuid"),
             "https://glz-ap-1.ap.a.pvp.net/parties/v1/players/puuid"
+        );
+    }
+
+    #[test]
+    fn resolves_player_preferences_base_urls() {
+        assert_eq!(
+            player_preferences_base_url("us"),
+            Some("https://player-preferences-usw2.pp.sgp.pvp.net")
+        );
+        assert_eq!(
+            player_preferences_base_url("eu"),
+            Some("https://player-preferences-euc1.pp.sgp.pvp.net")
+        );
+        assert_eq!(
+            player_preferences_base_url("asia"),
+            Some("https://player-preferences-apne1.pp.sgp.pvp.net")
+        );
+        assert_eq!(
+            player_preferences_base_url("sea"),
+            Some("https://player-preferences-apse1.pp.sgp.pvp.net")
+        );
+    }
+
+    #[test]
+    fn builds_player_preferences_urls() {
+        assert_eq!(
+            player_preference_get_url(
+                "https://player-preferences-usw2.pp.sgp.pvp.net/",
+                "Ares.PlayerSettings"
+            ),
+            "https://player-preferences-usw2.pp.sgp.pvp.net/playerPref/v3/getPreference/Ares.PlayerSettings"
+        );
+        assert_eq!(
+            player_preference_save_url("https://player-preferences-usw2.pp.sgp.pvp.net/"),
+            "https://player-preferences-usw2.pp.sgp.pvp.net/playerPref/v3/savePreference"
         );
     }
 }

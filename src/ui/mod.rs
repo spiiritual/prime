@@ -18,10 +18,12 @@ use crate::image_cache::ImageCache;
 use crate::storage::{AccountRepository, StoredState};
 use crate::updater::AvailableUpdate;
 
+use crate::game_settings::GameSettingsSnapshotMetadata;
 use data::{
     AccountActivityCheck, AccountAvailability, AccountAvailabilityRefresh, AccountRanksResult,
-    CapturedAccountDraft, LaunchAccountResult, LoadoutResult, LoadoutSummary,
-    RefreshedProfileIdentity, StoreSummary, StorefrontResult,
+    AppliedGameSettingsResult, CapturedAccountDraft, LaunchAccountResult, LoadoutResult,
+    LoadoutSummary, RefreshedProfileIdentity, SavedGameSettingsResult, StoreSummary,
+    StorefrontResult,
 };
 
 const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
@@ -98,6 +100,8 @@ fn loading_indicator_active(app: &PrimeApp) -> bool {
         || app.launcher_capture_in_progress
         || app.launch_preflight_account.is_some()
         || app.launching_account.is_some()
+        || app.settings_saving_account.is_some()
+        || app.settings_applying_account.is_some()
         || app.app_update_status.is_busy()
         || image_viewer_enabled()
             && app
@@ -115,6 +119,8 @@ fn loading_status_active(status: &str) -> bool {
         || status.starts_with("Launching ")
         || status.starts_with("Exporting ")
         || status.starts_with("Importing ")
+        || status.starts_with("Saving ")
+        || status.starts_with("Applying ")
         || status.starts_with("Checking for Prime updates")
         || status.starts_with("Downloading Prime ")
         || status.starts_with("Preparing to restart")
@@ -189,6 +195,10 @@ struct PrimeApp {
     account_ranks_loading: bool,
     account_availability: HashMap<AccountId, AccountAvailability>,
     account_availability_loading: bool,
+    settings_snapshots: Vec<GameSettingsSnapshotMetadata>,
+    selected_settings_snapshot: Option<String>,
+    settings_saving_account: Option<AccountId>,
+    settings_applying_account: Option<AccountId>,
     launcher_capture_in_progress: bool,
     launch_preflight_account: Option<AccountId>,
     unavailable_launch_warning: Option<UnavailableLaunchWarning>,
@@ -473,6 +483,12 @@ enum Message {
     AccountRanksLoaded(AccountRanksResult),
     AccountAvailabilityTimerTick(iced::time::Instant),
     AccountAvailabilitiesLoaded(AccountAvailabilityRefresh),
+    GameSettingsSnapshotsLoaded(Result<Vec<GameSettingsSnapshotMetadata>, String>),
+    GameSettingsSnapshotSelected(GameSettingsSnapshotMetadata),
+    SaveAccountSettings(AccountId),
+    AccountSettingsSaved(Result<SavedGameSettingsResult, String>),
+    ApplySavedSettings(AccountId),
+    SavedSettingsApplied(Result<AppliedGameSettingsResult, String>),
     StorefrontLoaded(AccountId, Result<StorefrontResult, String>),
     ShopTimerTick(iced::time::Instant),
     LoadingTick,

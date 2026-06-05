@@ -100,6 +100,13 @@ impl AccountRepository {
             .unwrap_or_else(|| PathBuf::from("launcher-backups"))
     }
 
+    pub fn settings_snapshots_dir(&self) -> PathBuf {
+        self.path
+            .parent()
+            .map(|parent| parent.join("settings-snapshots"))
+            .unwrap_or_else(|| PathBuf::from("settings-snapshots"))
+    }
+
     pub fn load(&self) -> Result<StoredState, StorageError> {
         if !self.path.exists() {
             return Ok(StoredState::default());
@@ -204,7 +211,7 @@ pub enum StorageError {
 mod tests {
     use tempfile::tempdir;
 
-    use crate::account::{AccountProfile, Shard};
+    use crate::account::{AccountPenaltyStatus, AccountProfile, Shard};
 
     use super::*;
 
@@ -251,6 +258,67 @@ mod tests {
         let saved = fs::read_to_string(repo.path()).expect("saved json");
 
         assert!(!saved.contains("last_refreshed_at_unix"));
+    }
+
+    #[test]
+    fn save_drops_runtime_penalty_status() {
+        let dir = tempdir().expect("temp dir");
+        let repo = AccountRepository::new(dir.path().join("accounts.json"));
+        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        account.penalty_status = AccountPenaltyStatus::penalized(Some("Premier comms".to_string()));
+        let mut state = StoredState::default();
+        state.push_account(account);
+
+        repo.save(&state).expect("save");
+        let saved = fs::read_to_string(repo.path()).expect("saved json");
+
+        assert!(!saved.contains("penalty_status"));
+        assert!(!saved.contains("Premier comms"));
+    }
+
+    #[test]
+    fn load_ignores_cached_penalty_status() {
+        let account =
+            AccountProfile::new("Main", Some("player".to_string()), Shard::Na).expect("account");
+        let raw = serde_json::json!({
+            "version": 1,
+            "accounts": [{
+                "id": account.id,
+                "display_name": "Main",
+                "username": "player",
+                "puuid": null,
+                "game_name": null,
+                "tag_line": null,
+                "shard": "na",
+                "session": null,
+                "launcher_session": null,
+                "competitive_rank": null,
+                "penalty_status": {
+                    "status": "penalized",
+                    "penalties": [{
+                        "rating_name": "Premier comms",
+                        "duration": {
+                            "ends_at_unix": null,
+                            "games_remaining": null
+                        }
+                    }]
+                },
+                "account_level": null
+            }],
+            "selected_account": account.id,
+            "riot_client_path": null
+        });
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("accounts.json");
+        fs::write(&path, serde_json::to_string_pretty(&raw).unwrap()).expect("write");
+        let repo = AccountRepository::new(path);
+
+        let loaded = repo.load().expect("load");
+
+        assert_eq!(
+            loaded.accounts[0].penalty_status,
+            AccountPenaltyStatus::Unchecked
+        );
     }
 
     #[test]

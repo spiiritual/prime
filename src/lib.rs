@@ -1,5 +1,6 @@
 pub mod account;
 pub mod account_transfer;
+pub mod game_settings;
 mod http_error;
 pub mod image_cache;
 pub mod launch;

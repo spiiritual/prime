@@ -44,6 +44,43 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
 
     let mut content = column![controls].spacing(12).width(Length::Fill);
 
+    if !app.settings_snapshots.is_empty() {
+        let selected_snapshot = app
+            .selected_settings_snapshot
+            .as_ref()
+            .and_then(|selected| {
+                app.settings_snapshots
+                    .iter()
+                    .find(|snapshot| &snapshot.id == selected)
+                    .cloned()
+            })
+            .or_else(|| app.settings_snapshots.first().cloned());
+        let snapshot_label = selected_snapshot
+            .as_ref()
+            .map(|snapshot| {
+                format!(
+                    "Saved settings: {} from {}",
+                    last_refreshed_label(Some(snapshot.captured_at_unix)),
+                    snapshot.source_display_name
+                )
+            })
+            .unwrap_or_else(|| "Saved settings".to_string());
+
+        content = content.push(
+            row![
+                text(snapshot_label).size(13).width(Length::Fill),
+                pick_list(
+                    app.settings_snapshots.clone(),
+                    selected_snapshot,
+                    Message::GameSettingsSnapshotSelected
+                )
+                .width(260)
+            ]
+            .spacing(10)
+            .align_y(alignment::Vertical::Center),
+        );
+    }
+
     content = content.push(account_cards);
 
     if let Some(draft) = &app.pending_account {
@@ -180,7 +217,7 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
 
     anchored_popover(
         card,
-        account_menu(account.id),
+        account_menu(app, account),
         is_account_menu_open,
         ACCOUNT_MENU_TOP_OFFSET,
         ACCOUNT_MENU_RIGHT_INSET,
@@ -399,7 +436,12 @@ fn loading_rank_badge(frame: usize) -> Element<'static, Message> {
     .into()
 }
 
-fn account_menu(account_id: AccountId) -> Element<'static, Message> {
+fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Message> {
+    let account_id = account.id;
+    let settings_busy =
+        app.settings_saving_account.is_some() || app.settings_applying_account.is_some();
+    let account_has_api_access = account.has_launcher_session() || account.session.is_some();
+
     container(
         column![
             button("Re-capture login")
@@ -408,6 +450,18 @@ fn account_menu(account_id: AccountId) -> Element<'static, Message> {
             button("Refresh profile")
                 .width(Length::Fill)
                 .on_press(Message::RefreshProfileIdentity(account_id)),
+            button("Save settings").width(Length::Fill).on_press_maybe(
+                (!settings_busy && account_has_api_access)
+                    .then_some(Message::SaveAccountSettings(account_id))
+            ),
+            button("Apply saved settings")
+                .width(Length::Fill)
+                .on_press_maybe(
+                    (!settings_busy
+                        && account_has_api_access
+                        && !app.settings_snapshots.is_empty())
+                    .then_some(Message::ApplySavedSettings(account_id))
+                ),
             button("Export account")
                 .width(Length::Fill)
                 .on_press(Message::RequestExportAccount(account_id)),

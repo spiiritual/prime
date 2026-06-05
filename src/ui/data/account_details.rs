@@ -175,11 +175,7 @@ pub(in crate::ui) fn penalty_status_from_response(
 
         active_penalties.push(ActivePenaltySummary {
             penalty: AccountPenalty::new(
-                response
-                    .infractions
-                    .iter()
-                    .find(|infraction| infraction.id == penalty.infraction_id)
-                    .and_then(|infraction| non_empty_string(infraction.rating_name.clone())),
+                penalty_display_name(response, penalty),
                 AccountPenaltyDuration::new(
                     expiry.map(|expiry| expiry.unix_timestamp()),
                     Some(penalty.games_remaining),
@@ -200,6 +196,61 @@ pub(in crate::ui) fn penalty_status_from_response(
                 .collect(),
         )
     }
+}
+
+fn penalty_display_name(
+    response: &PlayerPenaltiesResponse,
+    penalty: &crate::riot::models::PlayerPenalty,
+) -> Option<String> {
+    let rating_name = response
+        .infractions
+        .iter()
+        .find(|infraction| infraction.id == penalty.infraction_id)
+        .and_then(|infraction| non_empty_string(infraction.rating_name.clone()));
+
+    if penalty.premier_restriction_effect.is_some() {
+        return Some(premier_penalty_display_name(penalty));
+    }
+
+    rating_name
+}
+
+fn premier_penalty_display_name(penalty: &crate::riot::models::PlayerPenalty) -> String {
+    let Some(effect) = penalty.premier_restriction_effect.as_ref() else {
+        return "Premier Restriction".to_string();
+    };
+
+    match effect.restriction_type.trim().to_ascii_uppercase().as_str() {
+        "DISQUALIFIED" => "Premier Disqualification".to_string(),
+        "RESTRICTION" | "RESTRICTED" => "Premier Restriction".to_string(),
+        restriction_type => {
+            let restriction_type = restriction_type
+                .split('_')
+                .filter(|part| !part.is_empty())
+                .map(title_case_ascii)
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            if restriction_type.is_empty() {
+                "Premier Restriction".to_string()
+            } else {
+                format!("Premier {restriction_type}")
+            }
+        }
+    }
+}
+
+fn title_case_ascii(value: &str) -> String {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+
+    format!(
+        "{}{}",
+        first.to_ascii_uppercase(),
+        chars.as_str().to_ascii_lowercase()
+    )
 }
 
 struct ActivePenaltySummary {

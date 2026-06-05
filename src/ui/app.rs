@@ -11,10 +11,11 @@ use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{check_for_update, download_and_prepare_update};
 
 use super::data::{
-    AccountAvailability, AccountRankResult, cache_account_api_context,
-    check_riot_client_window_visible, fetch_account_availabilities, fetch_account_availability,
-    fetch_account_ranks, fetch_current_client_version, fetch_loadout, fetch_profile_identity,
-    fetch_storefront, launch_account, non_empty_path, start_account_capture,
+    AccountAvailability, AccountRankResult, apply_game_settings_snapshot,
+    cache_account_api_context, check_riot_client_window_visible, fetch_account_availabilities,
+    fetch_account_availability, fetch_account_ranks, fetch_current_client_version, fetch_loadout,
+    fetch_profile_identity, fetch_storefront, launch_account, load_saved_game_settings_snapshots,
+    non_empty_path, save_game_settings_snapshot, start_account_capture,
     start_verified_launcher_session_login,
 };
 use super::{
@@ -27,6 +28,7 @@ impl PrimeApp {
         let repo = AccountRepository::new(AccountRepository::default_path());
         let image_cache = ImageCache::new(ImageCache::default_path());
         let load_repo = repo.clone();
+        let snapshot_dir = repo.settings_snapshots_dir();
         let cache_for_size = image_cache.clone();
 
         (
@@ -64,6 +66,10 @@ impl PrimeApp {
                 account_ranks_loading: false,
                 account_availability: Default::default(),
                 account_availability_loading: false,
+                settings_snapshots: Vec::new(),
+                selected_settings_snapshot: None,
+                settings_saving_account: None,
+                settings_applying_account: None,
                 launcher_capture_in_progress: false,
                 launch_preflight_account: None,
                 unavailable_launch_warning: None,
@@ -78,6 +84,10 @@ impl PrimeApp {
                 Task::perform(
                     async move { load_repo.load().map_err(|error| error.to_string()) },
                     Message::Loaded,
+                ),
+                Task::perform(
+                    load_saved_game_settings_snapshots(snapshot_dir),
+                    Message::GameSettingsSnapshotsLoaded,
                 ),
                 Task::perform(fetch_current_client_version(), Message::ClientVersionLoaded),
                 Task::perform(check_for_update(), |result| Message::AppUpdateChecked {
@@ -828,6 +838,193 @@ impl PrimeApp {
 
                 Task::none()
             }
+            Message::GameSettingsSnapshotsLoaded(result) => {
+                match result {
+                    Ok(snapshots) => {
+                        self.settings_snapshots = snapshots;
+                        if self
+                            .selected_settings_snapshot
+                            .as_ref()
+                            .is_none_or(|selected| {
+                                !self
+                                    .settings_snapshots
+                                    .iter()
+                                    .any(|snapshot| &snapshot.id == selected)
+                            })
+                        {
+                            self.selected_settings_snapshot = self
+                                .settings_snapshots
+                                .first()
+                                .map(|snapshot| snapshot.id.clone());
+                        }
+                    }
+                    Err(error) => {
+                        self.status = format!("Could not load saved settings: {error}");
+                    }
+                }
+
+                Task::none()
+            }
+            Message::GameSettingsSnapshotSelected(snapshot) => {
+                if self
+                    .settings_snapshots
+                    .iter()
+                    .any(|saved| saved.id == snapshot.id)
+                {
+                    self.selected_settings_snapshot = Some(snapshot.id.clone());
+                    self.status = format!(
+                        "Selected settings snapshot from {}",
+                        snapshot.source_display_name
+                    );
+                }
+
+                Task::none()
+            }
+            Message::SaveAccountSettings(account_id) => {
+                if self.settings_saving_account.is_some()
+                    || self.settings_applying_account.is_some()
+                {
+                    return Task::none();
+                }
+
+                let Some(account) = self
+                    .state
+                    .accounts
+                    .iter()
+                    .find(|account| account.id == account_id)
+                    .cloned()
+                else {
+                    self.open_account_menu = None;
+                    self.account_switcher_open = false;
+                    self.status = "Account profile no longer exists".to_string();
+                    return Task::none();
+                };
+
+                let summary = account.summary();
+                let snapshot_dir = self.repo.settings_snapshots_dir();
+                self.close_account_surfaces();
+                self.settings_saving_account = Some(account_id);
+                self.status = format!("Saving settings for {summary}");
+
+                Task::perform(
+                    save_game_settings_snapshot(account, snapshot_dir),
+                    Message::AccountSettingsSaved,
+                )
+            }
+            Message::AccountSettingsSaved(result) => {
+                let result_account_id = result.as_ref().ok().map(|result| result.account_id);
+
+                if result_account_id.is_none() || self.settings_saving_account == result_account_id
+                {
+                    self.settings_saving_account = None;
+                }
+
+                match result {
+                    Ok(result) => {
+                        if let Err(error) = cache_account_api_context(
+                            &mut self.state,
+                            result.account_id,
+                            result.session,
+                            result.launcher_session,
+                            result.identity,
+                        ) {
+                            self.status = format!(
+                                "Saved settings snapshot, but profile update failed: {error}"
+                            );
+                            return Task::none();
+                        }
+
+                        self.settings_snapshots
+                            .retain(|snapshot| snapshot.id != result.snapshot.id);
+                        self.settings_snapshots.insert(0, result.snapshot.clone());
+                        self.selected_settings_snapshot = Some(result.snapshot.id.clone());
+                        self.status = format!(
+                            "Saved settings snapshot for {}",
+                            result.snapshot.source_display_name
+                        );
+                        Task::batch([self.save_task(), self.load_settings_snapshots_task()])
+                    }
+                    Err(error) => {
+                        self.status = format!("Could not save account settings: {error}");
+                        Task::none()
+                    }
+                }
+            }
+            Message::ApplySavedSettings(account_id) => {
+                if self.settings_saving_account.is_some()
+                    || self.settings_applying_account.is_some()
+                {
+                    return Task::none();
+                }
+
+                if self.settings_snapshots.is_empty() {
+                    self.status =
+                        "Could not apply account settings: save a settings snapshot first"
+                            .to_string();
+                    return Task::none();
+                }
+
+                let Some(account) = self
+                    .state
+                    .accounts
+                    .iter()
+                    .find(|account| account.id == account_id)
+                    .cloned()
+                else {
+                    self.open_account_menu = None;
+                    self.account_switcher_open = false;
+                    self.status = "Account profile no longer exists".to_string();
+                    return Task::none();
+                };
+
+                let summary = account.summary();
+                let snapshot_dir = self.repo.settings_snapshots_dir();
+                let snapshot_id = self.selected_settings_snapshot.clone();
+                self.close_account_surfaces();
+                self.settings_applying_account = Some(account_id);
+                self.status = format!("Applying saved settings to {summary}");
+
+                Task::perform(
+                    apply_game_settings_snapshot(account, snapshot_dir, snapshot_id),
+                    Message::SavedSettingsApplied,
+                )
+            }
+            Message::SavedSettingsApplied(result) => {
+                let result_account_id = result.as_ref().ok().map(|result| result.account_id);
+
+                if result_account_id.is_none()
+                    || self.settings_applying_account == result_account_id
+                {
+                    self.settings_applying_account = None;
+                }
+
+                match result {
+                    Ok(result) => {
+                        if let Err(error) = cache_account_api_context(
+                            &mut self.state,
+                            result.account_id,
+                            result.session,
+                            result.launcher_session,
+                            result.identity,
+                        ) {
+                            self.status = format!(
+                                "Applied saved settings, but profile update failed: {error}"
+                            );
+                            return Task::none();
+                        }
+
+                        self.status = format!(
+                            "Applied settings from {} and backed up previous target settings as {}",
+                            result.source_snapshot.source_display_name, result.backup_snapshot.id
+                        );
+                        Task::batch([self.save_task(), self.load_settings_snapshots_task()])
+                    }
+                    Err(error) => {
+                        self.status = format!("Could not apply account settings: {error}");
+                        Task::none()
+                    }
+                }
+            }
             Message::StorefrontLoaded(account_id, result) => {
                 let is_current_request = self.store_loading_account == Some(account_id);
 
@@ -1543,6 +1740,15 @@ impl PrimeApp {
         Task::perform(
             async move { cache.size_bytes().map_err(|error| error.to_string()) },
             Message::ImageCacheSizeLoaded,
+        )
+    }
+
+    fn load_settings_snapshots_task(&self) -> Task<Message> {
+        let snapshot_dir = self.repo.settings_snapshots_dir();
+
+        Task::perform(
+            load_saved_game_settings_snapshots(snapshot_dir),
+            Message::GameSettingsSnapshotsLoaded,
         )
     }
 

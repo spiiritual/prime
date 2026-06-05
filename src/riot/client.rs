@@ -19,7 +19,8 @@ use super::endpoints::{
     CLIENT_PLATFORM, ENTITLEMENTS_URL, HEADER_CLIENT_PLATFORM, HEADER_CLIENT_VERSION,
     HEADER_ENTITLEMENTS, PLAYER_INFO_URL, RIOT_GEO_URL, account_xp_url, content_url, contracts_url,
     current_game_player_url, party_player_url, player_loadout_url, player_mmr_url,
-    player_penalties_url, pregame_player_url, storefront_url, wallet_url,
+    player_penalties_url, player_preference_get_url, player_preference_save_url,
+    pregame_player_url, storefront_url, wallet_url,
 };
 use super::models::{
     AccountXpResponse, ContractsResponse, EntitlementResponse, GameContentResponse,
@@ -175,6 +176,51 @@ impl RiotApi {
             .json()
             .await
             .map_err(RiotApiError::Http)
+    }
+
+    pub async fn get_player_preference(
+        &self,
+        base_url: &str,
+        access_token: &str,
+        preference_type: &str,
+    ) -> Result<serde_json::Value, RiotApiError> {
+        if access_token.trim().is_empty() {
+            return Err(RiotApiError::MissingField("access token"));
+        }
+
+        self.client
+            .get(player_preference_get_url(base_url, preference_type))
+            .header(ACCEPT, "application/json")
+            .bearer_auth(access_token)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await
+            .map_err(RiotApiError::Http)
+    }
+
+    pub async fn save_player_preference(
+        &self,
+        base_url: &str,
+        access_token: &str,
+        body: &serde_json::Value,
+    ) -> Result<(), RiotApiError> {
+        if access_token.trim().is_empty() {
+            return Err(RiotApiError::MissingField("access token"));
+        }
+
+        self.client
+            .put(player_preference_save_url(base_url))
+            .header(ACCEPT, "application/json")
+            .header(CONTENT_TYPE, "application/json")
+            .bearer_auth(access_token)
+            .json(body)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        Ok(())
     }
 
     pub async fn storefront(

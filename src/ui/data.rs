@@ -36,6 +36,7 @@ use crate::riot::models::{
 use crate::storage::StoredState;
 
 mod account_details;
+mod game_settings;
 mod image_assets;
 mod launch_flow;
 mod loadout;
@@ -43,6 +44,7 @@ mod session;
 mod shop;
 
 pub(super) use account_details::*;
+pub(super) use game_settings::*;
 pub(super) use image_assets::*;
 pub(super) use launch_flow::*;
 pub(super) use loadout::*;
