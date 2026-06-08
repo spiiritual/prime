@@ -24,8 +24,8 @@ use crate::account::{
 };
 use crate::riot::content::{
     AccessoryCatalog, Buddy, BuddyLevel, BundleCatalog, ContractCatalog, ContractChapter,
-    ContractContent, ContractLevel, ContractReward, CurrencyCatalog, SkinCatalog, ValorantContract,
-    WeaponCatalog,
+    ContractContent, ContractLevel, ContractReward, Currency, CurrencyCatalog, SkinCatalog,
+    ValorantContract, WeaponCatalog,
 };
 use crate::riot::launcher_session::LauncherSessionError;
 use crate::riot::models::{
@@ -1101,10 +1101,7 @@ fn battle_pass_progress_uses_story_contract_and_active_act() {
         progress.next_tier_label(),
         "2,500 / 3,000 XP toward next tier"
     );
-    assert_eq!(
-        progress.total_progress_label().as_deref(),
-        Some("4,500 / 9,000 XP total")
-    );
+    assert_eq!(progress.progress_percent_label().as_deref(), Some("50% complete"));
     assert!(progress.remaining_seconds.is_some());
 }
 
@@ -1219,6 +1216,85 @@ fn battle_pass_progress_separates_free_unearned_and_locked_paid_rewards() {
             .iter()
             .all(|reward| reward.track.label() == "Paid")
     );
+}
+
+#[test]
+fn battle_pass_currency_rewards_show_amount_in_name() {
+    let contracts: ContractsResponse = serde_json::from_value(serde_json::json!({
+        "Version": 1,
+        "Subject": "puuid",
+        "Contracts": [{
+            "ContractDefinitionID": "battle-pass",
+            "ContractProgression": {
+                "TotalProgressionEarned": 2_000,
+                "TotalProgressionEarnedVersion": 1,
+                "HighestRewardedLevel": {
+                    "premium-schedule": { "Amount": 1, "Version": 1 }
+                }
+            },
+            "ProgressionLevelReached": 1,
+            "ProgressionTowardsNextLevel": 0,
+            "ProgressionCompleted": false
+        }],
+        "ActiveSpecialContract": ""
+    }))
+    .expect("contracts");
+    let radianite_uuid = "e59aa87c-4cbf-517a-5983-6e81511be9b7";
+    let catalog = ContractCatalog::from_contracts(vec![ValorantContract {
+        uuid: Some("battle-pass".to_string()),
+        display_name: Some("Season 2026 // Act III".to_string()),
+        free_reward_schedule_uuid: Some("free-schedule".to_string()),
+        content: Some(ContractContent {
+            relation_type: Some("Season".to_string()),
+            relation_uuid: Some("act".to_string()),
+            premium_reward_schedule_uuid: Some("premium-schedule".to_string()),
+            chapters: vec![ContractChapter {
+                is_epilogue: false,
+                levels: vec![ContractLevel {
+                    reward: Some(ContractReward {
+                        kind: "Currency".to_string(),
+                        uuid: radianite_uuid.to_string(),
+                        amount: 1,
+                        highlighted: false,
+                    }),
+                    xp: Some(2_000),
+                }],
+                free_rewards: None,
+            }],
+        }),
+    }]);
+    let content: GameContentResponse = serde_json::from_value(serde_json::json!({
+        "DisabledIDs": [],
+        "Seasons": [{
+            "ID": "act",
+            "Name": "Act 3",
+            "Type": "act",
+            "StartTime": "2026-05-01T00:00:00Z",
+            "EndTime": "2099-06-24T13:00:00Z",
+            "IsActive": true
+        }],
+        "Events": []
+    }))
+    .expect("content");
+    let currencies = CurrencyCatalog::from_currencies(vec![Currency {
+        uuid: radianite_uuid.to_string(),
+        display_name: "Radianite Points".to_string(),
+        display_icon: None,
+    }]);
+
+    let progress = battle_pass_progress_from_responses(
+        &contracts,
+        &catalog,
+        Some(&content),
+        &SkinCatalog::default(),
+        &AccessoryCatalog::default(),
+        &currencies,
+    )
+    .expect("battle pass progress");
+
+    assert_eq!(progress.earned_rewards.len(), 1);
+    assert_eq!(progress.earned_rewards[0].name, "10 Radianite");
+    assert_eq!(progress.earned_rewards[0].amount_label(), None);
 }
 
 #[test]

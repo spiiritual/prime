@@ -329,11 +329,7 @@ pub(super) fn asset_image<'a>(
             title,
             high_res,
         ),
-        None => container(text("No image").size(13))
-            .width(Length::Fill)
-            .height(height)
-            .style(iced::widget::container::rounded_box)
-            .into(),
+        None => no_image_placeholder(height),
     }
 }
 
@@ -356,12 +352,18 @@ pub(super) fn asset_background_image<'a>(
             title,
             high_res,
         ),
-        None => container(text("No image").size(13))
-            .width(Length::Fill)
-            .height(height)
-            .style(iced::widget::container::rounded_box)
-            .into(),
+        None => no_image_placeholder(height),
     }
+}
+
+fn no_image_placeholder<'a>(height: f32) -> Element<'a, Message> {
+    container(text("No image").size(13))
+        .width(Length::Fill)
+        .height(height)
+        .align_x(alignment::Horizontal::Center)
+        .align_y(alignment::Vertical::Center)
+        .style(iced::widget::container::rounded_box)
+        .into()
 }
 
 fn preview_image_button<'a>(
@@ -434,6 +436,46 @@ pub(super) fn loading_line(label: &'static str, frame: usize) -> Element<'static
         .spacing(10)
         .align_y(alignment::Vertical::Center)
         .into()
+}
+
+pub(super) fn compact_item_name<'a>(
+    name: &'a str,
+    base_size: u32,
+    height: f32,
+    available_width: f32,
+) -> Element<'a, Message> {
+    text(name)
+        .size(compact_item_name_size(name, base_size, available_width))
+        .width(Length::Fill)
+        .height(height)
+        .align_x(alignment::Horizontal::Left)
+        .align_y(alignment::Vertical::Center)
+        .wrapping(iced::widget::text::Wrapping::None)
+        .into()
+}
+
+fn compact_item_name_size(name: &str, base_size: u32, available_width: f32) -> u32 {
+    let text_units: f32 = name.chars().map(compact_item_name_char_width).sum();
+    let estimated_width = text_units * base_size as f32;
+
+    if estimated_width <= available_width {
+        return base_size;
+    }
+
+    let minimum_size = base_size.saturating_sub(5).max(8);
+    ((available_width / text_units).floor() as u32).clamp(minimum_size, base_size)
+}
+
+fn compact_item_name_char_width(character: char) -> f32 {
+    match character {
+        ' ' => 0.32,
+        'i' | 'l' | 'I' | '1' | '!' | '\'' | '.' | ',' | ':' | ';' | '|' => 0.3,
+        'm' | 'w' | 'M' | 'W' => 0.85,
+        'A'..='Z' => 0.64,
+        '0'..='9' => 0.52,
+        '-' | '/' | '\\' => 0.42,
+        _ => 0.54,
+    }
 }
 
 pub(super) fn loading_indicator(frame: usize) -> Element<'static, Message> {
@@ -552,7 +594,7 @@ fn currency_balance_chip(balance: &CurrencyBalanceDisplay) -> Element<'_, Messag
 
 #[cfg(test)]
 mod tests {
-    use super::high_res_image_source;
+    use super::{compact_item_name_size, high_res_image_source};
 
     #[test]
     fn high_res_image_source_ignores_missing_or_duplicate_urls() {
@@ -569,5 +611,22 @@ mod tests {
         assert_eq!(source.namespace, "viewer");
         assert_eq!(source.id, "id");
         assert_eq!(source.url, "full");
+    }
+
+    #[test]
+    fn compact_item_name_size_shrinks_to_available_width() {
+        assert_eq!(compact_item_name_size("Short Name", 14, 156.0), 14);
+        assert_eq!(
+            compact_item_name_size("Radiant Crisis 001 Baseball Bat", 16, 212.0),
+            14
+        );
+        assert_eq!(
+            compact_item_name_size("Radiant Crisis 001 Baseball Bat", 14, 156.0),
+            10
+        );
+        assert_eq!(
+            compact_item_name_size("A very long reward or shop item name", 14, 156.0),
+            9
+        );
     }
 }

@@ -358,7 +358,7 @@ impl From<ResolvedCurrency> for CurrencyDisplay {
 }
 
 const VALORANT_POINTS_UUID: &str = "85ad13f7-3d1b-5128-9eb2-7cd8ee0b5741";
-const RADIANITE_POINTS_UUID: &str = "e59aa87c-4cbf-517a-5983-6e81511be9b7";
+pub(in crate::ui) const RADIANITE_POINTS_UUID: &str = "e59aa87c-4cbf-517a-5983-6e81511be9b7";
 const KINGDOM_CREDITS_UUID: &str = "85ca954a-41f2-ce94-9b45-8ca3dd39a00d";
 
 pub(in crate::ui) fn shop_currency_name(display_name: &str) -> String {

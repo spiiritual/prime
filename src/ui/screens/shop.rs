@@ -2,13 +2,18 @@ use iced::widget::{column, container, rich_text, span, stack, text};
 use iced::{Color, Element, Length, Theme, alignment};
 
 use super::super::components::{
-    asset_background_image, asset_image, high_res_image_source, loading_line,
+    asset_background_image, asset_image, compact_item_name, high_res_image_source, loading_line,
 };
 use super::super::data::{
     OfferPrice, RarityTier, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
     format_duration,
 };
 use super::super::{Message, PrimeApp};
+
+const SHOP_ITEM_NAME_HEIGHT: f32 = 20.0;
+const SHOP_ITEM_NAME_WIDTH: f32 = 212.0;
+const SHOP_BUNDLE_NAME_HEIGHT: f32 = 24.0;
+const SHOP_BUNDLE_NAME_WIDTH: f32 = 260.0;
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     let mut content = column![].spacing(12).width(Length::Fill);
@@ -105,7 +110,12 @@ fn store_bundle_card(bundle: &StoreBundleDisplay) -> Element<'_, Message> {
         .unwrap_or_else(|| "Price unavailable".to_string());
     let rarity_for_style = bundle.rarity.clone();
     let details = column![
-        text(&bundle.bundle.display_name).size(20),
+        compact_item_name(
+            &bundle.bundle.display_name,
+            20,
+            SHOP_BUNDLE_NAME_HEIGHT,
+            SHOP_BUNDLE_NAME_WIDTH
+        ),
         text(price).size(16),
         text(bundle.item_count_label()).size(14),
     ]
@@ -165,10 +175,16 @@ fn store_accessory_card(offer: &StoreAccessoryDisplay) -> Element<'_, Message> {
                 offer.accessory.viewer_icon.as_deref(),
             )
         ),
-        text(&offer.accessory.display_name).size(16),
+        compact_item_name(
+            &offer.accessory.display_name,
+            16,
+            SHOP_ITEM_NAME_HEIGHT,
+            SHOP_ITEM_NAME_WIDTH
+        ),
         text(price).size(14),
     ]
-    .spacing(6);
+    .spacing(6)
+    .width(Length::Fill);
 
     container(details)
         .padding(10)
@@ -181,6 +197,7 @@ fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {
     let rarity_for_style = offer.skin.rarity.clone();
     let mut details = iced::widget::Column::new()
         .spacing(6)
+        .width(Length::Fill)
         .push(asset_image(
             offer.skin.cached_icon.as_ref(),
             118.0,
@@ -192,7 +209,12 @@ fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {
                 offer.skin.viewer_icon.as_deref(),
             ),
         ))
-        .push(text(&offer.skin.display_name).size(16))
+        .push(compact_item_name(
+            &offer.skin.display_name,
+            16,
+            SHOP_ITEM_NAME_HEIGHT,
+            SHOP_ITEM_NAME_WIDTH,
+        ))
         .push(offer_price_line(offer));
 
     if offer.discount_percent > 0 {

@@ -1,7 +1,9 @@
-use iced::widget::{button, column, container, grid, progress_bar, row, text};
-use iced::{Color, Element, Length, Theme, border};
+use iced::widget::{button, column, container, grid, progress_bar, row, stack, text};
+use iced::{Color, Element, Length, Theme, alignment, border};
 
-use super::super::components::{asset_image, high_res_image_source, loading_line};
+use super::super::components::{
+    asset_image, compact_item_name, high_res_image_source, loading_line,
+};
 use super::super::data::{
     BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutGunDisplay, format_duration,
     weapon_category,
@@ -24,6 +26,10 @@ const LOADOUT_IMAGE_HEIGHT: f32 = 148.0;
 const BATTLE_PASS_REWARD_CARD_WIDTH: u32 = 174;
 const BATTLE_PASS_REWARD_CARD_HEIGHT: u32 = 214;
 const BATTLE_PASS_REWARD_IMAGE_HEIGHT: f32 = 92.0;
+const BATTLE_PASS_REWARD_NAME_HEIGHT: f32 = 17.0;
+const BATTLE_PASS_REWARD_NAME_WIDTH: f32 = BATTLE_PASS_REWARD_CARD_WIDTH as f32 - 30.0;
+const BATTLE_PASS_PROGRESS_BAR_HEIGHT: f32 = 30.0;
+const BATTLE_PASS_SECTION_DIVIDER_HEIGHT: f32 = 1.0;
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     container(
@@ -195,9 +201,9 @@ fn battle_pass_panel(
         .remaining_seconds_at(now)
         .map(format_duration)
         .unwrap_or_else(|| "unavailable".to_string());
-    let mut details = column![
+    let details = column![
         text(battle_pass.title()).size(22),
-        progress_bar(0.0..=1.0, battle_pass.progress_fraction()),
+        battle_pass_progress_bar(battle_pass),
         row![
             battle_pass_metric("Progress", battle_pass.tier_label()),
             battle_pass_metric("Next tier", battle_pass.next_tier_label()),
@@ -209,15 +215,17 @@ fn battle_pass_panel(
     .spacing(12)
     .width(Length::Fill);
 
-    if let Some(total_progress) = battle_pass.total_progress_label() {
-        details = details.push(text(total_progress).size(14));
+    let mut details = details.push(battle_pass_section_divider());
+
+    let mut rewards = column![text("Rewards").size(20)]
+        .spacing(14)
+        .width(Length::Fill);
+
+    if battle_pass_has_highlighted_rewards(battle_pass) {
+        rewards = rewards.push(battle_pass_highlight_note());
     }
 
-    if let Some(percent) = battle_pass.progress_percent_label() {
-        details = details.push(text(percent).size(14));
-    }
-
-    details = details
+    rewards = rewards
         .push(battle_pass_reward_section(
             "Earned rewards",
             &battle_pass.earned_rewards,
@@ -230,12 +238,14 @@ fn battle_pass_panel(
         ));
 
     if !battle_pass.locked_paid_rewards.is_empty() {
-        details = details.push(battle_pass_reward_section(
+        rewards = rewards.push(battle_pass_reward_section(
             "Locked paid pass rewards",
             &battle_pass.locked_paid_rewards,
             "No locked paid rewards",
         ));
     }
+
+    details = details.push(rewards);
 
     container(details)
         .padding(14)
@@ -244,10 +254,77 @@ fn battle_pass_panel(
         .into()
 }
 
+fn battle_pass_progress_bar(battle_pass: &BattlePassProgressDisplay) -> Element<'_, Message> {
+    let bar: Element<_> = progress_bar(0.0..=1.0, battle_pass.progress_fraction())
+        .girth(BATTLE_PASS_PROGRESS_BAR_HEIGHT)
+        .into();
+
+    let Some(percent) = battle_pass.progress_percent_label() else {
+        return bar;
+    };
+
+    let label: Element<_> = container(
+        text(percent)
+            .size(13)
+            .color(Color::WHITE)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center),
+    )
+    .width(Length::Fill)
+    .height(BATTLE_PASS_PROGRESS_BAR_HEIGHT)
+    .align_x(alignment::Horizontal::Center)
+    .align_y(alignment::Vertical::Center)
+    .into();
+
+    stack([bar, label])
+        .width(Length::Fill)
+        .height(BATTLE_PASS_PROGRESS_BAR_HEIGHT)
+        .clip(true)
+        .into()
+}
+
+fn battle_pass_has_highlighted_rewards(battle_pass: &BattlePassProgressDisplay) -> bool {
+    battle_pass
+        .earned_rewards
+        .iter()
+        .chain(&battle_pass.unearned_rewards)
+        .chain(&battle_pass.locked_paid_rewards)
+        .any(|reward| reward.highlighted)
+}
+
+fn battle_pass_highlight_note() -> Element<'static, Message> {
+    container(
+        row![
+            container(text(""))
+                .width(14)
+                .height(14)
+                .style(battle_pass_highlight_swatch_style),
+            text("Gold-highlighted rewards are Riot's featured Battle Pass rewards for that tier.")
+                .size(13)
+                .width(Length::Fill),
+        ]
+        .spacing(8)
+        .align_y(alignment::Vertical::Center)
+        .width(Length::Fill),
+    )
+    .padding([8, 10])
+    .width(Length::Fill)
+    .style(battle_pass_highlight_note_style)
+    .into()
+}
+
 fn battle_pass_metric(label: &'static str, value: String) -> Element<'static, Message> {
     column![text(label).size(12), text(value).size(16)]
         .spacing(4)
         .width(Length::FillPortion(1))
+        .into()
+}
+
+fn battle_pass_section_divider() -> Element<'static, Message> {
+    container(text(""))
+        .height(BATTLE_PASS_SECTION_DIVIDER_HEIGHT)
+        .width(Length::Fill)
+        .style(battle_pass_section_divider_style)
         .into()
 }
 
@@ -305,7 +382,12 @@ fn battle_pass_reward_card(reward: &BattlePassRewardDisplay) -> Element<'_, Mess
                     reward.viewer_icon.as_deref(),
                 )
             ),
-            text(&reward.name).size(14).width(Length::Fill),
+            compact_item_name(
+                &reward.name,
+                14,
+                BATTLE_PASS_REWARD_NAME_HEIGHT,
+                BATTLE_PASS_REWARD_NAME_WIDTH
+            ),
             text(&reward.kind).size(12).width(Length::Fill),
             text(meta).size(12).width(Length::Fill)
         ]
@@ -329,5 +411,26 @@ fn battle_pass_reward_card_style(
         style.border.color = Color::from_rgb8(218, 154, 72);
     }
 
+    style
+}
+
+fn battle_pass_highlight_note_style(theme: &Theme) -> iced::widget::container::Style {
+    let mut style = iced::widget::container::bordered_box(theme);
+    style.background = Some(Color::from_rgba8(78, 58, 32, 0.36).into());
+    style.border.color = Color::from_rgb8(150, 112, 67);
+    style.text_color = Some(Color::from_rgb8(224, 218, 208));
+    style
+}
+
+fn battle_pass_highlight_swatch_style(_: &Theme) -> iced::widget::container::Style {
+    let mut style = iced::widget::container::Style::default();
+    style.background = Some(Color::from_rgb8(218, 154, 72).into());
+    style.border.radius = border::radius(3);
+    style
+}
+
+fn battle_pass_section_divider_style(_: &Theme) -> iced::widget::container::Style {
+    let mut style = iced::widget::container::Style::default();
+    style.background = Some(Color::from_rgb8(88, 94, 104).into());
     style
 }

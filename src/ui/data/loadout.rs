@@ -125,18 +125,6 @@ impl BattlePassProgressDisplay {
         }
     }
 
-    pub(in crate::ui) fn total_progress_label(&self) -> Option<String> {
-        self.total_progression_required
-            .filter(|required| *required > 0)
-            .map(|required| {
-                format!(
-                    "{} / {} XP total",
-                    format_whole_number(self.total_progression_earned.max(0)),
-                    format_whole_number(required)
-                )
-            })
-    }
-
     pub(in crate::ui) fn progress_percent_label(&self) -> Option<String> {
         self.total_progression_required
             .filter(|required| *required > 0)
@@ -213,7 +201,8 @@ impl BattlePassRewardDisplay {
     }
 
     pub(in crate::ui) fn amount_label(&self) -> Option<String> {
-        (self.amount > 1).then(|| format!("x{}", format_whole_number(self.amount)))
+        (self.kind != "Currency" && self.amount > 1)
+            .then(|| format!("x{}", format_whole_number(self.amount)))
     }
 }
 
@@ -459,8 +448,10 @@ fn resolve_battle_pass_reward(
         }
         "Currency" => {
             let currency = currencies.resolve(&reward.uuid);
+            let name = shop_currency_name(&currency.display_name);
+            let amount = battle_pass_currency_reward_amount(reward, &currency);
             ResolvedBattlePassReward {
-                name: currency.display_name,
+                name: format!("{} {name}", format_whole_number(amount)),
                 kind: "Currency".to_string(),
                 display_icon: currency.display_icon,
                 viewer_icon: currency.viewer_icon,
@@ -476,6 +467,17 @@ fn resolve_battle_pass_reward(
             display_icon: None,
             viewer_icon: None,
         },
+    }
+}
+
+fn battle_pass_currency_reward_amount(
+    reward: &ResolvedContractReward,
+    currency: &ResolvedCurrency,
+) -> i64 {
+    if reward.amount == 1 && currency.uuid.eq_ignore_ascii_case(RADIANITE_POINTS_UUID) {
+        10
+    } else {
+        reward.amount
     }
 }
 
