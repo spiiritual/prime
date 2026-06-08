@@ -35,21 +35,15 @@ use crate::riot::models::{
 };
 use crate::storage::StoredState;
 
-mod account_details;
-mod game_settings;
-mod image_assets;
-mod launch_flow;
-mod loadout;
-mod session;
-mod shop;
+use self::session::ApiIdentity;
 
-pub(super) use account_details::*;
-pub(super) use game_settings::*;
-pub(super) use image_assets::*;
-pub(super) use launch_flow::*;
-pub(super) use loadout::*;
-pub(super) use session::*;
-pub(super) use shop::*;
+pub(super) mod account_details;
+pub(super) mod game_settings;
+pub(super) mod image_assets;
+pub(super) mod launch_flow;
+pub(super) mod loadout;
+pub(super) mod session;
+pub(super) mod shop;
 
 fn non_empty_string(value: String) -> Option<String> {
     let trimmed = value.trim();

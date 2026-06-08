@@ -10,7 +10,7 @@ use iced::{
     alignment,
 };
 
-use super::data::{CurrencyBalanceDisplay, StoreSummary};
+use super::data::shop::{CurrencyBalanceDisplay, StoreSummary};
 use super::{ImageViewerRequest, ImageViewerSource, Message, image_viewer_enabled};
 
 // Keeps popovers in the overlay layer so controls are not clipped by their parent card.

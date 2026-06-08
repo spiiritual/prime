@@ -1,14 +1,14 @@
 use iced::widget::{column, container, rich_text, span, stack, text};
 use iced::{Color, Element, Length, Theme, alignment};
 
-use super::super::components::{
+use crate::ui::components::{
     asset_background_image, asset_image, compact_item_name, high_res_image_source, loading_line,
 };
-use super::super::data::{
+use crate::ui::data::shop::{
     OfferPrice, RarityTier, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
     format_duration,
 };
-use super::super::{Message, PrimeApp};
+use crate::ui::{Message, PrimeApp};
 
 const SHOP_ITEM_NAME_HEIGHT: f32 = 20.0;
 const SHOP_ITEM_NAME_WIDTH: f32 = 212.0;
@@ -291,17 +291,5 @@ fn rarity_colors(rarity: Option<&str>) -> Option<(Color, Color)> {
             Color::from_rgba8(32, 68, 55, 0.72),
             Color::from_rgb8(86, 184, 139),
         )),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::super::data::format_duration;
-
-    #[test]
-    fn format_duration_includes_ticking_seconds() {
-        assert_eq!(format_duration(3_661), "1h 1m 1s");
-        assert_eq!(format_duration(61), "1m 1s");
-        assert_eq!(format_duration(5), "5s");
     }
 }

@@ -8,16 +8,23 @@ use crate::launch::{LaunchConfig, LaunchTargetProcess};
 use crate::riot::auth::parse_redirect_tokens;
 use crate::riot::launcher_session::{CapturedLauncherSession, remove_launcher_session_backup};
 use crate::storage::{AccountRepository, StoredState};
-use crate::updater::{check_for_update, download_and_prepare_update};
+use crate::updater::{AvailableUpdate, check_for_update, download_and_prepare_update};
 
-use super::data::{
-    AccountAvailability, AccountRankResult, apply_game_settings_snapshot,
-    cache_account_api_context, check_riot_client_window_visible, fetch_account_availabilities,
-    fetch_account_availability, fetch_account_ranks, fetch_current_client_version, fetch_loadout,
-    fetch_profile_identity, fetch_storefront, launch_account, load_saved_game_settings_snapshots,
-    non_empty_path, save_game_settings_snapshot, start_account_capture,
+use super::data::account_details::{
+    AccountActivityCheck, AccountAvailability, AccountRankResult, fetch_account_availabilities,
+    fetch_account_availability, fetch_account_ranks, fetch_profile_identity,
+};
+use super::data::game_settings::{
+    apply_game_settings_snapshot, load_saved_game_settings_snapshots, save_game_settings_snapshot,
+};
+use super::data::image_assets::fetch_current_client_version;
+use super::data::launch_flow::{
+    check_riot_client_window_visible, launch_account, start_account_capture,
     start_verified_launcher_session_login,
 };
+use super::data::loadout::fetch_loadout;
+use super::data::shop::fetch_storefront;
+use super::data::{cache_account_api_context, non_empty_path};
 use super::{
     AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, MAIN_PANEL_SCROLLABLE_ID,
     Message, PrimeApp, Tab, TabScrollOffsets,
@@ -1200,58 +1207,11 @@ impl PrimeApp {
 
                 Task::none()
             }
-            Message::OpenImageViewer(image) => {
-                if !super::image_viewer_enabled() {
-                    self.image_viewer = None;
-                    return Task::none();
-                }
-
-                let high_res = image.high_res.clone();
-                self.image_viewer = Some(ImageViewerImage::from_request(image));
-
-                if let Some(source) = high_res {
-                    if let Some(viewer) = &mut self.image_viewer {
-                        viewer.high_res_loading = true;
-                    }
-
-                    return self.load_image_viewer_source_task(source);
-                }
-
-                Task::none()
-            }
+            Message::OpenImageViewer(image) => self.open_image_viewer(image),
             Message::ImageViewerImageLoaded(source, result) => {
-                if !super::image_viewer_enabled() {
-                    return Task::none();
-                }
-
-                let Some(viewer) = &mut self.image_viewer else {
-                    return Task::none();
-                };
-
-                if viewer.high_res.as_ref() != Some(&source) {
-                    return Task::none();
-                }
-
-                viewer.high_res_loading = false;
-
-                match result {
-                    Ok(path) => {
-                        viewer.path = path;
-                        viewer.high_res_error = None;
-                        return self.image_cache_size_task();
-                    }
-                    Err(error) => {
-                        viewer.high_res_error = Some("Full image unavailable".to_string());
-                        self.status = format!("Could not load full image: {error}");
-                    }
-                }
-
-                Task::none()
+                self.handle_image_viewer_image_loaded(source, result)
             }
-            Message::CloseImageViewer => {
-                self.image_viewer = None;
-                Task::none()
-            }
+            Message::CloseImageViewer => self.close_image_viewer(),
             Message::RiotClientPathChanged(value) => {
                 self.riot_client_path_input = value;
                 Task::none()
@@ -1261,39 +1221,9 @@ impl PrimeApp {
                 self.status = "Saved settings".to_string();
                 self.save_task()
             }
-            Message::ImageCacheSizeLoaded(result) => {
-                match result {
-                    Ok(size) => {
-                        self.image_cache_size_bytes = size;
-                    }
-                    Err(error) => {
-                        self.status = format!("Could not read image cache size: {error}");
-                    }
-                }
-
-                Task::none()
-            }
-            Message::ClearImageCache => {
-                let cache = self.image_cache.clone();
-                self.status = "Clearing image cache".to_string();
-                Task::perform(
-                    async move { cache.clear().map_err(|error| error.to_string()) },
-                    Message::ImageCacheCleared,
-                )
-            }
-            Message::ImageCacheCleared(result) => {
-                match result {
-                    Ok(()) => {
-                        self.image_cache_size_bytes = 0;
-                        self.status = "Cleared image cache".to_string();
-                    }
-                    Err(error) => {
-                        self.status = format!("Could not clear image cache: {error}");
-                    }
-                }
-
-                Task::none()
-            }
+            Message::ImageCacheSizeLoaded(result) => self.handle_image_cache_size_loaded(result),
+            Message::ClearImageCache => self.clear_image_cache(),
+            Message::ImageCacheCleared(result) => self.handle_image_cache_cleared(result),
             Message::LaunchAccount(id) => {
                 if self.launching_account.is_some() || self.launch_preflight_account.is_some() {
                     return Task::none();
@@ -1326,7 +1256,7 @@ impl PrimeApp {
                             Some(api) => {
                                 fetch_account_availability(&api, account, client_version).await
                             }
-                            None => super::data::AccountActivityCheck {
+                            None => AccountActivityCheck {
                                 account_id: id,
                                 availability: AccountAvailability::activity_check_failed(),
                             },
@@ -1489,84 +1419,195 @@ impl PrimeApp {
                     Task::none()
                 }
             },
-            Message::CheckForAppUpdate => {
-                if self.app_update_status.is_busy() {
-                    return Task::none();
-                }
-
-                self.app_update_status = AppUpdateStatus::Checking;
-                self.status = "Checking for Prime updates".to_string();
-                Task::perform(check_for_update(), |result| Message::AppUpdateChecked {
-                    user_requested: true,
-                    result: result.map_err(|error| error.to_string()),
-                })
-            }
+            Message::CheckForAppUpdate => self.check_for_app_update(),
             Message::AppUpdateChecked {
                 user_requested,
                 result,
-            } => {
-                match result {
-                    Ok(Some(update)) => {
-                        self.status = format!(
-                            "Prime {} is available; download it when ready",
-                            update.latest_version
-                        );
-                        self.app_update_status = AppUpdateStatus::Available(update);
-                    }
-                    Ok(None) => {
-                        self.app_update_status = AppUpdateStatus::UpToDate;
-
-                        if user_requested {
-                            self.status = format!(
-                                "Prime is up to date ({})",
-                                crate::updater::CURRENT_VERSION
-                            );
-                        }
-                    }
-                    Err(error) => {
-                        self.app_update_status = AppUpdateStatus::Failed(error.clone());
-
-                        if user_requested {
-                            self.status = format!("Update check failed: {error}");
-                        }
-                    }
-                }
-
-                Task::none()
-            }
-            Message::DismissAppUpdate => {
-                if let Some(update) = self.app_update_status.prompt_update().cloned() {
-                    self.app_update_status = AppUpdateStatus::Dismissed(update);
-                    self.status = "Update postponed".to_string();
-                }
-
-                Task::none()
-            }
-            Message::DownloadAppUpdate => {
-                let Some(update) = self.app_update_status.pending_update().cloned() else {
-                    self.status = "No Prime update is available to download".to_string();
-                    return Task::none();
-                };
-
-                self.status = format!("Downloading Prime {}", update.latest_version);
-                self.app_update_status = AppUpdateStatus::Downloading(update.clone());
-                Task::perform(download_and_prepare_update(update), |result| {
-                    Message::AppUpdatePrepared(result.map_err(|error| error.to_string()))
-                })
-            }
-            Message::AppUpdatePrepared(result) => match result {
-                Ok(()) => {
-                    self.app_update_status = AppUpdateStatus::Installing;
-                    self.status = "Preparing to restart and install the update".to_string();
-                    iced::exit()
-                }
-                Err(error) => {
-                    self.app_update_status = AppUpdateStatus::Failed(error.clone());
-                    self.status = format!("Update failed: {error}");
-                    Task::none()
-                }
-            },
+            } => self.handle_app_update_checked(user_requested, result),
+            Message::DismissAppUpdate => self.dismiss_app_update(),
+            Message::DownloadAppUpdate => self.download_app_update(),
+            Message::AppUpdatePrepared(result) => self.handle_app_update_prepared(result),
         }
+    }
+
+    fn check_for_app_update(&mut self) -> Task<Message> {
+        if self.app_update_status.is_busy() {
+            return Task::none();
+        }
+
+        self.app_update_status = AppUpdateStatus::Checking;
+        self.status = "Checking for Prime updates".to_string();
+        Task::perform(check_for_update(), |result| Message::AppUpdateChecked {
+            user_requested: true,
+            result: result.map_err(|error| error.to_string()),
+        })
+    }
+
+    fn handle_app_update_checked(
+        &mut self,
+        user_requested: bool,
+        result: Result<Option<AvailableUpdate>, String>,
+    ) -> Task<Message> {
+        match result {
+            Ok(Some(update)) => {
+                self.status = format!(
+                    "Prime {} is available; download it when ready",
+                    update.latest_version
+                );
+                self.app_update_status = AppUpdateStatus::Available(update);
+            }
+            Ok(None) => {
+                self.app_update_status = AppUpdateStatus::UpToDate;
+
+                if user_requested {
+                    self.status = format!(
+                        "Prime is up to date ({})",
+                        crate::updater::CURRENT_VERSION
+                    );
+                }
+            }
+            Err(error) => {
+                self.app_update_status = AppUpdateStatus::Failed(error.clone());
+
+                if user_requested {
+                    self.status = format!("Update check failed: {error}");
+                }
+            }
+        }
+
+        Task::none()
+    }
+
+    fn dismiss_app_update(&mut self) -> Task<Message> {
+        if let Some(update) = self.app_update_status.prompt_update().cloned() {
+            self.app_update_status = AppUpdateStatus::Dismissed(update);
+            self.status = "Update postponed".to_string();
+        }
+
+        Task::none()
+    }
+
+    fn download_app_update(&mut self) -> Task<Message> {
+        let Some(update) = self.app_update_status.pending_update().cloned() else {
+            self.status = "No Prime update is available to download".to_string();
+            return Task::none();
+        };
+
+        self.status = format!("Downloading Prime {}", update.latest_version);
+        self.app_update_status = AppUpdateStatus::Downloading(update.clone());
+        Task::perform(download_and_prepare_update(update), |result| {
+            Message::AppUpdatePrepared(result.map_err(|error| error.to_string()))
+        })
+    }
+
+    fn handle_app_update_prepared(&mut self, result: Result<(), String>) -> Task<Message> {
+        match result {
+            Ok(()) => {
+                self.app_update_status = AppUpdateStatus::Installing;
+                self.status = "Preparing to restart and install the update".to_string();
+                iced::exit()
+            }
+            Err(error) => {
+                self.app_update_status = AppUpdateStatus::Failed(error.clone());
+                self.status = format!("Update failed: {error}");
+                Task::none()
+            }
+        }
+    }
+
+    fn open_image_viewer(&mut self, image: super::ImageViewerRequest) -> Task<Message> {
+        if !super::image_viewer_enabled() {
+            self.image_viewer = None;
+            return Task::none();
+        }
+
+        let high_res = image.high_res.clone();
+        self.image_viewer = Some(ImageViewerImage::from_request(image));
+
+        if let Some(source) = high_res {
+            if let Some(viewer) = &mut self.image_viewer {
+                viewer.high_res_loading = true;
+            }
+
+            return self.load_image_viewer_source_task(source);
+        }
+
+        Task::none()
+    }
+
+    fn handle_image_viewer_image_loaded(
+        &mut self,
+        source: ImageViewerSource,
+        result: Result<std::path::PathBuf, String>,
+    ) -> Task<Message> {
+        if !super::image_viewer_enabled() {
+            return Task::none();
+        }
+
+        let Some(viewer) = &mut self.image_viewer else {
+            return Task::none();
+        };
+
+        if viewer.high_res.as_ref() != Some(&source) {
+            return Task::none();
+        }
+
+        viewer.high_res_loading = false;
+
+        match result {
+            Ok(path) => {
+                viewer.path = path;
+                viewer.high_res_error = None;
+                return self.image_cache_size_task();
+            }
+            Err(error) => {
+                viewer.high_res_error = Some("Full image unavailable".to_string());
+                self.status = format!("Could not load full image: {error}");
+            }
+        }
+
+        Task::none()
+    }
+
+    fn close_image_viewer(&mut self) -> Task<Message> {
+        self.image_viewer = None;
+        Task::none()
+    }
+
+    fn handle_image_cache_size_loaded(&mut self, result: Result<u64, String>) -> Task<Message> {
+        match result {
+            Ok(size) => {
+                self.image_cache_size_bytes = size;
+            }
+            Err(error) => {
+                self.status = format!("Could not read image cache size: {error}");
+            }
+        }
+
+        Task::none()
+    }
+
+    fn clear_image_cache(&mut self) -> Task<Message> {
+        let cache = self.image_cache.clone();
+        self.status = "Clearing image cache".to_string();
+        Task::perform(
+            async move { cache.clear().map_err(|error| error.to_string()) },
+            Message::ImageCacheCleared,
+        )
+    }
+
+    fn handle_image_cache_cleared(&mut self, result: Result<(), String>) -> Task<Message> {
+        match result {
+            Ok(()) => {
+                self.image_cache_size_bytes = 0;
+                self.status = "Cleared image cache".to_string();
+            }
+            Err(error) => {
+                self.status = format!("Could not clear image cache: {error}");
+            }
+        }
+
+        Task::none()
     }
 
     fn close_account_action_surfaces(&mut self) {

@@ -1,4 +1,5 @@
 use super::*;
+use super::session::{ApiIdentity, refreshed_api_session, resolve_credentials};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct RefreshedProfileIdentity {

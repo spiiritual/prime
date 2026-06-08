@@ -4,9 +4,10 @@ use time::{OffsetDateTime, UtcOffset};
 
 use crate::account::{AccountId, AccountProfile, CompetitiveRank, Shard};
 
-use super::super::components::{anchored_popover, compact_loading_indicator};
-use super::super::data::{AccountAvailability, format_whole_number};
-use super::super::{Message, PrimeApp};
+use crate::ui::components::{anchored_popover, compact_loading_indicator};
+use crate::ui::data::account_details::AccountAvailability;
+use crate::ui::data::shop::format_whole_number;
+use crate::ui::{Message, PrimeApp};
 
 const ACCOUNT_MENU_WIDTH: f32 = 190.0;
 const ACCOUNT_MENU_TOP_OFFSET: f32 = 48.0;

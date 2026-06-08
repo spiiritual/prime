@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
@@ -224,7 +225,7 @@ impl GameSettingsSnapshotRepository {
     pub fn saved_metadata(&self) -> Result<Vec<GameSettingsSnapshotMetadata>, GameSettingsError> {
         let mut snapshots = self.metadata()?;
         snapshots.retain(|snapshot| snapshot.purpose == GameSettingsSnapshotPurpose::Saved);
-        snapshots.sort_by(|left, right| right.captured_at_unix.cmp(&left.captured_at_unix));
+        snapshots.sort_by_key(|snapshot| Reverse(snapshot.captured_at_unix));
         Ok(snapshots)
     }
 

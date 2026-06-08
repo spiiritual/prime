@@ -1,6 +1,8 @@
 use time::OffsetDateTime;
 
 use super::*;
+use super::launch_flow::resolve_session_region;
+use super::session::{ApiIdentity, active_api_session};
 use crate::game_settings::{
     GameSettingsSnapshot, GameSettingsSnapshotMetadata, GameSettingsSnapshotPurpose,
     GameSettingsSnapshotRepository, SettingsCategories, VALORANT_PLAYER_SETTINGS_TYPE,

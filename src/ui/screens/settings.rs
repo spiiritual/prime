@@ -1,8 +1,8 @@
 use iced::widget::{button, column, row, text, text_input};
 use iced::{Element, Length};
 
-use super::super::data::format_bytes;
-use super::super::{Message, PrimeApp};
+use crate::ui::data::format_bytes;
+use crate::ui::{Message, PrimeApp};
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     column![

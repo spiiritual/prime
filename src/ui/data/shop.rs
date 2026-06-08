@@ -1,4 +1,7 @@
 use super::*;
+use super::image_assets::{cache_store_images, fetch_store_metadata};
+use super::loadout::SkinDisplay;
+use super::session::{ApiIdentity, resolve_credentials};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct StorefrontResult {
@@ -751,6 +754,18 @@ pub(in crate::ui) fn format_duration(seconds: i64) -> String {
         format!("{minutes}m {seconds}s")
     } else {
         format!("{seconds}s")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_duration;
+
+    #[test]
+    fn format_duration_includes_ticking_seconds() {
+        assert_eq!(format_duration(3_661), "1h 1m 1s");
+        assert_eq!(format_duration(61), "1m 1s");
+        assert_eq!(format_duration(5), "5s");
     }
 }
 

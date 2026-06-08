@@ -1,5 +1,8 @@
 ﻿use super::*;
 
+use super::loadout::{BattlePassRewardDisplay, LoadoutSummary, SkinDisplay, WeaponDisplay};
+use super::shop::{AccessoryDisplay, BundleDisplay, StoreSummary};
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(in crate::ui) struct StoreMetadata {
     pub(in crate::ui) skins: SkinCatalog,

@@ -1,14 +1,14 @@
 use iced::widget::{button, column, container, grid, progress_bar, row, stack, text};
 use iced::{Color, Element, Length, Theme, alignment, border};
 
-use super::super::components::{
+use crate::ui::components::{
     asset_image, compact_item_name, high_res_image_source, loading_line,
 };
-use super::super::data::{
-    BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutGunDisplay, format_duration,
-    weapon_category,
+use crate::ui::data::loadout::{
+    BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutGunDisplay, weapon_category,
 };
-use super::super::{LoadoutTab, Message, PrimeApp};
+use crate::ui::data::shop::format_duration;
+use crate::ui::{LoadoutTab, Message, PrimeApp};
 
 const LOADOUT_CATEGORIES: [&str; 8] = [
     "Sidearms",
@@ -423,14 +423,19 @@ fn battle_pass_highlight_note_style(theme: &Theme) -> iced::widget::container::S
 }
 
 fn battle_pass_highlight_swatch_style(_: &Theme) -> iced::widget::container::Style {
-    let mut style = iced::widget::container::Style::default();
-    style.background = Some(Color::from_rgb8(218, 154, 72).into());
-    style.border.radius = border::radius(3);
-    style
+    iced::widget::container::Style {
+        background: Some(Color::from_rgb8(218, 154, 72).into()),
+        border: iced::Border {
+            radius: border::radius(3),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
 }
 
 fn battle_pass_section_divider_style(_: &Theme) -> iced::widget::container::Style {
-    let mut style = iced::widget::container::Style::default();
-    style.background = Some(Color::from_rgb8(88, 94, 104).into());
-    style
+    iced::widget::container::Style {
+        background: Some(Color::from_rgb8(88, 94, 104).into()),
+        ..Default::default()
+    }
 }

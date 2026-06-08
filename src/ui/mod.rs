@@ -19,12 +19,15 @@ use crate::storage::{AccountRepository, StoredState};
 use crate::updater::AvailableUpdate;
 
 use crate::game_settings::GameSettingsSnapshotMetadata;
-use data::{
+use data::account_details::{
     AccountActivityCheck, AccountAvailability, AccountAvailabilityRefresh, AccountRanksResult,
-    AppliedGameSettingsResult, CapturedAccountDraft, LaunchAccountResult, LoadoutResult,
-    LoadoutSummary, RefreshedProfileIdentity, SavedGameSettingsResult, StoreSummary,
-    StorefrontResult,
+    RefreshedProfileIdentity,
 };
+use data::game_settings::{AppliedGameSettingsResult, SavedGameSettingsResult};
+use data::launch_flow::CapturedAccountDraft;
+use data::launch_flow::{LaunchAccountResult, SHOP_RESET_CHECK_INTERVAL};
+use data::loadout::{LoadoutResult, LoadoutSummary};
+use data::shop::{StoreSummary, StorefrontResult};
 
 const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
 const LAUNCH_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
@@ -68,7 +71,7 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
             .is_some_and(LoadoutSummary::battle_pass_timer_active)
     {
         subscriptions
-            .push(iced::time::every(data::SHOP_RESET_CHECK_INTERVAL).map(Message::ShopTimerTick));
+            .push(iced::time::every(SHOP_RESET_CHECK_INTERVAL).map(Message::ShopTimerTick));
     }
 
     if loading_indicator_active(app) {

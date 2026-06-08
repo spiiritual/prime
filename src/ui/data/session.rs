@@ -1,5 +1,7 @@
 ﻿use super::*;
 
+use super::launch_flow::{resolve_session_region, resolve_session_shard};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct ApiIdentity {
     pub(in crate::ui) puuid: String,
