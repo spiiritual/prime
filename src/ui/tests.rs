@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tempfile::tempdir;
@@ -13,18 +13,20 @@ use super::data::account_details::{
     AccountActivity, AccountActivityProbe, AccountAvailability, classify_account_activity,
     competitive_rank_from_mmr, penalty_status_from_response, rank_name_for_competitive_tier,
 };
+use super::data::cache_account_api_context;
+use super::data::launch_flow::CapturedAccountDraft;
 use super::data::launch_flow::{is_pending_launcher_capture_error, require_launcher_session};
 use super::data::loadout::{
     LoadoutSummary, battle_pass_progress_from_responses, weapon_category, weapon_order,
 };
 use super::data::non_empty_path;
-use super::data::cache_account_api_context;
 use super::data::session::ApiIdentity;
 use super::data::shop::{
-    StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay, StoreSummary,
-    format_whole_number,
+    StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay, StoreSummary, format_whole_number,
 };
-use super::{loading_status_active, masked_account_export_payload, status_bar_visible};
+use super::{
+    Message, PrimeApp, loading_status_active, masked_account_export_payload, status_bar_visible,
+};
 use crate::account::{
     AccountId, AccountPenalty, AccountPenaltyDuration, AccountPenaltyStatus, AccountProfile,
     AuthSession, CompetitiveRank, LauncherSessionBackup, Shard,
@@ -39,7 +41,7 @@ use crate::riot::models::{
     ContractsResponse, GameContentResponse, PlayerLoadoutResponse, PlayerMmrResponse,
     PlayerPenaltiesResponse, StorefrontResponse, WalletResponse,
 };
-use crate::storage::StoredState;
+use crate::storage::{AccountRepository, StoredState};
 
 #[cfg(not(feature = "image-viewer-testing"))]
 #[test]
@@ -51,6 +53,52 @@ fn image_viewer_is_disabled_without_testing_feature() {
 #[test]
 fn image_viewer_can_be_enabled_for_testing_builds() {
     assert!(super::image_viewer_enabled());
+}
+
+fn test_app(repo_dir: &Path) -> PrimeApp {
+    let (mut app, _) = PrimeApp::boot();
+    app.repo = AccountRepository::new(repo_dir.join("accounts.json"));
+    app.state = StoredState::default();
+    app.pending_account = None;
+    app.show_add_account_prompt = false;
+    app.launcher_capture_in_progress = false;
+    app.launcher_capture_kind = None;
+    app.status.clear();
+    app
+}
+
+fn captured_account_draft(
+    backup_root: &Path,
+    puuid: &str,
+    game_name: &str,
+    tag_line: &str,
+    shard: Shard,
+) -> CapturedAccountDraft {
+    let account_id = AccountId::new();
+    let data_dir = backup_root.join(account_id.to_string()).join("Data");
+    fs::create_dir_all(&data_dir).expect("backup data dir");
+    fs::write(data_dir.join("RiotGamesPrivateSettings.yaml"), "settings")
+        .expect("private settings");
+    CapturedAccountDraft {
+        account_id,
+        backup: LauncherSessionBackup {
+            data_dir,
+            captured_at_unix: 100,
+            puuid: puuid.to_string(),
+        },
+        puuid: puuid.to_string(),
+        game_name: Some(game_name.to_string()),
+        tag_line: Some(tag_line.to_string()),
+        shard,
+        session: Some(AuthSession::new(
+            "access",
+            Some("id".to_string()),
+            Some("entitlement".to_string()),
+            "Bearer",
+            Some(3600),
+            100,
+        )),
+    }
 }
 
 #[test]
@@ -1371,6 +1419,182 @@ fn only_missing_private_settings_is_pending_login_capture() {
     assert!(!is_pending_launcher_capture_error(
         &LauncherSessionError::MissingSsid
     ));
+}
+
+#[test]
+fn add_current_account_starts_capture_without_login_prompt() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+
+    let _ = app.update(Message::AddCurrentAccount);
+
+    assert!(app.launcher_capture_in_progress);
+    assert_eq!(
+        app.launcher_capture_kind,
+        Some(super::LauncherCaptureKind::CurrentAccount)
+    );
+    assert!(!app.show_add_account_prompt);
+    assert_eq!(app.status, "Capturing the Riot account currently signed in");
+}
+
+#[test]
+fn current_account_capture_success_populates_confirmation_fields() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.launcher_capture_in_progress = true;
+    let draft = captured_account_draft(
+        &app.repo.launcher_backups_dir(),
+        "puuid-a",
+        "Player",
+        "NA1",
+        Shard::Na,
+    );
+
+    let _ = app.update(Message::CurrentAccountCaptureFinished(Ok(draft.clone())));
+
+    assert!(!app.launcher_capture_in_progress);
+    assert_eq!(app.launcher_capture_kind, None);
+    assert_eq!(app.pending_account, Some(draft));
+    assert_eq!(app.new_display_name, "Player");
+    assert_eq!(app.new_username, "Player#NA1");
+    assert_eq!(app.new_shard, Shard::Na);
+    assert_eq!(
+        app.status,
+        "Captured current Riot account. Confirm the account details to save it."
+    );
+}
+
+#[test]
+fn current_account_capture_failure_clears_capture_state() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.launcher_capture_in_progress = true;
+
+    let _ = app.update(Message::CurrentAccountCaptureFinished(Err(
+        "Riot Client is not signed in with Stay signed in enabled".to_string(),
+    )));
+
+    assert!(!app.launcher_capture_in_progress);
+    assert_eq!(app.launcher_capture_kind, None);
+    assert_eq!(app.pending_account, None);
+    assert_eq!(
+        app.status,
+        "Could not add current account: Riot Client is not signed in with Stay signed in enabled"
+    );
+}
+
+#[test]
+fn confirming_new_current_account_saves_and_selects_profile() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let draft = captured_account_draft(
+        &app.repo.launcher_backups_dir(),
+        "puuid-a",
+        "Player",
+        "NA1",
+        Shard::Na,
+    );
+
+    let _ = app.update(Message::CurrentAccountCaptureFinished(Ok(draft.clone())));
+    let _ = app.update(Message::ConfirmCapturedAccount);
+    app.repo.save(&app.state).expect("persist state");
+    let saved = app.repo.load().expect("load saved state");
+
+    assert_eq!(app.state.accounts.len(), 1);
+    assert_eq!(app.state.selected_account, Some(draft.account_id));
+    assert_eq!(app.pending_account, None);
+    assert_eq!(saved.accounts.len(), 1);
+    assert_eq!(saved.selected_account, Some(draft.account_id));
+    assert_eq!(saved.accounts[0].puuid.as_deref(), Some("puuid-a"));
+}
+
+#[test]
+fn duplicate_current_account_capture_updates_existing_profile_without_confirmation() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.client_version_input = "release-10.10-shipping-1-1234567".to_string();
+    let backup_root = app.repo.launcher_backups_dir();
+    let mut existing = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    existing
+        .apply_riot_identity("puuid-a", "OldName", "OLD")
+        .expect("identity");
+    let existing_id = existing.id;
+    let existing_data = backup_root.join(existing_id.to_string()).join("Data");
+    fs::create_dir_all(&existing_data).expect("existing data");
+    fs::write(existing_data.join("old.txt"), "old").expect("old backup");
+    existing.launcher_session = Some(LauncherSessionBackup {
+        data_dir: existing_data.clone(),
+        captured_at_unix: 50,
+        puuid: "puuid-a".to_string(),
+    });
+    app.state.push_account(existing);
+    let draft = captured_account_draft(&backup_root, "puuid-a", "Player", "NA1", Shard::Eu);
+    let draft_id = draft.account_id;
+    fs::write(
+        draft.backup.data_dir.join("RiotGamesPrivateSettings.yaml"),
+        "new-settings",
+    )
+    .expect("new settings");
+
+    let _ = app.update(Message::CurrentAccountCaptureFinished(Ok(draft)));
+
+    assert_eq!(app.state.accounts.len(), 1);
+    assert_eq!(app.state.selected_account, Some(existing_id));
+    assert_eq!(app.pending_account, None);
+    assert_eq!(
+        app.state.accounts[0].riot_id().as_deref(),
+        Some("Player#NA1")
+    );
+    assert_eq!(
+        app.state.accounts[0].username.as_deref(),
+        Some("Player#NA1")
+    );
+    assert_eq!(app.state.accounts[0].shard, Shard::Eu);
+    assert!(app.state.accounts[0].session.is_some());
+    assert_eq!(
+        app.state.accounts[0]
+            .launcher_session
+            .as_ref()
+            .map(|backup| backup.data_dir.as_path()),
+        Some(existing_data.as_path())
+    );
+    assert!(!backup_root.join(draft_id.to_string()).exists());
+    assert!(!existing_data.join("old.txt").exists());
+    assert_eq!(
+        fs::read_to_string(existing_data.join("RiotGamesPrivateSettings.yaml")).expect("settings"),
+        "new-settings"
+    );
+    assert!(
+        app.status
+            .starts_with("Duplicate account: Prime did not add a new profile because this Riot account is already in Prime; updated and selected Main")
+    );
+    assert!(!app.status.starts_with("Loading account details"));
+    assert!(status_bar_visible(&app.status));
+}
+
+#[test]
+fn canceling_captured_current_account_removes_temporary_backup() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let draft = captured_account_draft(
+        &app.repo.launcher_backups_dir(),
+        "puuid-a",
+        "Player",
+        "NA1",
+        Shard::Na,
+    );
+    let backup_slot = app
+        .repo
+        .launcher_backups_dir()
+        .join(draft.account_id.to_string());
+
+    let _ = app.update(Message::CurrentAccountCaptureFinished(Ok(draft)));
+    assert!(backup_slot.exists());
+
+    let _ = app.update(Message::CancelCapturedAccount);
+
+    assert_eq!(app.pending_account, None);
+    assert!(!backup_slot.exists());
 }
 
 #[test]

@@ -118,6 +118,7 @@ fn loading_status_active(status: &str) -> bool {
     status.starts_with("Loading ")
         || status.starts_with("Refreshing ")
         || status.starts_with("Opening Riot Client")
+        || status.starts_with("Capturing ")
         || status.starts_with("Clearing ")
         || status.starts_with("Launching ")
         || status.starts_with("Exporting ")
@@ -146,6 +147,7 @@ fn status_message_is_error(status: &str) -> bool {
         "Rank refresh failed",
         "Captured account rejected",
         "Captured identity rejected",
+        "Duplicate account",
         "Profile identity rejected",
         "Launcher session rejected",
         "No captured account",
@@ -203,6 +205,7 @@ struct PrimeApp {
     settings_saving_account: Option<AccountId>,
     settings_applying_account: Option<AccountId>,
     launcher_capture_in_progress: bool,
+    launcher_capture_kind: Option<LauncherCaptureKind>,
     launch_preflight_account: Option<AccountId>,
     unavailable_launch_warning: Option<UnavailableLaunchWarning>,
     launching_account: Option<AccountId>,
@@ -211,6 +214,13 @@ struct PrimeApp {
     image_cache_size_bytes: u64,
     loading_frame: usize,
     now: iced::time::Instant,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum LauncherCaptureKind {
+    NewAccount,
+    CurrentAccount,
+    ExistingAccount,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -454,9 +464,11 @@ enum Message {
     NewUsernameChanged(String),
     NewShardSelected(Shard),
     AddAccount,
+    AddCurrentAccount,
     ConfirmAddAccountCapture,
     CancelAddAccountCapture,
     AccountCaptureFinished(Result<CapturedAccountDraft, String>),
+    CurrentAccountCaptureFinished(Result<CapturedAccountDraft, String>),
     ConfirmCapturedAccount,
     CancelCapturedAccount,
     ToggleAccountMenu(AccountId),

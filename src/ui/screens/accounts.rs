@@ -7,7 +7,7 @@ use crate::account::{AccountId, AccountProfile, CompetitiveRank, Shard};
 use crate::ui::components::{anchored_popover, compact_loading_indicator};
 use crate::ui::data::account_details::AccountAvailability;
 use crate::ui::data::shop::format_whole_number;
-use crate::ui::{Message, PrimeApp};
+use crate::ui::{LauncherCaptureKind, Message, PrimeApp};
 
 const ACCOUNT_MENU_WIDTH: f32 = 190.0;
 const ACCOUNT_MENU_TOP_OFFSET: f32 = 48.0;
@@ -37,8 +37,10 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
 
     let controls = row![
         add_account_button(app),
+        add_current_account_button(app),
         button("Import account").on_press_maybe(
-            (!app.import_account_in_progress).then_some(Message::OpenImportAccount)
+            (!app.import_account_in_progress && !app.launcher_capture_in_progress)
+                .then_some(Message::OpenImportAccount)
         )
     ]
     .spacing(10);
@@ -121,7 +123,9 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
 }
 
 fn add_account_button(app: &PrimeApp) -> Element<'static, Message> {
-    let content: Element<_> = if app.launcher_capture_in_progress {
+    let is_capturing_new_account =
+        app.launcher_capture_kind == Some(LauncherCaptureKind::NewAccount);
+    let content: Element<_> = if is_capturing_new_account {
         row![
             compact_loading_indicator(app.loading_frame),
             text("Capturing login...")
@@ -130,12 +134,42 @@ fn add_account_button(app: &PrimeApp) -> Element<'static, Message> {
         .align_y(alignment::Vertical::Center)
         .into()
     } else {
-        text("Add account").into()
+        text("Add new account").into()
     };
 
-    button(content)
+    let button: Element<'static, Message> = button(content)
         .on_press_maybe((!app.launcher_capture_in_progress).then_some(Message::AddAccount))
+        .into();
+    let tip = container(text("Adds an account by opening Riot Client for a login capture").size(13))
+        .padding([6, 8])
+        .style(iced::widget::container::bordered_box);
+
+    tooltip(button, tip, tooltip::Position::Bottom).into()
+}
+
+fn add_current_account_button(app: &PrimeApp) -> Element<'static, Message> {
+    let is_capturing_current_account =
+        app.launcher_capture_kind == Some(LauncherCaptureKind::CurrentAccount);
+    let content: Element<_> = if is_capturing_current_account {
+        row![
+            compact_loading_indicator(app.loading_frame),
+            text("Capturing current...")
+        ]
+        .spacing(8)
+        .align_y(alignment::Vertical::Center)
         .into()
+    } else {
+        text("Add current account").into()
+    };
+
+    let button: Element<'static, Message> = button(content)
+        .on_press_maybe((!app.launcher_capture_in_progress).then_some(Message::AddCurrentAccount))
+        .into();
+    let tip = container(text("Adds the Riot account currently logged into Riot Client").size(13))
+        .padding([6, 8])
+        .style(iced::widget::container::bordered_box);
+
+    tooltip(button, tip, tooltip::Position::Bottom).into()
 }
 
 fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, Message> {

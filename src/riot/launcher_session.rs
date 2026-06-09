@@ -310,6 +310,26 @@ pub fn remove_launcher_session_backup(
     Ok(())
 }
 
+pub fn adopt_launcher_session_backup(
+    backup_root: impl AsRef<Path>,
+    source_account_id: AccountId,
+    target_account_id: AccountId,
+    mut backup: LauncherSessionBackup,
+) -> Result<LauncherSessionBackup, LauncherSessionError> {
+    if source_account_id == target_account_id {
+        return Ok(backup);
+    }
+
+    let backup_root = backup_root.as_ref();
+    let target_data_dir = backup_root.join(target_account_id.to_string()).join("Data");
+
+    replace_dir_contents(&backup.data_dir, &target_data_dir)?;
+    remove_launcher_session_backup(backup_root, source_account_id)?;
+
+    backup.data_dir = target_data_dir;
+    Ok(backup)
+}
+
 #[derive(Debug, Error)]
 pub enum LauncherSessionError {
     #[error("Riot private settings file was not found in the default Riot Client data folders")]
@@ -854,5 +874,37 @@ riot-login:
         remove_launcher_session_backup(backup_root.path(), account_id).expect("remove backup");
 
         assert!(!slot.exists());
+    }
+
+    #[test]
+    fn adopts_captured_launcher_backup_into_existing_slot() {
+        let backup_root = tempdir().expect("backup root");
+        let source_id = AccountId::new();
+        let target_id = AccountId::new();
+        let source_data = backup_root.path().join(source_id.to_string()).join("Data");
+        let target_slot = backup_root.path().join(target_id.to_string());
+        let target_data = target_slot.join("Data");
+        fs::create_dir_all(&source_data).expect("source data");
+        fs::create_dir_all(&target_data).expect("target data");
+        fs::write(source_data.join(PRIVATE_SETTINGS_FILE), "new").expect("source settings");
+        fs::write(target_data.join("old.txt"), "old").expect("old target file");
+        let backup = LauncherSessionBackup {
+            data_dir: source_data,
+            captured_at_unix: 100,
+            puuid: "puuid-value".to_string(),
+        };
+
+        let adopted =
+            adopt_launcher_session_backup(backup_root.path(), source_id, target_id, backup)
+                .expect("adopt backup");
+
+        assert_eq!(adopted.data_dir, target_data);
+        assert_eq!(adopted.puuid, "puuid-value");
+        assert!(!backup_root.path().join(source_id.to_string()).exists());
+        assert_eq!(
+            fs::read_to_string(adopted.data_dir.join(PRIVATE_SETTINGS_FILE)).expect("settings"),
+            "new"
+        );
+        assert!(!adopted.data_dir.join("old.txt").exists());
     }
 }

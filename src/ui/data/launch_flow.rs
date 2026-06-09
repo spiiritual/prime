@@ -259,6 +259,36 @@ pub(in crate::ui) async fn start_account_capture(
     }
 }
 
+pub(in crate::ui) async fn start_current_account_capture(
+    account_id: AccountId,
+    backup_root: PathBuf,
+) -> Result<CapturedAccountDraft, String> {
+    let backup_root_for_capture = backup_root.clone();
+    let captured = tokio::task::spawn_blocking(move || {
+        capture_current_launcher_session(account_id, &backup_root_for_capture)
+    })
+    .await
+    .map_err(|error| format!("failed to join current launcher session capture task: {error}"))?
+    .map_err(current_account_capture_error)?;
+
+    match enrich_captured_account(captured).await {
+        Ok(draft) => Ok(draft),
+        Err(error) => {
+            let _ = remove_launcher_session_backup(backup_root, account_id);
+            Err(error)
+        }
+    }
+}
+
+fn current_account_capture_error(error: LauncherSessionError) -> String {
+    match error {
+        LauncherSessionError::PrivateSettingsNotFound | LauncherSessionError::MissingSsid => {
+            "Riot Client is not signed in with Stay signed in enabled".to_string()
+        }
+        error => error.to_string(),
+    }
+}
+
 async fn close_riot_client_after_capture() -> Result<(), String> {
     tokio::task::spawn_blocking(close_riot_client_processes)
         .await

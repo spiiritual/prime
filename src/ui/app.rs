@@ -6,7 +6,9 @@ use crate::account_transfer::{export_account, import_account};
 use crate::image_cache::ImageCache;
 use crate::launch::{LaunchConfig, LaunchTargetProcess};
 use crate::riot::auth::parse_redirect_tokens;
-use crate::riot::launcher_session::{CapturedLauncherSession, remove_launcher_session_backup};
+use crate::riot::launcher_session::{
+    CapturedLauncherSession, adopt_launcher_session_backup, remove_launcher_session_backup,
+};
 use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{AvailableUpdate, check_for_update, download_and_prepare_update};
 
@@ -20,7 +22,7 @@ use super::data::game_settings::{
 use super::data::image_assets::fetch_current_client_version;
 use super::data::launch_flow::{
     check_riot_client_window_visible, launch_account, start_account_capture,
-    start_verified_launcher_session_login,
+    start_current_account_capture, start_verified_launcher_session_login,
 };
 use super::data::loadout::fetch_loadout;
 use super::data::shop::fetch_storefront;
@@ -78,6 +80,7 @@ impl PrimeApp {
                 settings_saving_account: None,
                 settings_applying_account: None,
                 launcher_capture_in_progress: false,
+                launcher_capture_kind: None,
                 launch_preflight_account: None,
                 unavailable_launch_warning: None,
                 launching_account: None,
@@ -219,6 +222,27 @@ impl PrimeApp {
 
                 Task::none()
             }
+            Message::AddCurrentAccount => {
+                if self.launcher_capture_in_progress {
+                    self.status = "Launcher login capture is already in progress".to_string();
+                    return Task::none();
+                }
+
+                let account_id = AccountId::new();
+                let backup_root = self.repo.launcher_backups_dir();
+                self.pending_account = None;
+                self.close_account_surfaces();
+                self.new_display_name.clear();
+                self.new_username.clear();
+                self.status = "Capturing the Riot account currently signed in".to_string();
+                self.launcher_capture_in_progress = true;
+                self.launcher_capture_kind = Some(super::LauncherCaptureKind::CurrentAccount);
+
+                Task::perform(
+                    async move { start_current_account_capture(account_id, backup_root).await },
+                    Message::CurrentAccountCaptureFinished,
+                )
+            }
             Message::ConfirmAddAccountCapture => {
                 if self.launcher_capture_in_progress {
                     self.status = "Launcher login capture is already in progress".to_string();
@@ -239,6 +263,7 @@ impl PrimeApp {
                     "Opening Riot Client. Log in with Remember Me enabled to add the account."
                         .to_string();
                 self.launcher_capture_in_progress = true;
+                self.launcher_capture_kind = Some(super::LauncherCaptureKind::NewAccount);
 
                 Task::perform(
                     async move { start_account_capture(account_id, backup_root, config).await },
@@ -252,6 +277,7 @@ impl PrimeApp {
             }
             Message::AccountCaptureFinished(result) => {
                 self.launcher_capture_in_progress = false;
+                self.launcher_capture_kind = None;
 
                 match result {
                     Ok(draft) => {
@@ -272,11 +298,71 @@ impl PrimeApp {
                     }
                 }
             }
+            Message::CurrentAccountCaptureFinished(result) => {
+                self.launcher_capture_in_progress = false;
+                self.launcher_capture_kind = None;
+
+                match result {
+                    Ok(draft) => {
+                        if let Some(existing_id) = self
+                            .state
+                            .accounts
+                            .iter()
+                            .find(|account| {
+                                account
+                                    .puuid
+                                    .as_ref()
+                                    .is_some_and(|puuid| puuid.eq_ignore_ascii_case(&draft.puuid))
+                            })
+                            .map(|account| account.id)
+                        {
+                            self.new_username =
+                                draft.riot_id().unwrap_or_else(|| draft.puuid.clone());
+                            self.new_shard = draft.shard;
+                            return Task::batch([
+                                self.update_existing_captured_account(existing_id, draft),
+                                alert_and_focus_latest_window(),
+                            ]);
+                        }
+
+                        self.new_display_name = draft
+                            .game_name
+                            .clone()
+                            .unwrap_or_else(|| "New account".to_string());
+                        self.new_username = draft.riot_id().unwrap_or_else(|| draft.puuid.clone());
+                        self.new_shard = draft.shard;
+                        self.status =
+                            "Captured current Riot account. Confirm the account details to save it."
+                                .to_string();
+                        self.pending_account = Some(draft);
+                        alert_and_focus_latest_window()
+                    }
+                    Err(error) => {
+                        self.status = format!("Could not add current account: {error}");
+                        Task::none()
+                    }
+                }
+            }
             Message::ConfirmCapturedAccount => {
                 let Some(draft) = self.pending_account.clone() else {
                     self.status = "No captured account is waiting to be saved".to_string();
                     return Task::none();
                 };
+
+                if let Some(existing_id) = self
+                    .state
+                    .accounts
+                    .iter()
+                    .find(|account| {
+                        account
+                            .puuid
+                            .as_ref()
+                            .is_some_and(|puuid| puuid.eq_ignore_ascii_case(&draft.puuid))
+                    })
+                    .map(|account| account.id)
+                {
+                    return self.update_existing_captured_account(existing_id, draft);
+                }
 
                 match AccountProfile::new(
                     self.new_display_name.clone(),
@@ -648,6 +734,7 @@ impl PrimeApp {
                     "Opening Riot Client and waiting for remembered login capture for {summary}"
                 );
                 self.launcher_capture_in_progress = true;
+                self.launcher_capture_kind = Some(super::LauncherCaptureKind::ExistingAccount);
 
                 Task::perform(
                     async move {
@@ -658,6 +745,7 @@ impl PrimeApp {
             }
             Message::LauncherSessionLoginStarted(result) => {
                 self.launcher_capture_in_progress = false;
+                self.launcher_capture_kind = None;
 
                 match result {
                     Ok(captured) => {
@@ -1812,6 +1900,71 @@ impl PrimeApp {
         )
     }
 
+    fn update_existing_captured_account(
+        &mut self,
+        account_id: AccountId,
+        draft: super::data::launch_flow::CapturedAccountDraft,
+    ) -> Task<Message> {
+        let backup = match adopt_launcher_session_backup(
+            self.repo.launcher_backups_dir(),
+            draft.account_id,
+            account_id,
+            draft.backup,
+        ) {
+            Ok(backup) => backup,
+            Err(error) => {
+                self.status = format!("Captured account rejected: {error}");
+                return Task::none();
+            }
+        };
+
+        let Some(account) = self
+            .state
+            .accounts
+            .iter_mut()
+            .find(|account| account.id == account_id)
+        else {
+            self.status = match remove_launcher_session_backup(
+                self.repo.launcher_backups_dir(),
+                draft.account_id,
+            ) {
+                Ok(()) => "Captured account, but the profile no longer exists".to_string(),
+                Err(error) => format!(
+                    "Captured account, but the profile no longer exists and cleanup failed: {error}"
+                ),
+            };
+            return Task::none();
+        };
+
+        account.shard = self.new_shard;
+        account.username = non_empty_account_field(self.new_username.clone());
+        account.session = draft.session;
+
+        if let Err(error) = account.attach_launcher_session(backup) {
+            self.status = format!("Captured account rejected: {error}");
+            return Task::none();
+        }
+
+        if let (Some(game_name), Some(tag_line)) = (draft.game_name, draft.tag_line)
+            && let Err(error) = account.apply_riot_identity(draft.puuid, game_name, tag_line)
+        {
+            self.status = format!("Captured identity rejected: {error}");
+            return Task::none();
+        }
+
+        let summary = account.summary();
+        self.account_availability.remove(&account_id);
+        self.state.select_account(account_id);
+        self.pending_account = None;
+        self.new_display_name.clear();
+        self.new_username.clear();
+        self.clear_selected_account_views();
+        self.status = format!(
+            "Duplicate account: Prime did not add a new profile because this Riot account is already in Prime; updated and selected {summary}"
+        );
+        self.save_task()
+    }
+
     fn restore_active_tab_scroll_task(&self) -> Task<Message> {
         operation::scroll_to(
             MAIN_PANEL_SCROLLABLE_ID,
@@ -1925,4 +2078,14 @@ fn alert_and_focus_latest_window() -> Task<Message> {
             ])
         })
     })
+}
+
+fn non_empty_account_field(value: String) -> Option<String> {
+    let trimmed = value.trim();
+
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
