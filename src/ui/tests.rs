@@ -16,7 +16,7 @@ use super::data::account_details::{
 use super::data::cache_account_api_context;
 use super::data::launch_flow::CapturedAccountDraft;
 use super::data::launch_flow::{
-    is_pending_launcher_capture_error, load_accounts, require_launcher_session,
+    LaunchAccountResult, is_pending_launcher_capture_error, load_accounts, require_launcher_session,
 };
 use super::data::loadout::{
     LoadoutSummary, battle_pass_progress_from_responses, weapon_category, weapon_order,
@@ -1514,6 +1514,56 @@ fn launch_is_refused_while_a_login_capture_runs() {
     assert_eq!(app.launching_account, None);
     assert_eq!(app.launch_preflight_account, None);
     assert!(app.status.contains("login capture"), "{}", app.status);
+}
+
+fn finished_launch(previous_account_backup: Option<(AccountId, LauncherSessionBackup)>) -> Message {
+    Message::LaunchFinished(Ok(LaunchAccountResult {
+        target: crate::launch::LaunchTargetProcess::Valorant,
+        previous_account_backup,
+        previous_account_sync_warning: None,
+        synced_backup: None,
+        sync_warning: None,
+    }))
+}
+
+#[test]
+fn finished_launch_keeps_the_previous_account_login() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let backup_root = app.repo.launcher_backups_dir();
+    let previous = account_with_backup(&backup_root, "Previous", "settings");
+    let mut refreshed = previous.launcher_session.clone().expect("backup");
+    refreshed.captured_at_unix = 500;
+    app.state.push_account(previous.clone());
+
+    let _ = app.update(finished_launch(Some((previous.id, refreshed.clone()))));
+
+    assert_eq!(
+        app.state.accounts[0].launcher_session.as_ref(),
+        Some(&refreshed)
+    );
+}
+
+#[test]
+fn finished_launch_ignores_a_previous_login_for_a_replaced_slot() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let backup_root = app.repo.launcher_backups_dir();
+    let previous = account_with_backup(&backup_root, "Previous", "settings");
+    let current = previous.launcher_session.clone().expect("backup");
+    let stale = LauncherSessionBackup {
+        data_dir: backup_root.join("replaced").join("Data"),
+        captured_at_unix: 500,
+        puuid: current.puuid.clone(),
+    };
+    app.state.push_account(previous.clone());
+
+    let _ = app.update(finished_launch(Some((previous.id, stale))));
+
+    assert_eq!(
+        app.state.accounts[0].launcher_session.as_ref(),
+        Some(&current)
+    );
 }
 
 #[test]

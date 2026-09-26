@@ -25,7 +25,7 @@ use crate::riot::launcher_session::{
     capture_current_launcher_session, clear_existing_launcher_data_dirs,
     persist_refreshed_refresh_token, read_backup_refresh_token, remove_launcher_session_backup,
     remove_legacy_launcher_backups, remove_unreferenced_launcher_backups,
-    sync_current_launcher_session_backup,
+    sync_current_launcher_session_backup, sync_signed_in_launcher_session,
 };
 use crate::riot::models::{
     AccessoryStoreOffer, BonusStoreOffer, ContractsResponse, GameContentResponse,

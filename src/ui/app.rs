@@ -1,7 +1,9 @@
 use iced::widget::operation;
 use iced::{Task, clipboard, window};
 
-use crate::account::{AccountId, AccountPenaltyStatus, AccountProfile, CompetitiveRank, Shard};
+use crate::account::{
+    AccountId, AccountPenaltyStatus, AccountProfile, CompetitiveRank, LauncherSessionBackup, Shard,
+};
 use crate::account_transfer::{export_account, import_account};
 use crate::image_cache::ImageCache;
 use crate::launch::{LaunchConfig, LaunchTargetProcess};
@@ -1535,7 +1537,8 @@ impl PrimeApp {
                 Ok(result) if result.target == LaunchTargetProcess::Valorant => {
                     let launched_account = self.launching_account.take();
                     self.launch_progress_checking = false;
-                    let mut saved_backup = false;
+                    let mut saved_backup =
+                        self.store_previous_account_backup(result.previous_account_backup);
 
                     if let (Some(account_id), Some(backup)) =
                         (launched_account, result.synced_backup)
@@ -1549,13 +1552,19 @@ impl PrimeApp {
                         saved_backup = true;
                     }
 
-                    self.status = match result.sync_warning {
-                        Some(warning) => {
+                    self.status = match (result.sync_warning, result.previous_account_sync_warning)
+                    {
+                        (Some(warning), _) => {
                             format!(
                                 "Could not sync launcher session after VALORANT window detected: {warning}"
                             )
                         }
-                        None => "VALORANT window detected; launcher session updated".to_string(),
+                        (None, Some(warning)) => format!(
+                            "VALORANT window detected, but the previous account's login could not be saved: {warning}"
+                        ),
+                        (None, None) => {
+                            "VALORANT window detected; launcher session updated".to_string()
+                        }
                     };
 
                     if saved_backup {
@@ -1564,10 +1573,14 @@ impl PrimeApp {
                         Task::none()
                     }
                 }
-                Ok(_) => {
+                Ok(result) => {
                     self.launching_account = None;
                     self.launch_progress_checking = false;
-                    Task::none()
+                    if self.store_previous_account_backup(result.previous_account_backup) {
+                        self.save_task()
+                    } else {
+                        Task::none()
+                    }
                 }
                 Err(error) => {
                     self.launching_account = None;
@@ -1886,6 +1899,38 @@ impl PrimeApp {
         )
     }
 
+    /// Records the refreshed backup of the account that was signed in before a switch. Returns
+    /// whether anything changed and needs saving.
+    fn store_previous_account_backup(
+        &mut self,
+        previous: Option<(AccountId, LauncherSessionBackup)>,
+    ) -> bool {
+        let Some((account_id, backup)) = previous else {
+            return false;
+        };
+        let Some(account) = self
+            .state
+            .accounts
+            .iter_mut()
+            .find(|account| account.id == account_id)
+        else {
+            return false;
+        };
+
+        // Only accept it if the account still points at that slot; it may have been re-captured or
+        // removed while the launch ran.
+        if account
+            .launcher_session
+            .as_ref()
+            .is_none_or(|current| current.data_dir != backup.data_dir)
+        {
+            return false;
+        }
+
+        account.launcher_session = Some(backup);
+        true
+    }
+
     fn start_account_launch(&mut self, account: AccountProfile, status: String) -> Task<Message> {
         let id = account.id;
         let config = LaunchConfig {
@@ -1893,6 +1938,17 @@ impl PrimeApp {
             ..LaunchConfig::default()
         };
         let backup = account.launcher_session.clone();
+        let saved_sessions = self
+            .state
+            .accounts
+            .iter()
+            .filter_map(|account| {
+                account
+                    .launcher_session
+                    .clone()
+                    .map(|backup| (account.id, backup))
+            })
+            .collect();
 
         self.state.select_account(id);
         self.close_account_surfaces();
@@ -1905,7 +1961,7 @@ impl PrimeApp {
         Task::batch([
             self.save_task(),
             Task::perform(
-                async move { launch_account(config, backup).await },
+                async move { launch_account(config, backup, saved_sessions).await },
                 Message::LaunchFinished,
             ),
         ])

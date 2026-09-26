@@ -64,16 +64,19 @@ pub(in crate::ui) fn load_accounts(repo: &AccountRepository) -> Result<LoadedAcc
 pub(in crate::ui) async fn launch_account(
     config: LaunchConfig,
     backup: Option<LauncherSessionBackup>,
+    saved_sessions: Vec<(AccountId, LauncherSessionBackup)>,
 ) -> Result<LaunchAccountResult, String> {
     let backup = require_launcher_session(backup)?;
 
-    prepare_account_launch(config, backup.clone()).await?;
+    let previous_sync = prepare_account_launch(config, backup.clone(), saved_sessions).await?;
     let target =
         wait_for_launch_target_window(VALORANT_OPEN_TIMEOUT, VALORANT_OPEN_POLL_INTERVAL).await?;
     let sync = sync_launcher_session_after_launch(backup).await;
 
     Ok(LaunchAccountResult {
         target,
+        previous_account_backup: previous_sync.as_ref().ok().cloned().flatten(),
+        previous_account_sync_warning: previous_sync.err(),
         synced_backup: sync.as_ref().ok().cloned(),
         sync_warning: sync.err(),
     })
@@ -82,18 +85,28 @@ pub(in crate::ui) async fn launch_account(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct LaunchAccountResult {
     pub(in crate::ui) target: LaunchTargetProcess,
+    /// The account that was signed in before switching, with its backup refreshed from the live login.
+    pub(in crate::ui) previous_account_backup: Option<(AccountId, LauncherSessionBackup)>,
+    pub(in crate::ui) previous_account_sync_warning: Option<String>,
     pub(in crate::ui) synced_backup: Option<LauncherSessionBackup>,
     pub(in crate::ui) sync_warning: Option<String>,
 }
 
+type PreviousAccountSync = Result<Option<(AccountId, LauncherSessionBackup)>, String>;
+
 async fn prepare_account_launch(
     config: LaunchConfig,
     backup: LauncherSessionBackup,
-) -> Result<(), String> {
+    saved_sessions: Vec<(AccountId, LauncherSessionBackup)>,
+) -> Result<PreviousAccountSync, String> {
     tokio::task::spawn_blocking(move || {
         close_riot_processes().map_err(|error| error.to_string())?;
+        // Save the outgoing login first; Riot may have rotated its refresh token since capture.
+        let previous_sync =
+            sync_signed_in_launcher_session(&saved_sessions).map_err(|error| error.to_string());
         apply_launcher_session_backup(&backup).map_err(|error| error.to_string())?;
-        launch_valorant(&config).map_err(|error| error.to_string())
+        launch_valorant(&config).map_err(|error| error.to_string())?;
+        Ok(previous_sync)
     })
     .await
     .map_err(|error| format!("failed to join VALORANT launch preparation task: {error}"))?
