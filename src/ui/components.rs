@@ -13,7 +13,9 @@ use iced::{
 use super::data::shop::{CurrencyBalanceDisplay, StoreSummary};
 use super::{ImageViewerRequest, ImageViewerSource, Message, image_viewer_enabled};
 
-// Keeps popovers in the overlay layer so controls are not clipped by their parent card.
+// Keeps popovers in the overlay layer so controls are not clipped by their parent card. A left
+// click outside both the popover and its anchor publishes `Message::DismissPopovers`; clicks on the
+// anchor are left to its own toggle.
 pub(super) fn anchored_popover<'a>(
     base: impl Into<Element<'a, Message>>,
     popover: impl Into<Element<'a, Message>>,
@@ -249,6 +251,16 @@ impl overlay::Overlay<Message, Theme, Renderer> for AnchoredOverlay<'_, '_> {
             shell,
             &viewport,
         );
+
+        // Not captured, so the click still reaches whatever is under it.
+        if matches!(
+            event,
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+        ) && !cursor.is_over(layout.bounds())
+            && !cursor.is_over(self.anchor)
+        {
+            shell.publish(Message::DismissPopovers);
+        }
     }
 
     fn mouse_interaction(

@@ -126,7 +126,31 @@ impl PrimeApp {
     }
 
     pub(super) fn update(&mut self, message: Message) -> Task<Message> {
-        self.handle_message(message)
+        let task = self.handle_message(message);
+
+        // Popovers are drawn above everything, including a dialog's scrim, so they close when a
+        // dialog opens.
+        if self.dialog_open() {
+            self.close_popovers();
+        }
+
+        task
+    }
+
+    fn dialog_open(&self) -> bool {
+        self.show_add_account_prompt
+            || self.show_import_account_prompt
+            || self.exported_account.is_some()
+            || self.confirm_delete_account.is_some()
+            || self.confirm_recapture_account.is_some()
+            || self.unavailable_launch_warning.is_some()
+            || self.app_update_status.prompt_update().is_some()
+            || (super::image_viewer_enabled() && self.image_viewer.is_some())
+    }
+
+    fn close_popovers(&mut self) {
+        self.account_switcher_open = false;
+        self.open_account_menu = None;
     }
 
     /// Shows a status message. Setting the same text again restarts its display time, so a
@@ -217,6 +241,10 @@ impl PrimeApp {
                     self.close_account_action_surfaces();
                 }
 
+                Task::none()
+            }
+            Message::DismissPopovers => {
+                self.close_popovers();
                 Task::none()
             }
             Message::SelectAccount(id) => {

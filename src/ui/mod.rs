@@ -510,6 +510,8 @@ enum Message {
         offset: AbsoluteOffset,
     },
     ToggleAccountSwitcher,
+    /// A click outside the open account switcher or account menu.
+    DismissPopovers,
     SelectAccount(AccountId),
     NewDisplayNameChanged(String),
     NewUsernameChanged(String),

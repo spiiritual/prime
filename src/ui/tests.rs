@@ -1833,6 +1833,44 @@ fn launch_warns_before_closing_a_running_game() {
 }
 
 #[test]
+fn a_dialog_opening_closes_the_popovers() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    app.state.push_account(account.clone());
+    app.launch_preflight_account = Some(account.id);
+    app.account_switcher_open = true;
+    app.open_account_menu = Some(account.id);
+
+    let _ = app.update(Message::LaunchPreflightChecked(
+        super::data::account_details::AccountActivityCheck {
+            account_id: account.id,
+            availability: AccountAvailability::Available,
+        },
+        true,
+    ));
+
+    assert!(app.unavailable_launch_warning.is_some());
+    assert!(!app.account_switcher_open);
+    assert_eq!(app.open_account_menu, None);
+}
+
+#[test]
+fn clicking_outside_a_popover_closes_it() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    app.state.push_account(account.clone());
+    app.account_switcher_open = true;
+    app.open_account_menu = Some(account.id);
+
+    let _ = app.update(Message::DismissPopovers);
+
+    assert!(!app.account_switcher_open);
+    assert_eq!(app.open_account_menu, None);
+}
+
+#[test]
 fn launch_starts_when_no_game_is_running() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
