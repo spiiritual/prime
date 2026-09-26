@@ -23,7 +23,7 @@ use super::data::loadout::{
     LoadoutSummary, battle_pass_progress_from_responses, weapon_category, weapon_order,
 };
 use super::data::non_empty_path;
-use super::data::session::ApiIdentity;
+use super::data::session::{ApiIdentity, api_identity};
 use super::data::shop::{
     StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay, StoreSummary, format_whole_number,
 };
@@ -1789,7 +1789,10 @@ fn add_account_prompt_warns_when_valorant_is_running() {
     let task = app.update(Message::AddAccount);
 
     assert!(app.show_add_account_prompt);
-    assert!(task.units() > 0, "opening the prompt checks for a running game");
+    assert!(
+        task.units() > 0,
+        "opening the prompt checks for a running game"
+    );
 
     let _ = app.update(Message::CapturePromptGameChecked(true));
     assert!(app.capture_prompt_valorant_running);
@@ -1806,7 +1809,10 @@ fn recapture_prompt_warns_when_valorant_is_running() {
     app.state.push_account(account.clone());
 
     let task = app.update(Message::RequestLauncherSessionLogin(account.id));
-    assert!(task.units() > 0, "opening the prompt checks for a running game");
+    assert!(
+        task.units() > 0,
+        "opening the prompt checks for a running game"
+    );
 
     let _ = app.update(Message::CapturePromptGameChecked(true));
     assert!(app.capture_prompt_valorant_running);
@@ -2190,6 +2196,155 @@ fn canceling_captured_current_account_removes_temporary_backup() {
 
     assert_eq!(app.pending_account, None);
     assert!(!backup_slot.exists());
+}
+
+fn redirect_url_for_subject(subject: &str) -> String {
+    use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+    let claims = URL_SAFE_NO_PAD.encode(format!(r#"{{"sub":"{subject}"}}"#));
+    format!(
+        "https://playvalorant.com/opt_in#access_token=header.{claims}.signature&expires_in=3600"
+    )
+}
+
+fn app_with_puuid_account(dir: &Path, puuid: &str) -> PrimeApp {
+    let mut app = test_app(dir);
+    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    account.puuid = Some(puuid.to_string());
+    let account_id = account.id;
+    app.state.push_account(account);
+    app.state.select_account(account_id);
+    app
+}
+
+#[test]
+fn token_import_rejects_a_token_for_another_riot_account() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = app_with_puuid_account(dir.path(), "puuid-a");
+    app.redirect_input = redirect_url_for_subject("puuid-b");
+
+    let _ = app.update(Message::ImportRedirect);
+
+    assert!(
+        app.status.starts_with("Could not import redirect token"),
+        "{}",
+        app.status
+    );
+    assert_eq!(app.state.accounts[0].session, None);
+}
+
+#[test]
+fn token_import_rejects_a_token_whose_account_cannot_be_read() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = app_with_puuid_account(dir.path(), "puuid-a");
+    app.redirect_input = "https://playvalorant.com/opt_in#access_token=opaque".to_string();
+
+    let _ = app.update(Message::ImportRedirect);
+
+    assert!(
+        app.status.starts_with("Could not import redirect token"),
+        "{}",
+        app.status
+    );
+    assert_eq!(app.state.accounts[0].session, None);
+}
+
+#[test]
+fn token_import_accepts_the_accounts_own_token() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = app_with_puuid_account(dir.path(), "puuid-a");
+    app.redirect_input = redirect_url_for_subject("puuid-a");
+
+    let _ = app.update(Message::ImportRedirect);
+
+    assert!(app.state.accounts[0].session.is_some(), "{}", app.status);
+}
+
+#[test]
+fn cache_account_api_context_leaves_the_account_alone_for_another_riot_account() {
+    let mut state = StoredState::default();
+    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    account.puuid = Some("puuid-a".to_string());
+    let account_id = account.id;
+    state.push_account(account);
+
+    let result = cache_account_api_context(
+        &mut state,
+        account_id,
+        AuthSession::new("access", None, None, "Bearer", Some(3600), 100),
+        None,
+        ApiIdentity {
+            puuid: "puuid-b".to_string(),
+            game_name: None,
+            tag_line: None,
+            shard: Shard::Eu,
+        },
+    );
+
+    assert!(result.is_err());
+    assert_eq!(state.accounts[0].session, None);
+    assert_eq!(state.accounts[0].shard, Shard::Na);
+    assert_eq!(state.accounts[0].puuid.as_deref(), Some("puuid-a"));
+}
+
+fn player_info(puuid: &str) -> crate::riot::models::PlayerInfoResponse {
+    serde_json::from_value(serde_json::json!({
+        "country": "usa",
+        "sub": puuid,
+        "acct": {"game_name": "Player", "tag_line": "NA1"},
+    }))
+    .expect("player info")
+}
+
+#[test]
+fn api_identity_refuses_a_session_for_another_riot_account() {
+    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    account.puuid = Some("puuid-a".to_string());
+
+    let error = api_identity(&account, Some(&player_info("puuid-b")), Shard::Na)
+        .expect_err("another account");
+
+    assert!(error.contains("puuid-b"), "{error}");
+}
+
+#[test]
+fn api_identity_uses_the_signed_in_riot_account() {
+    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    account.puuid = Some("puuid-a".to_string());
+
+    let identity =
+        api_identity(&account, Some(&player_info("puuid-a")), Shard::Eu).expect("identity");
+
+    assert_eq!(identity.puuid, "puuid-a");
+    assert_eq!(identity.game_name.as_deref(), Some("Player"));
+    assert_eq!(identity.shard, Shard::Eu);
+}
+
+#[test]
+fn api_identity_falls_back_to_the_saved_puuid_without_player_info() {
+    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    account.puuid = Some("puuid-a".to_string());
+
+    let identity = api_identity(&account, None, Shard::Na).expect("identity");
+
+    assert_eq!(identity.puuid, "puuid-a");
+    assert_eq!(identity.game_name, None);
+}
+
+#[test]
+fn a_stored_token_for_another_riot_account_is_not_used() {
+    let tokens = crate::riot::auth::parse_redirect_tokens(&redirect_url_for_subject("puuid-b"))
+        .expect("tokens");
+    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    account.puuid = Some("puuid-a".to_string());
+    account.session = Some(tokens.into_session());
+    let api = crate::riot::client::RiotApi::new().expect("api");
+
+    let result =
+        iced::futures::executor::block_on(super::data::session::active_api_session(&api, &account));
+
+    assert!(result.is_err(), "the other account's token was used");
 }
 
 #[test]

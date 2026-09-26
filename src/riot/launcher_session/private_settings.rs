@@ -1,5 +1,4 @@
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use crate::riot::auth::jwt_subject;
 
 const PSL_REFRESH_TOKEN_PATH: [&str; 4] = ["psl", "authorization", "riot-client", "refresh_token"];
 const PSL_ID_TOKEN_PATH: [&str; 4] = ["psl", "authorization", "riot-client", "id_token"];
@@ -13,12 +12,8 @@ pub fn private_settings_refresh_token(contents: &str) -> Option<String> {
 /// token. The token is decoded locally, not verified; it only identifies which login was saved.
 pub fn private_settings_signed_in_puuid(contents: &str) -> Option<String> {
     let id_token = yaml_path_value(contents, &PSL_ID_TOKEN_PATH)?;
-    let payload = id_token.split('.').nth(1)?;
-    let claims = URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
-    let claims: serde_json::Value = serde_json::from_slice(&claims).ok()?;
-    let puuid = claims.get("sub")?.as_str()?.trim();
 
-    (!puuid.is_empty()).then(|| puuid.to_string())
+    jwt_subject(&id_token)
 }
 
 fn yaml_path_value(contents: &str, path: &[&str]) -> Option<String> {

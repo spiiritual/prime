@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use thiserror::Error;
 use time::OffsetDateTime;
 use url::Url;
@@ -38,6 +40,21 @@ impl RedirectTokens {
             OffsetDateTime::now_utc().unix_timestamp(),
         )
     }
+
+    /// The Riot account (PUUID) the tokens were issued for, read locally from the JWT claims.
+    pub fn subject(&self) -> Option<String> {
+        jwt_subject(&self.access_token).or_else(|| self.id_token.as_deref().and_then(jwt_subject))
+    }
+}
+
+/// Reads the `sub` claim of a JWT without verifying it. Riot tokens use the PUUID as the subject.
+pub fn jwt_subject(token: &str) -> Option<String> {
+    let payload = token.split('.').nth(1)?;
+    let claims = URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
+    let claims: serde_json::Value = serde_json::from_slice(&claims).ok()?;
+    let subject = claims.get("sub")?.as_str()?.trim();
+
+    (!subject.is_empty()).then(|| subject.to_string())
 }
 
 pub fn parse_redirect_tokens(redirect_url: &str) -> Result<RedirectTokens, AuthParseError> {
@@ -109,6 +126,42 @@ mod tests {
         assert_eq!(tokens.id_token.as_deref(), Some("id"));
         assert_eq!(tokens.expires_in_seconds, Some(3600));
         assert_eq!(tokens.scope.as_deref(), Some("account openid"));
+    }
+
+    fn jwt_with_subject(subject: &str) -> String {
+        let claims = URL_SAFE_NO_PAD.encode(format!(r#"{{"sub":"{subject}"}}"#));
+        format!("header.{claims}.signature")
+    }
+
+    #[test]
+    fn reads_the_riot_account_from_a_token() {
+        assert_eq!(
+            jwt_subject(&jwt_with_subject("puuid-a")).as_deref(),
+            Some("puuid-a")
+        );
+        assert_eq!(jwt_subject("not-a-jwt"), None);
+    }
+
+    #[test]
+    fn redirect_tokens_name_their_riot_account() {
+        let access_token = jwt_with_subject("puuid-a");
+        let tokens = parse_redirect_tokens(&format!(
+            "https://playvalorant.com/opt_in#access_token={access_token}"
+        ))
+        .expect("tokens");
+
+        assert_eq!(tokens.subject().as_deref(), Some("puuid-a"));
+    }
+
+    #[test]
+    fn redirect_tokens_fall_back_to_the_id_token_subject() {
+        let id_token = jwt_with_subject("puuid-b");
+        let tokens = parse_redirect_tokens(&format!(
+            "https://playvalorant.com/opt_in#access_token=opaque&id_token={id_token}"
+        ))
+        .expect("tokens");
+
+        assert_eq!(tokens.subject().as_deref(), Some("puuid-b"));
     }
 
     #[test]

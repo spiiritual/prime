@@ -1,7 +1,7 @@
 use time::OffsetDateTime;
 
 use super::launch_flow::resolve_session_region;
-use super::session::{ApiIdentity, active_api_session};
+use super::session::{ApiIdentity, active_api_session, api_identity};
 use super::*;
 use crate::game_settings::{
     GameSettingsProfile, GameSettingsProfileMetadata, GameSettingsProfilePurpose,
@@ -172,32 +172,8 @@ async fn resolve_settings_context(
     let region = resolve_session_region(api, &session, player_info.as_ref())
         .await
         .map_err(|_| "Could not resolve Riot player preferences region".to_string())?;
-    let puuid = player_info
-        .as_ref()
-        .map(|info| info.sub.clone())
-        .or_else(|| account.puuid.clone())
-        .or_else(|| {
-            account
-                .launcher_session
-                .as_ref()
-                .map(|backup| backup.puuid.clone())
-        })
-        .filter(|puuid| !puuid.trim().is_empty())
-        .ok_or_else(|| "Account needs a Riot PUUID before saving settings".to_string())?;
-    let identity = match player_info {
-        Some(info) => ApiIdentity {
-            puuid,
-            game_name: Some(info.acct.game_name),
-            tag_line: Some(info.acct.tag_line),
-            shard: region.shard(),
-        },
-        None => ApiIdentity {
-            puuid,
-            game_name: account.game_name.clone(),
-            tag_line: account.tag_line.clone(),
-            shard: region.shard(),
-        },
-    };
+    // Settings are read and written through this session, so it must be this account's.
+    let identity = api_identity(account, player_info.as_ref(), region.shard())?;
 
     Ok(SettingsContext {
         session,

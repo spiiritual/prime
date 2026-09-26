@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 use super::launch_flow::{resolve_session_region, resolve_session_shard};
 
@@ -28,43 +28,13 @@ pub(in crate::ui) async fn resolve_credentials(
         session.entitlements_token = Some(entitlements_token.clone());
     }
 
-    let puuid = player_info
-        .as_ref()
-        .map(|info| info.sub.clone())
-        .or_else(|| {
-            account
-                .puuid
-                .clone()
-                .filter(|puuid| !puuid.trim().is_empty())
-        })
-        .or_else(|| {
-            account
-                .launcher_session
-                .as_ref()
-                .map(|backup| backup.puuid.clone())
-                .filter(|puuid| !puuid.trim().is_empty())
-        })
-        .ok_or_else(|| "selected account does not have a Riot PUUID".to_string())?;
+    let mut identity = api_identity(account, player_info.as_ref(), account.shard)?;
     let region = resolve_session_region(api, &session, player_info.as_ref())
         .await
         .ok();
-    let shard = match region {
+    identity.shard = match region {
         Some(region) => region.shard(),
         None => resolve_session_shard(api, &session, player_info.as_ref(), account.shard).await,
-    };
-    let identity = match player_info {
-        Some(info) => ApiIdentity {
-            puuid: puuid.clone(),
-            game_name: Some(info.acct.game_name),
-            tag_line: Some(info.acct.tag_line),
-            shard,
-        },
-        None => ApiIdentity {
-            puuid: puuid.clone(),
-            game_name: None,
-            tag_line: None,
-            shard,
-        },
     };
 
     Ok(ResolvedApiCredentials {
@@ -72,13 +42,43 @@ pub(in crate::ui) async fn resolve_credentials(
             access_token: session.access_token.clone(),
             entitlements_token,
             client_version,
-            shard,
-            puuid,
+            shard: identity.shard,
+            puuid: identity.puuid.clone(),
         },
         region,
         session,
         launcher_session: api_session.launcher_session,
         identity,
+    })
+}
+
+/// The Riot account an API session acts as. Fails when the session belongs to a different Riot
+/// account than the profile, so nothing is read or written under the wrong profile.
+pub(in crate::ui) fn api_identity(
+    account: &AccountProfile,
+    player_info: Option<&PlayerInfoResponse>,
+    shard: Shard,
+) -> Result<ApiIdentity, String> {
+    let puuid = player_info
+        .map(|info| info.sub.trim().to_string())
+        .or_else(|| account.puuid.clone())
+        .or_else(|| {
+            account
+                .launcher_session
+                .as_ref()
+                .map(|backup| backup.puuid.clone())
+        })
+        .filter(|puuid| !puuid.trim().is_empty())
+        .ok_or_else(|| "selected account does not have a Riot PUUID".to_string())?;
+    account
+        .check_puuid(&puuid)
+        .map_err(|error| error.to_string())?;
+
+    Ok(ApiIdentity {
+        puuid,
+        game_name: player_info.map(|info| info.acct.game_name.clone()),
+        tag_line: player_info.map(|info| info.acct.tag_line.clone()),
+        shard,
     })
 }
 
@@ -101,8 +101,11 @@ pub(in crate::ui) async fn active_api_session(
     api: &RiotApi,
     account: &AccountProfile,
 ) -> Result<ApiSession, String> {
+    // A stored token issued for another Riot account is skipped rather than used as this one.
     if let Some(session) = &account.session
         && !session.is_expired()
+        && crate::riot::auth::jwt_subject(&session.access_token)
+            .is_none_or(|subject| account.check_puuid(&subject).is_ok())
     {
         return Ok(ApiSession {
             session: session.clone(),

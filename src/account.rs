@@ -516,6 +516,26 @@ impl AccountProfile {
         Ok(())
     }
 
+    /// Checks that a Riot login belongs to this profile. A profile without a known PUUID yet
+    /// accepts any account.
+    pub fn check_puuid(&self, puuid: &str) -> Result<(), AccountSessionError> {
+        let puuid = puuid.trim();
+
+        match self
+            .puuid
+            .as_ref()
+            .filter(|existing| !existing.trim().is_empty())
+        {
+            Some(existing) if !existing.eq_ignore_ascii_case(puuid) => {
+                Err(AccountSessionError::PuuidMismatch {
+                    expected: existing.clone(),
+                    actual: puuid.to_string(),
+                })
+            }
+            _ => Ok(()),
+        }
+    }
+
     pub fn apply_riot_identity(
         &mut self,
         puuid: impl Into<String>,
@@ -529,14 +549,7 @@ impl AccountProfile {
             return Err(AccountSessionError::MissingCapturedPuuid);
         }
 
-        if let Some(existing_puuid) = self.puuid.as_ref().filter(|puuid| !puuid.trim().is_empty())
-            && !existing_puuid.eq_ignore_ascii_case(normalized_puuid)
-        {
-            return Err(AccountSessionError::PuuidMismatch {
-                expected: existing_puuid.clone(),
-                actual: normalized_puuid.to_string(),
-            });
-        }
+        self.check_puuid(normalized_puuid)?;
 
         self.puuid = Some(normalized_puuid.to_string());
         self.game_name = non_empty_string(game_name.into());
@@ -568,9 +581,7 @@ pub enum AccountValidationError {
 pub enum AccountSessionError {
     #[error("captured launcher session did not include a PUUID")]
     MissingCapturedPuuid,
-    #[error(
-        "captured launcher session belongs to PUUID `{actual}`, but this profile is `{expected}`"
-    )]
+    #[error("this Riot login belongs to PUUID `{actual}`, but this profile is `{expected}`")]
     PuuidMismatch { expected: String, actual: String },
 }
 
@@ -703,6 +714,20 @@ mod tests {
 
         assert_eq!(account.puuid.as_deref(), Some("puuid-a"));
         assert_eq!(account.riot_id().as_deref(), Some("Player#NA1"));
+    }
+
+    #[test]
+    fn puuid_check_accepts_the_same_account_and_rejects_another() {
+        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        assert!(account.check_puuid("anything").is_ok());
+
+        account.puuid = Some("puuid-a".to_string());
+
+        assert!(account.check_puuid("PUUID-A").is_ok());
+        assert!(matches!(
+            account.check_puuid("puuid-b"),
+            Err(AccountSessionError::PuuidMismatch { .. })
+        ));
     }
 
     #[test]

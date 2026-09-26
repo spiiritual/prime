@@ -97,6 +97,11 @@ pub(super) fn cache_account_api_context(
         return Err("selected profile no longer exists".to_string());
     };
 
+    // Check the identity first so a session for another Riot account changes nothing.
+    account
+        .check_puuid(&identity.puuid)
+        .map_err(|error| error.to_string())?;
+
     account.shard = identity.shard;
     account.session = Some(session);
     if let Some(launcher_session) = launcher_session {

@@ -2,12 +2,13 @@ use iced::widget::operation;
 use iced::{Task, window};
 
 use crate::account::{
-    AccountId, AccountPenaltyStatus, AccountProfile, CompetitiveRank, LauncherSessionBackup, Shard,
+    AccountId, AccountPenaltyStatus, AccountProfile, AuthSession, CompetitiveRank,
+    LauncherSessionBackup, Shard,
 };
 use crate::account_transfer::{export_account, import_account};
 use crate::image_cache::ImageCache;
 use crate::launch::{LaunchConfig, LaunchTargetProcess};
-use crate::riot::auth::parse_redirect_tokens;
+use crate::riot::auth::{RedirectTokens, parse_redirect_tokens};
 use crate::riot::launcher_session::{
     CapturedLauncherSession, adopt_launcher_session_backup, remove_launcher_session_backup,
 };
@@ -737,9 +738,12 @@ impl PrimeApp {
                     return Task::none();
                 };
 
-                match parse_redirect_tokens(&self.redirect_input) {
-                    Ok(tokens) => {
-                        account.session = Some(tokens.into_session());
+                match parse_redirect_tokens(&self.redirect_input)
+                    .map_err(|error| error.to_string())
+                    .and_then(|tokens| redirect_session_for_account(account, tokens))
+                {
+                    Ok(session) => {
+                        account.session = Some(session);
                         self.redirect_input.clear();
                         self.set_status("Imported Riot redirect token for selected account");
                         Task::batch([self.save_task(), self.load_active_tab()])
@@ -2435,6 +2439,27 @@ fn alert_and_focus_latest_window() -> Task<Message> {
             ])
         })
     })
+}
+
+/// Turns imported redirect tokens into a session for this profile, refusing tokens issued for a
+/// different Riot account so API calls never act on another account under this profile's name.
+fn redirect_session_for_account(
+    account: &AccountProfile,
+    tokens: RedirectTokens,
+) -> Result<AuthSession, String> {
+    match tokens.subject() {
+        Some(subject) => account
+            .check_puuid(&subject)
+            .map_err(|error| error.to_string())?,
+        None if account.puuid.is_some() => {
+            return Err(
+                "Prime could not read which Riot account this token belongs to".to_string(),
+            );
+        }
+        None => {}
+    }
+
+    Ok(tokens.into_session())
 }
 
 fn non_empty_account_field(value: String) -> Option<String> {
