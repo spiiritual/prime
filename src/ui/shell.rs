@@ -86,10 +86,13 @@ impl PrimeApp {
                 .height(Length::Fill)
                 .into()
         } else if let Some(update) = self.app_update_status.prompt_update() {
-            stack![content, app_update_prompt_overlay(update)]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
+            stack![
+                content,
+                app_update_prompt_overlay(update, self.work_blocking_update())
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
         } else {
             content.into()
         };
@@ -645,7 +648,10 @@ fn unavailable_launch_prompt_overlay(warning: &UnavailableLaunchWarning) -> Elem
     )
 }
 
-fn app_update_prompt_overlay(update: &crate::updater::AvailableUpdate) -> Element<'_, Message> {
+fn app_update_prompt_overlay<'a>(
+    update: &'a crate::updater::AvailableUpdate,
+    blocking_work: Option<&'static str>,
+) -> Element<'a, Message> {
     let mut details = column![
         text(format!("Prime {} is available", update.latest_version)).size(20),
         text(format!(
@@ -661,13 +667,26 @@ fn app_update_prompt_overlay(update: &crate::updater::AvailableUpdate) -> Elemen
         details = details.push(app_update_changelog(changelog));
     }
 
+    if let Some(work) = blocking_work {
+        details = details.push(
+            text(format!(
+                "Prime restarts to install the update. Wait for {work} first."
+            ))
+            .size(14),
+        );
+    }
+
     let prompt = container(
         column![
             details,
             row![
                 space().width(Length::Fill),
                 button("Later").on_press(Message::DismissAppUpdate),
-                button("Download and restart").on_press(Message::DownloadAppUpdate)
+                button("Download and restart").on_press_maybe(
+                    blocking_work
+                        .is_none()
+                        .then_some(Message::DownloadAppUpdate)
+                )
             ]
             .spacing(10)
         ]

@@ -613,7 +613,7 @@ impl PrimeApp {
                 Task::none()
             }
             Message::ConfirmImportAccount => {
-                if self.import_account_in_progress {
+                if self.import_account_in_progress || self.update_blocks_new_work() {
                     return Task::none();
                 }
 
@@ -1143,6 +1143,7 @@ impl PrimeApp {
             Message::SaveAccountSettings(account_id) => {
                 if self.settings_saving_account.is_some()
                     || self.settings_applying_account.is_some()
+                    || self.update_blocks_new_work()
                 {
                     return Task::none();
                 }
@@ -1210,6 +1211,7 @@ impl PrimeApp {
             Message::ApplySavedSettings(account_id) => {
                 if self.settings_saving_account.is_some()
                     || self.settings_applying_account.is_some()
+                    || self.update_blocks_new_work()
                 {
                     return Task::none();
                 }
@@ -1477,6 +1479,10 @@ impl PrimeApp {
             Message::ImageCacheCleared(result) => self.handle_image_cache_cleared(result),
             Message::LaunchAccount(id) => {
                 if self.launching_account.is_some() || self.launch_preflight_account.is_some() {
+                    return Task::none();
+                }
+
+                if self.update_blocks_new_work() {
                     return Task::none();
                 }
 
@@ -1808,6 +1814,12 @@ impl PrimeApp {
             self.set_status("No Prime update is available to download");
             return Task::none();
         };
+
+        // Prime exits to install the update, which would cut this work off.
+        if let Some(work) = self.work_blocking_update() {
+            self.set_status(format!("Could not start the update: wait for {work}"));
+            return Task::none();
+        }
 
         self.set_status(format!("Downloading Prime {}", update.latest_version));
         self.app_update_status = AppUpdateStatus::Downloading(update.clone());
@@ -2388,6 +2400,10 @@ impl PrimeApp {
     /// Login capture and launching both rewrite Riot Client's live login data, so only one may run.
     /// Returns true (and explains why in the status) when a capture cannot start right now.
     fn login_capture_blocked(&mut self) -> bool {
+        if self.update_blocks_new_work() {
+            return true;
+        }
+
         if self.launcher_capture_in_progress {
             self.set_status("Launcher login capture is already in progress");
             return true;
@@ -2395,6 +2411,37 @@ impl PrimeApp {
 
         if self.launch_in_progress() {
             self.set_status("Wait for VALORANT to finish launching before capturing a login");
+            return true;
+        }
+
+        false
+    }
+
+    /// Work that would be cut off if Prime exited to install an update, as a "wait for" phrase.
+    pub(super) fn work_blocking_update(&self) -> Option<&'static str> {
+        if self.launch_in_progress() {
+            Some("VALORANT to finish launching")
+        } else if self.launcher_capture_in_progress {
+            Some("the login capture to finish")
+        } else if self.settings_saving_account.is_some() {
+            Some("the settings profile to finish saving")
+        } else if self.settings_applying_account.is_some() {
+            Some("the settings profile to finish applying")
+        } else if self.import_account_in_progress {
+            Some("the account import to finish")
+        } else {
+            None
+        }
+    }
+
+    /// Prime exits to install a downloaded update, so work that exit would cut off doesn't start
+    /// while one downloads. Returns true (and says why in the status) in that case.
+    fn update_blocks_new_work(&mut self) -> bool {
+        if matches!(
+            self.app_update_status,
+            AppUpdateStatus::Downloading(_) | AppUpdateStatus::Installing
+        ) {
+            self.set_status("Wait for the Prime update to finish; Prime restarts to install it");
             return true;
         }
 

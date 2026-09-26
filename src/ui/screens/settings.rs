@@ -40,7 +40,13 @@ fn app_update_controls(app: &PrimeApp) -> Element<'_, Message> {
     let mut controls = row![check_button].spacing(10);
 
     if app.app_update_status.pending_update().is_some() {
-        controls = controls.push(button("Download update").on_press(Message::DownloadAppUpdate));
+        controls = controls.push(
+            button("Download update").on_press_maybe(
+                app.work_blocking_update()
+                    .is_none()
+                    .then_some(Message::DownloadAppUpdate),
+            ),
+        );
     }
 
     column![

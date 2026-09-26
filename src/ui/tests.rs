@@ -3025,6 +3025,68 @@ fn the_image_cache_is_not_cleared_twice_at_once() {
 }
 
 #[test]
+fn an_update_does_not_download_while_a_launch_runs() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.app_update_status =
+        super::AppUpdateStatus::Available(crate::updater::sample_update("9.9.9"));
+    app.launching_account = Some(AccountId::new());
+
+    let task = app.update(Message::DownloadAppUpdate);
+
+    assert_eq!(task.units(), 0);
+    assert!(matches!(
+        app.app_update_status,
+        super::AppUpdateStatus::Available(_)
+    ));
+    assert!(status_message_is_error(&app.status), "{}", app.status);
+}
+
+fn downloading_update_app(dir: &Path) -> PrimeApp {
+    let mut app = test_app(dir);
+    app.app_update_status =
+        super::AppUpdateStatus::Downloading(crate::updater::sample_update("9.9.9"));
+    app
+}
+
+#[test]
+fn a_launch_does_not_start_while_an_update_downloads() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = downloading_update_app(dir.path());
+    let account = account_with_backup(&app.repo.launcher_backups_dir(), "Main", "settings");
+    app.state.push_account(account.clone());
+
+    let task = app.update(Message::LaunchAccount(account.id));
+
+    assert_eq!(task.units(), 0);
+    assert_eq!(app.launch_preflight_account, None);
+    assert!(app.status.contains("update"), "{}", app.status);
+}
+
+#[test]
+fn a_login_capture_does_not_start_while_an_update_downloads() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = downloading_update_app(dir.path());
+
+    let _ = app.update(Message::AddAccount);
+
+    assert!(!app.show_add_account_prompt);
+    assert!(app.status.contains("update"), "{}", app.status);
+}
+
+#[test]
+fn an_import_does_not_start_while_an_update_downloads() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = downloading_update_app(dir.path());
+    app.import_account_input = "export".to_string();
+
+    let _ = app.update(Message::ConfirmImportAccount);
+
+    assert!(!app.import_account_in_progress);
+    assert!(app.status.contains("update"), "{}", app.status);
+}
+
+#[test]
 fn development_builds_do_not_report_update_checks_as_failed() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
