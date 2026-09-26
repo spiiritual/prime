@@ -1311,6 +1311,77 @@ fn battle_pass_progress_uses_story_contract_and_active_act() {
 }
 
 #[test]
+fn an_older_battle_pass_does_not_borrow_the_current_acts_name_or_countdown() {
+    let contracts: ContractsResponse = serde_json::from_value(serde_json::json!({
+        "Version": 1,
+        "Subject": "puuid",
+        "Contracts": [{
+            "ContractDefinitionID": "old-battle-pass",
+            "ContractProgression": {
+                "TotalProgressionEarned": 2_000,
+                "TotalProgressionEarnedVersion": 1,
+                "HighestRewardedLevel": {}
+            },
+            "ProgressionLevelReached": 1,
+            "ProgressionTowardsNextLevel": 0,
+            "ProgressionCompleted": false
+        }],
+        "ActiveSpecialContract": ""
+    }))
+    .expect("contracts");
+    let catalog = ContractCatalog::from_contracts(vec![ValorantContract {
+        uuid: Some("old-battle-pass".to_string()),
+        display_name: Some("Season 2025 // Act VI".to_string()),
+        free_reward_schedule_uuid: None,
+        content: Some(ContractContent {
+            relation_type: Some("Season".to_string()),
+            relation_uuid: Some("old-act".to_string()),
+            premium_reward_schedule_uuid: None,
+            chapters: vec![ContractChapter {
+                is_epilogue: false,
+                levels: vec![
+                    ContractLevel {
+                        reward: None,
+                        xp: Some(2_000),
+                    },
+                    ContractLevel {
+                        reward: None,
+                        xp: Some(3_000),
+                    },
+                ],
+                free_rewards: None,
+            }],
+        }),
+    }]);
+    let content: GameContentResponse = serde_json::from_value(serde_json::json!({
+        "DisabledIDs": [],
+        "Seasons": [{
+            "ID": "act",
+            "Name": "Act 3",
+            "Type": "act",
+            "StartTime": "2026-05-01T00:00:00Z",
+            "EndTime": "2099-06-24T13:00:00Z",
+            "IsActive": true
+        }],
+        "Events": []
+    }))
+    .expect("content");
+
+    let progress = battle_pass_progress_from_responses(
+        &contracts,
+        &catalog,
+        Some(&content),
+        &SkinCatalog::default(),
+        &AccessoryCatalog::default(),
+        &CurrencyCatalog::default(),
+    )
+    .expect("battle pass progress");
+
+    assert_eq!(progress.title(), "Season 2025 // Act VI");
+    assert_eq!(progress.remaining_seconds, None);
+}
+
+#[test]
 fn battle_pass_progress_separates_free_unearned_and_locked_paid_rewards() {
     let contracts: ContractsResponse = serde_json::from_value(serde_json::json!({
         "Version": 1,

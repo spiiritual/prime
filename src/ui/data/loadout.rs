@@ -265,6 +265,9 @@ fn battle_pass_progress_from_responses_at(
     let active_act = context.content.and_then(GameContentResponse::active_act);
     let (definition, contract) =
         find_battle_pass_contract(context.contracts, context.contract_catalog, active_act)?;
+    // The act's name and end time only describe the contract when it is that act's battle pass;
+    // an older season's fallback contract keeps its own name and has no countdown.
+    let contract_act = active_act.filter(|act| ids_match(&definition.relation_uuid, &act.id));
     let progression_deltas = definition.level_xp.as_slice();
     let total_levels = Some(i64::try_from(progression_deltas.len()).unwrap_or(0));
     let total_progression_required = Some(progression_deltas.iter().copied().sum::<i64>());
@@ -275,7 +278,7 @@ fn battle_pass_progress_from_responses_at(
         || total_levels
             .is_some_and(|levels| levels > 0 && contract.progression_level_reached >= levels);
     let remaining_seconds =
-        active_act.and_then(|act| remaining_seconds_until_utc_at(&act.end_time, context.now_utc));
+        contract_act.and_then(|act| remaining_seconds_until_utc_at(&act.end_time, context.now_utc));
     let paid_pass_owned = battle_pass_paid_pass_owned(definition, contract);
     let (earned_rewards, unearned_rewards, locked_paid_rewards) = battle_pass_reward_groups(
         definition,
@@ -289,7 +292,7 @@ fn battle_pass_progress_from_responses_at(
     Some(BattlePassProgressDisplay {
         name: non_empty_string(definition.display_name.clone())
             .unwrap_or_else(|| "Battle Pass".to_string()),
-        season_name: active_act.and_then(|act| non_empty_string(act.name.clone())),
+        season_name: contract_act.and_then(|act| non_empty_string(act.name.clone())),
         level_reached: contract.progression_level_reached,
         total_levels,
         progression_towards_next_level: contract.progression_towards_next_level,
