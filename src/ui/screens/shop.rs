@@ -279,27 +279,13 @@ fn bundle_text_scrim_style(_: &Theme) -> iced::widget::container::Style {
     }
 }
 
+/// A dark tint of the tier's in-game color for the card, and the color itself for its border.
 fn rarity_colors(rarity: Option<&str>) -> Option<(Color, Color)> {
-    match RarityTier::from_name(rarity?)? {
-        RarityTier::Exclusive => Some((
-            Color::from_rgba8(86, 42, 42, 0.72),
-            Color::from_rgb8(214, 92, 92),
-        )),
-        RarityTier::Ultra => Some((
-            Color::from_rgba8(78, 58, 32, 0.72),
-            Color::from_rgb8(218, 154, 72),
-        )),
-        RarityTier::Premium => Some((
-            Color::from_rgba8(58, 48, 82, 0.72),
-            Color::from_rgb8(166, 132, 224),
-        )),
-        RarityTier::Deluxe => Some((
-            Color::from_rgba8(34, 55, 82, 0.72),
-            Color::from_rgb8(91, 157, 218),
-        )),
-        RarityTier::Select => Some((
-            Color::from_rgba8(32, 68, 55, 0.72),
-            Color::from_rgb8(86, 184, 139),
-        )),
-    }
+    let [red, green, blue] = RarityTier::from_name(rarity?)?.highlight_rgb();
+    let shade = |channel: u8| (f32::from(channel) * 0.36) as u8;
+
+    Some((
+        Color::from_rgba8(shade(red), shade(green), shade(blue), 0.72),
+        Color::from_rgb8(red, green, blue),
+    ))
 }

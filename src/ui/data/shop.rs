@@ -667,13 +667,25 @@ impl RarityTier {
         }
     }
 
+    /// The game's own order, from its content tiers: Ultra is the highest.
     pub(in crate::ui) fn rank(self) -> usize {
         match self {
             Self::Select => 1,
             Self::Deluxe => 2,
             Self::Premium => 3,
-            Self::Ultra => 4,
-            Self::Exclusive => 5,
+            Self::Exclusive => 4,
+            Self::Ultra => 5,
+        }
+    }
+
+    /// The tier's highlight color in the game.
+    pub(in crate::ui) fn highlight_rgb(self) -> [u8; 3] {
+        match self {
+            Self::Select => [0x5a, 0x9f, 0xe2],
+            Self::Deluxe => [0x00, 0x95, 0x87],
+            Self::Premium => [0xd1, 0x54, 0x8d],
+            Self::Exclusive => [0xf5, 0x95, 0x5b],
+            Self::Ultra => [0xfa, 0xd6, 0x63],
         }
     }
 }

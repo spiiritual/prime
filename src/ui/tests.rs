@@ -4401,3 +4401,33 @@ fn a_free_bundle_item_is_not_counted_at_full_price() {
         Some(500)
     );
 }
+
+#[test]
+fn rarity_ranks_match_the_game() {
+    use super::data::shop::rarity_rank;
+
+    let ranks = [
+        "Select Edition",
+        "Deluxe Edition",
+        "Premium Edition",
+        "Exclusive Edition",
+        "Ultra Edition",
+    ]
+    .map(rarity_rank);
+
+    assert!(
+        ranks.is_sorted_by(|lower, higher| lower < higher),
+        "{ranks:?}"
+    );
+}
+
+#[test]
+fn rarity_colors_match_the_game() {
+    use super::data::shop::RarityTier;
+
+    assert_eq!(RarityTier::Select.highlight_rgb(), [0x5a, 0x9f, 0xe2]);
+    assert_eq!(RarityTier::Deluxe.highlight_rgb(), [0x00, 0x95, 0x87]);
+    assert_eq!(RarityTier::Premium.highlight_rgb(), [0xd1, 0x54, 0x8d]);
+    assert_eq!(RarityTier::Exclusive.highlight_rgb(), [0xf5, 0x95, 0x5b]);
+    assert_eq!(RarityTier::Ultra.highlight_rgb(), [0xfa, 0xd6, 0x63]);
+}
