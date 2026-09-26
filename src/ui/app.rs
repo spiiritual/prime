@@ -566,19 +566,14 @@ impl PrimeApp {
 
                 let input = self.import_account_input.clone();
                 let backup_root = self.repo.launcher_backups_dir();
-                let existing_ids = self
-                    .state
-                    .accounts
-                    .iter()
-                    .map(|account| account.id)
-                    .collect::<Vec<_>>();
+                let existing_accounts = self.state.accounts.clone();
 
                 self.import_account_in_progress = true;
                 self.status = "Importing account".to_string();
 
                 Task::perform(
                     async move {
-                        import_account(&input, backup_root, &existing_ids)
+                        import_account(&input, backup_root, &existing_accounts)
                             .map_err(|error| error.to_string())
                     },
                     Message::AccountImported,

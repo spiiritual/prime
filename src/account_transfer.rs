@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::account::{AccountId, AccountProfile, AccountSessionError, LauncherSessionBackup};
+use crate::riot::launcher_session::{
+    private_settings_refresh_token, private_settings_signed_in_puuid,
+};
 
 const EXPORT_VERSION: u32 = 1;
 const PRIVATE_SETTINGS_FILE: &str = "RiotGamesPrivateSettings.yaml";
@@ -70,7 +73,7 @@ pub fn export_account(account: &AccountProfile) -> Result<String, AccountTransfe
 pub fn import_account(
     encoded: &str,
     backup_root: impl AsRef<Path>,
-    existing_ids: &[AccountId],
+    existing_accounts: &[AccountProfile],
 ) -> Result<ImportedAccount, AccountTransferError> {
     if encoded.trim().is_empty() {
         return Err(AccountTransferError::EmptyInput);
@@ -100,7 +103,18 @@ pub fn import_account(
     let mut account = package.account;
     let original_id = account.id;
     let launcher_backup = validate_imported_launcher_session(&account, &package.launcher_files)?;
-    let (account_id, id_changed) = unique_import_id(account.id, existing_ids, backup_root);
+    if let Some(existing) =
+        saved_account_with_same_puuid(&account, launcher_backup.as_ref(), existing_accounts)
+    {
+        return Err(AccountTransferError::AlreadySaved(
+            existing.display_name.clone(),
+        ));
+    }
+    let existing_ids = existing_accounts
+        .iter()
+        .map(|account| account.id)
+        .collect::<Vec<_>>();
+    let (account_id, id_changed) = unique_import_id(account.id, &existing_ids, backup_root);
     account.id = account_id;
 
     let imported_launcher_file_count = package.launcher_files.len();
@@ -199,16 +213,60 @@ fn validate_imported_launcher_session(
         ));
     }
 
-    if !launcher_files
+    let Some(settings_file) = launcher_files
         .iter()
-        .any(|file| file.path == PRIVATE_SETTINGS_FILE)
-    {
+        .find(|file| file.path == PRIVATE_SETTINGS_FILE)
+    else {
         return Err(AccountTransferError::IncompleteImportedLauncherSession(
             PathBuf::from(PRIVATE_SETTINGS_FILE),
+        ));
+    };
+
+    // Exports made before Riot Client's current login format carry no refresh token and can never
+    // sign in, so reject them now instead of failing on the first launch.
+    let settings = String::from_utf8(base64_decode(&settings_file.contents)?)
+        .map_err(|_| AccountTransferError::LegacyLauncherSession)?;
+    if private_settings_refresh_token(&settings).is_none() {
+        return Err(AccountTransferError::LegacyLauncherSession);
+    }
+    if let Some(signed_in_puuid) = private_settings_signed_in_puuid(&settings)
+        && !signed_in_puuid.eq_ignore_ascii_case(captured_puuid)
+    {
+        return Err(AccountTransferError::InvalidLauncherSession(
+            AccountSessionError::PuuidMismatch {
+                expected: captured_puuid.to_string(),
+                actual: signed_in_puuid,
+            },
         ));
     }
 
     Ok(Some(backup))
+}
+
+fn saved_account_with_same_puuid<'a>(
+    account: &AccountProfile,
+    launcher_backup: Option<&LauncherSessionBackup>,
+    existing_accounts: &'a [AccountProfile],
+) -> Option<&'a AccountProfile> {
+    let puuid = launcher_backup
+        .map(|backup| backup.puuid.as_str())
+        .or(account.puuid.as_deref())
+        .map(str::trim)
+        .filter(|puuid| !puuid.is_empty())?;
+
+    existing_accounts.iter().find(|existing| {
+        existing
+            .puuid
+            .iter()
+            .map(String::as_str)
+            .chain(
+                existing
+                    .launcher_session
+                    .as_ref()
+                    .map(|backup| backup.puuid.as_str()),
+            )
+            .any(|existing_puuid| existing_puuid.trim().eq_ignore_ascii_case(puuid))
+    })
 }
 
 fn collect_exported_files(root: &Path) -> Result<Vec<ExportedLauncherFile>, AccountTransferError> {
@@ -445,6 +503,12 @@ pub enum AccountTransferError {
     DuplicateLauncherPath(String),
     #[error("account export is missing launcher session metadata")]
     MissingLauncherSessionMetadata,
+    #[error(
+        "account export uses an older Riot Client login that no longer works; sign in again on the exporting PC, re-capture the login, and export it again"
+    )]
+    LegacyLauncherSession,
+    #[error("this Riot account is already saved as {0}")]
+    AlreadySaved(String),
     #[error("account export launcher session metadata is invalid: {0}")]
     InvalidLauncherSession(AccountSessionError),
     #[error("launcher backup slot already exists at {0}")]
@@ -465,6 +529,8 @@ mod tests {
     use super::*;
 
     const PRIVATE_SETTINGS_FILE: &str = "RiotGamesPrivateSettings.yaml";
+    const REMEMBERED_SETTINGS: &str =
+        "psl:\n    authorization:\n        riot-client:\n            refresh_token: \"refresh\"\n";
 
     #[test]
     fn base64_matches_standard_vectors() {
@@ -492,7 +558,7 @@ mod tests {
         let backup_source = tempdir().expect("backup source");
         fs::write(
             backup_source.path().join(PRIVATE_SETTINGS_FILE),
-            "private settings",
+            REMEMBERED_SETTINGS,
         )
         .expect("private settings");
         fs::create_dir(backup_source.path().join("Config")).expect("config dir");
@@ -548,7 +614,7 @@ mod tests {
         assert_eq!(
             fs::read_to_string(imported_backup.data_dir.join(PRIVATE_SETTINGS_FILE))
                 .expect("settings"),
-            "private settings"
+            REMEMBERED_SETTINGS
         );
     }
 
@@ -558,7 +624,7 @@ mod tests {
         let backup_source = tempdir().expect("backup source");
         fs::write(
             backup_source.path().join(PRIVATE_SETTINGS_FILE),
-            "private settings",
+            REMEMBERED_SETTINGS,
         )
         .expect("private settings");
         account.launcher_session = Some(LauncherSessionBackup {
@@ -569,7 +635,10 @@ mod tests {
 
         let encoded = export_account(&account).expect("export");
         let import_root = tempdir().expect("import root");
-        let imported = import_account(&encoded, import_root.path(), &[account.id]).expect("import");
+        let mut other = AccountProfile::new("Other", None, Shard::Na).expect("other");
+        other.id = account.id;
+        other.puuid = Some("other-puuid".to_string());
+        let imported = import_account(&encoded, import_root.path(), &[other]).expect("import");
 
         assert_ne!(imported.account.id, account.id);
         assert!(imported.id_changed);
@@ -585,6 +654,81 @@ mod tests {
                 .join(imported.account.id.to_string())
                 .join("Data")
         );
+    }
+
+    fn export_with_settings(puuid: &str, settings: &str) -> String {
+        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        account.launcher_session = Some(LauncherSessionBackup {
+            data_dir: PathBuf::from("Data"),
+            captured_at_unix: 100,
+            puuid: puuid.to_string(),
+        });
+        let package = AccountExportPackage {
+            version: EXPORT_VERSION,
+            account,
+            launcher_files: vec![ExportedLauncherFile {
+                path: PRIVATE_SETTINGS_FILE.to_string(),
+                contents: base64_encode(settings.as_bytes()),
+            }],
+        };
+
+        base64_encode(&serde_json::to_vec(&package).expect("package should serialize"))
+    }
+
+    #[test]
+    fn import_rejects_exports_of_the_old_login_format() {
+        let legacy = "riot-login:\n    persist:\n        session:\n            cookies:\n            -   name: \"ssid\"\n                value: \"cookie\"\n";
+        let import_root = tempdir().expect("import root");
+
+        let err = import_account(
+            &export_with_settings("puuid", legacy),
+            import_root.path(),
+            &[],
+        )
+        .expect_err("legacy export");
+
+        assert!(matches!(err, AccountTransferError::LegacyLauncherSession));
+        assert_eq!(fs::read_dir(import_root.path()).expect("root").count(), 0);
+    }
+
+    #[test]
+    fn import_rejects_a_login_for_a_different_account() {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+        let claims = URL_SAFE_NO_PAD.encode(r#"{"sub":"someone-else"}"#);
+        let settings = format!(
+            "psl:\n    authorization:\n        riot-client:\n            id_token: \"header.{claims}.signature\"\n            refresh_token: \"refresh\"\n"
+        );
+        let import_root = tempdir().expect("import root");
+
+        let err = import_account(
+            &export_with_settings("puuid", &settings),
+            import_root.path(),
+            &[],
+        )
+        .expect_err("mismatched login");
+
+        assert!(matches!(
+            err,
+            AccountTransferError::InvalidLauncherSession(AccountSessionError::PuuidMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn import_rejects_an_account_that_is_already_saved() {
+        let mut existing = AccountProfile::new("Saved Main", None, Shard::Na).expect("existing");
+        existing.puuid = Some("PUUID".to_string());
+        let import_root = tempdir().expect("import root");
+
+        let err = import_account(
+            &export_with_settings("puuid", REMEMBERED_SETTINGS),
+            import_root.path(),
+            &[existing],
+        )
+        .expect_err("duplicate");
+
+        assert!(matches!(err, AccountTransferError::AlreadySaved(name) if name == "Saved Main"));
+        assert_eq!(fs::read_dir(import_root.path()).expect("root").count(), 0);
     }
 
     #[test]
@@ -609,7 +753,7 @@ mod tests {
             launcher_files: vec![
                 ExportedLauncherFile {
                     path: PRIVATE_SETTINGS_FILE.to_string(),
-                    contents: base64_encode(b"private settings"),
+                    contents: base64_encode(REMEMBERED_SETTINGS.as_bytes()),
                 },
                 ExportedLauncherFile {
                     path: "../escape.txt".to_string(),
@@ -639,7 +783,7 @@ mod tests {
             account,
             launcher_files: vec![ExportedLauncherFile {
                 path: PRIVATE_SETTINGS_FILE.to_string(),
-                contents: base64_encode(b"private settings"),
+                contents: base64_encode(REMEMBERED_SETTINGS.as_bytes()),
             }],
         };
         let encoded =
