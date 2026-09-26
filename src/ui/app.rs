@@ -13,7 +13,7 @@ use crate::riot::launcher_session::{
 };
 use crate::secret_clipboard::copy_secret_text;
 use crate::storage::{AccountRepository, StoredState};
-use crate::updater::{AvailableUpdate, check_for_update, download_and_prepare_update};
+use crate::updater::{UpdateCheckOutcome, check_for_update, download_and_prepare_update};
 
 use super::data::account_details::{
     AccountActivityCheck, AccountAvailability, AccountRankResult, RefreshedApiContext,
@@ -1662,17 +1662,24 @@ impl PrimeApp {
     fn handle_app_update_checked(
         &mut self,
         user_requested: bool,
-        result: Result<Option<AvailableUpdate>, String>,
+        result: Result<UpdateCheckOutcome, String>,
     ) -> Task<Message> {
         match result {
-            Ok(Some(update)) => {
+            Ok(UpdateCheckOutcome::Available(update)) => {
                 self.status = format!(
                     "Prime {} is available; download it when ready",
                     update.latest_version
                 );
                 self.app_update_status = AppUpdateStatus::Available(update);
             }
-            Ok(None) => {
+            Ok(UpdateCheckOutcome::NotInstalled) => {
+                self.app_update_status = AppUpdateStatus::NotInstalled;
+
+                if user_requested {
+                    self.status = self.app_update_status.label();
+                }
+            }
+            Ok(UpdateCheckOutcome::UpToDate) => {
                 self.app_update_status = AppUpdateStatus::UpToDate;
 
                 if user_requested {
@@ -1681,7 +1688,7 @@ impl PrimeApp {
                 }
             }
             Err(error) => {
-                self.app_update_status = AppUpdateStatus::Failed(error.clone());
+                self.app_update_status = AppUpdateStatus::CheckFailed(error.clone());
 
                 if user_requested {
                     self.status = format!("Update check failed: {error}");
@@ -1722,7 +1729,7 @@ impl PrimeApp {
                 iced::exit()
             }
             Err(error) => {
-                self.app_update_status = AppUpdateStatus::Failed(error.clone());
+                self.app_update_status = AppUpdateStatus::InstallFailed(error.clone());
                 self.status = format!("Update failed: {error}");
                 Task::none()
             }

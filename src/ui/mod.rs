@@ -16,7 +16,7 @@ use iced::{Size, Subscription, Theme, window};
 use crate::account::{AccountId, Shard};
 use crate::image_cache::ImageCache;
 use crate::storage::{AccountRepository, StoredState};
-use crate::updater::AvailableUpdate;
+use crate::updater::{AvailableUpdate, UpdateCheckOutcome};
 
 use crate::game_settings::GameSettingsProfileMetadata;
 use data::account_details::{
@@ -351,7 +351,9 @@ enum AppUpdateStatus {
     Dismissed(AvailableUpdate),
     Downloading(AvailableUpdate),
     Installing,
-    Failed(String),
+    NotInstalled,
+    CheckFailed(String),
+    InstallFailed(String),
 }
 
 impl AppUpdateStatus {
@@ -388,7 +390,12 @@ impl AppUpdateStatus {
             ),
             Self::Downloading(update) => format!("Downloading Prime {}", update.latest_version),
             Self::Installing => "Preparing to restart and install the update".to_string(),
-            Self::Failed(error) => format!("Update check failed: {error}"),
+            Self::NotInstalled => format!(
+                "Prime {} is not an installed build; updates only apply to installed copies",
+                crate::updater::CURRENT_VERSION
+            ),
+            Self::CheckFailed(error) => format!("Update check failed: {error}"),
+            Self::InstallFailed(error) => format!("Update failed: {error}"),
         }
     }
 }
@@ -540,7 +547,7 @@ enum Message {
     CheckForAppUpdate,
     AppUpdateChecked {
         user_requested: bool,
-        result: Result<Option<AvailableUpdate>, String>,
+        result: Result<UpdateCheckOutcome, String>,
     },
     DismissAppUpdate,
     DownloadAppUpdate,

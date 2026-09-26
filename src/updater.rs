@@ -41,7 +41,15 @@ pub enum UpdateStrategy {
     },
 }
 
-pub async fn check_for_update() -> Result<Option<AvailableUpdate>, UpdateError> {
+#[derive(Clone, Debug)]
+pub enum UpdateCheckOutcome {
+    UpToDate,
+    Available(AvailableUpdate),
+    /// Running outside a Velopack install (for example `cargo run`), where updates cannot apply.
+    NotInstalled,
+}
+
+pub async fn check_for_update() -> Result<UpdateCheckOutcome, UpdateError> {
     tokio::task::spawn_blocking(check_for_update_blocking).await?
 }
 
@@ -49,15 +57,22 @@ pub async fn download_and_prepare_update(update: AvailableUpdate) -> Result<(), 
     tokio::task::spawn_blocking(move || download_and_prepare_update_blocking(update)).await?
 }
 
-fn check_for_update_blocking() -> Result<Option<AvailableUpdate>, UpdateError> {
-    let manager = update_manager()?;
+fn check_for_update_blocking() -> Result<UpdateCheckOutcome, UpdateError> {
+    let manager = match update_manager() {
+        Ok(manager) => manager,
+        Err(UpdateError::Velopack(velopack::Error::NotInstalled(_))) => {
+            return Ok(UpdateCheckOutcome::NotInstalled);
+        }
+        Err(error) => return Err(error),
+    };
 
     match manager.check_for_updates()? {
-        UpdateCheck::UpdateAvailable(update) => Ok(Some(available_update_from_info(
-            manager.get_current_version_as_string(),
-            update,
-        ))),
-        UpdateCheck::RemoteIsEmpty | UpdateCheck::NoUpdateAvailable => Ok(None),
+        UpdateCheck::UpdateAvailable(update) => Ok(UpdateCheckOutcome::Available(
+            available_update_from_info(manager.get_current_version_as_string(), update),
+        )),
+        UpdateCheck::RemoteIsEmpty | UpdateCheck::NoUpdateAvailable => {
+            Ok(UpdateCheckOutcome::UpToDate)
+        }
     }
 }
 
@@ -146,6 +161,13 @@ pub enum UpdateError {
 mod tests {
     use super::*;
     use velopack::VelopackAsset;
+
+    #[test]
+    fn uninstalled_builds_report_not_installed_instead_of_an_error() {
+        let outcome = check_for_update_blocking().expect("check");
+
+        assert!(matches!(outcome, UpdateCheckOutcome::NotInstalled));
+    }
 
     #[test]
     fn update_summary_uses_release_notes_markdown() {

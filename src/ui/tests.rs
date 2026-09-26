@@ -2204,6 +2204,34 @@ fn selecting_an_account_refreshes_it_without_a_full_reload() {
 }
 
 #[test]
+fn development_builds_do_not_report_update_checks_as_failed() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+
+    let _ = app.update(Message::AppUpdateChecked {
+        user_requested: true,
+        result: Ok(crate::updater::UpdateCheckOutcome::NotInstalled),
+    });
+
+    assert!(!app.status.contains("failed"), "{}", app.status);
+    assert!(
+        app.status.contains("not an installed build"),
+        "{}",
+        app.status
+    );
+}
+
+#[test]
+fn failed_update_install_is_not_labelled_as_a_failed_check() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+
+    let _ = app.update(Message::AppUpdatePrepared(Err("disk full".to_string())));
+
+    assert_eq!(app.app_update_status.label(), "Update failed: disk full");
+}
+
+#[test]
 fn availability_polling_resumes_when_the_window_is_restored() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
