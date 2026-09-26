@@ -60,23 +60,29 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         );
     }
 
-    let mut content = column![controls, settings_profiles_section(app)]
-        .spacing(12)
-        .width(Length::Fill);
-    content = content.push(account_cards);
+    let mut content = column![].spacing(12).width(Length::Fill);
 
+    // First, so it is in view when a capture finishes.
     if let Some(draft) = &app.pending_account {
         content = content.push(
             container(
                 column![
                     text("Confirm captured account").size(22),
-                    text(format!("PUUID: {}", draft.puuid)),
+                    text(format!(
+                        "Riot ID: {} | PUUID: {}",
+                        draft
+                            .riot_id()
+                            .unwrap_or_else(|| "not captured".to_string()),
+                        draft.puuid
+                    )),
                     row![
                         text_input("Display name", &app.new_display_name)
                             .on_input(Message::NewDisplayNameChanged)
+                            .on_submit(Message::ConfirmCapturedAccount)
                             .width(Length::Fill),
-                        text_input("Riot username", &app.new_username)
+                        text_input("Riot username (optional)", &app.new_username)
                             .on_input(Message::NewUsernameChanged)
+                            .on_submit(Message::ConfirmCapturedAccount)
                             .width(Length::Fill),
                         pick_list(
                             Shard::ALL.as_slice(),
@@ -98,7 +104,11 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         );
     }
 
-    content.into()
+    content
+        .push(controls)
+        .push(settings_profiles_section(app))
+        .push(account_cards)
+        .into()
 }
 
 fn settings_profiles_section(app: &PrimeApp) -> Element<'_, Message> {

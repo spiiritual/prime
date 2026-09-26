@@ -301,11 +301,15 @@ impl PrimeApp {
 
                 let account_id = AccountId::new();
                 let backup_root = self.repo.launcher_backups_dir();
-                self.discard_pending_account();
+                let discarded = self.discard_pending_account();
                 self.close_account_surfaces();
                 self.new_display_name.clear();
                 self.new_username.clear();
-                self.set_status("Capturing the Riot account currently signed in");
+                self.set_status(if discarded {
+                    "Discarded the unsaved captured account; capturing the Riot account currently signed in"
+                } else {
+                    "Capturing the Riot account currently signed in"
+                });
                 self.launcher_capture_in_progress = true;
                 self.launcher_capture_kind = Some(super::LauncherCaptureKind::Current);
 
@@ -319,11 +323,18 @@ impl PrimeApp {
                     return Task::none();
                 }
 
-                self.discard_pending_account();
+                let discarded = self.discard_pending_account();
                 self.close_account_surfaces();
                 self.new_display_name.clear();
                 self.new_username.clear();
-                self.set_status("Opening Riot Client. When it appears, sign in normally with \"Stay signed in\" ticked.");
+                self.set_status(format!(
+                    "{}Opening Riot Client. When it appears, sign in normally with \"Stay signed in\" ticked.",
+                    if discarded {
+                        "Discarded the unsaved captured account. "
+                    } else {
+                        ""
+                    }
+                ));
                 self.start_login_capture(LoginCaptureTarget::NewAccount(AccountId::new()))
             }
             Message::LoginCapturePrepared { target, result } => {
@@ -353,11 +364,13 @@ impl PrimeApp {
                             .game_name
                             .clone()
                             .unwrap_or_else(|| "New account".to_string());
-                        self.new_username = draft.riot_id().unwrap_or_else(|| draft.puuid.clone());
                         self.new_shard = draft.shard;
                         self.set_status("Captured login. Confirm the account details to save it.");
                         self.pending_account = Some(draft);
-                        alert_and_focus_latest_window()
+                        Task::batch([
+                            self.show_accounts_tab_top(),
+                            alert_and_focus_latest_window(),
+                        ])
                     }
                     Err(error) => {
                         self.set_status(format!("Could not add account: {error}"));
@@ -382,8 +395,6 @@ impl PrimeApp {
                                 })
                                 .map(|account| account.id)
                         {
-                            self.new_username =
-                                draft.riot_id().unwrap_or_else(|| draft.puuid.clone());
                             self.new_shard = draft.shard;
                             return Task::batch([
                                 self.update_existing_captured_account(existing_id, draft),
@@ -395,11 +406,13 @@ impl PrimeApp {
                             .game_name
                             .clone()
                             .unwrap_or_else(|| "New account".to_string());
-                        self.new_username = draft.riot_id().unwrap_or_else(|| draft.puuid.clone());
                         self.new_shard = draft.shard;
                         self.set_status("Captured current Riot account. Confirm the account details to save it.");
                         self.pending_account = Some(draft);
-                        alert_and_focus_latest_window()
+                        Task::batch([
+                            self.show_accounts_tab_top(),
+                            alert_and_focus_latest_window(),
+                        ])
                     }
                     Err(error) => {
                         self.set_status(format!("Could not add current account: {error}"));
@@ -2360,7 +2373,11 @@ impl PrimeApp {
         };
 
         account.shard = self.new_shard;
-        account.username = non_empty_account_field(self.new_username.clone());
+        // The Riot username is the sign-in name, which a capture can't read; keep the saved one
+        // unless a new one was typed.
+        if let Some(username) = non_empty_account_field(self.new_username.clone()) {
+            account.username = Some(username);
+        }
         account.session = draft.session;
 
         if let Err(error) = account.attach_launcher_session(backup) {
@@ -2603,11 +2620,22 @@ impl PrimeApp {
     }
 
     /// Drops an unsaved captured account and its backup folder, which holds a live login.
-    fn discard_pending_account(&mut self) {
-        if let Some(draft) = self.pending_account.take() {
-            let _ =
-                remove_launcher_session_backup(self.repo.launcher_backups_dir(), draft.account_id);
-        }
+    /// Returns whether there was one.
+    fn discard_pending_account(&mut self) -> bool {
+        let Some(draft) = self.pending_account.take() else {
+            return false;
+        };
+
+        let _ = remove_launcher_session_backup(self.repo.launcher_backups_dir(), draft.account_id);
+        true
+    }
+
+    /// Shows the top of the Accounts tab, where a captured account waits for confirmation.
+    fn show_accounts_tab_top(&mut self) -> Task<Message> {
+        let top = operation::AbsoluteOffset { x: 0.0, y: 0.0 };
+        self.active_tab = Tab::Accounts;
+        self.tab_scroll_offsets.set(Tab::Accounts, top);
+        operation::scroll_to(MAIN_PANEL_SCROLLABLE_ID, top)
     }
 
     fn store_captured_launcher_session(

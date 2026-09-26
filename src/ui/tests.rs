@@ -2401,7 +2401,7 @@ fn current_account_capture_success_populates_confirmation_fields() {
     assert_eq!(app.launcher_capture_kind, None);
     assert_eq!(app.pending_account, Some(draft));
     assert_eq!(app.new_display_name, "Player");
-    assert_eq!(app.new_username, "Player#NA1");
+    assert_eq!(app.new_username, "");
     assert_eq!(app.new_shard, Shard::Na);
     assert_eq!(
         app.status,
@@ -2527,10 +2527,7 @@ fn duplicate_current_account_capture_updates_existing_profile_without_confirmati
         app.state.accounts[0].riot_id().as_deref(),
         Some("Player#NA1")
     );
-    assert_eq!(
-        app.state.accounts[0].username.as_deref(),
-        Some("Player#NA1")
-    );
+    assert_eq!(app.state.accounts[0].username, None);
     assert_eq!(app.state.accounts[0].shard, Shard::Eu);
     assert!(app.state.accounts[0].session.is_some());
     assert_eq!(
@@ -2552,6 +2549,86 @@ fn duplicate_current_account_capture_updates_existing_profile_without_confirmati
     );
     assert!(!app.status.starts_with("Loading account details"));
     assert!(status_message_is_error(&app.status));
+}
+
+#[test]
+fn recapturing_an_existing_account_keeps_its_riot_username() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let backup_root = app.repo.launcher_backups_dir();
+    let mut existing =
+        AccountProfile::new("Main", Some("login-name".to_string()), Shard::Na).expect("account");
+    existing
+        .apply_riot_identity("puuid-a", "Player", "NA1")
+        .expect("identity");
+    app.state.push_account(existing);
+    let draft = captured_account_draft(&backup_root, "puuid-a", "Player", "NA1", Shard::Na);
+
+    let _ = app.update(Message::CurrentAccountCaptureFinished(Ok(draft)));
+
+    assert_eq!(
+        app.state.accounts[0].username.as_deref(),
+        Some("login-name")
+    );
+}
+
+#[test]
+fn a_captured_account_opens_the_accounts_tab_to_confirm_it() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.active_tab = super::Tab::Shop;
+    app.tab_scroll_offsets.set(
+        super::Tab::Accounts,
+        iced::widget::operation::AbsoluteOffset { x: 0.0, y: 400.0 },
+    );
+    let draft = captured_account_draft(
+        &app.repo.launcher_backups_dir(),
+        "puuid-a",
+        "Player",
+        "NA1",
+        Shard::Na,
+    );
+
+    let _ = app.update(Message::CurrentAccountCaptureFinished(Ok(draft)));
+
+    assert_eq!(app.active_tab, super::Tab::Accounts);
+    assert_eq!(app.tab_scroll_offsets.get(super::Tab::Accounts).y, 0.0);
+}
+
+#[test]
+fn adding_the_current_account_says_it_discarded_the_unsaved_one() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.pending_account = Some(captured_account_draft(
+        &app.repo.launcher_backups_dir(),
+        "puuid-a",
+        "Player",
+        "NA1",
+        Shard::Na,
+    ));
+
+    let _ = app.update(Message::AddCurrentAccount);
+
+    assert_eq!(app.pending_account, None);
+    assert!(app.status.contains("Discarded"), "{}", app.status);
+}
+
+#[test]
+fn adding_a_new_account_says_it_discarded_the_unsaved_one() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.pending_account = Some(captured_account_draft(
+        &app.repo.launcher_backups_dir(),
+        "puuid-a",
+        "Player",
+        "NA1",
+        Shard::Na,
+    ));
+
+    let _ = app.update(Message::ConfirmAddAccountCapture);
+
+    assert_eq!(app.pending_account, None);
+    assert!(app.status.contains("Discarded"), "{}", app.status);
 }
 
 #[test]

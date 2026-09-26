@@ -52,7 +52,10 @@ impl PrimeApp {
         let content: Element<_> = if self.show_add_account_prompt {
             stack![
                 content,
-                add_account_prompt_overlay(self.capture_prompt_valorant_running)
+                add_account_prompt_overlay(
+                    self.capture_prompt_valorant_running,
+                    self.pending_account.is_some()
+                )
             ]
             .width(Length::Fill)
             .height(Length::Fill)
@@ -362,7 +365,10 @@ fn account_switcher_item_style(
     style
 }
 
-fn add_account_prompt_overlay(valorant_running: bool) -> Element<'static, Message> {
+fn add_account_prompt_overlay(
+    valorant_running: bool,
+    discards_pending_account: bool,
+) -> Element<'static, Message> {
     let mut details = column![
         text("Add Riot account").size(20),
         text(
@@ -376,6 +382,12 @@ fn add_account_prompt_overlay(valorant_running: bool) -> Element<'static, Messag
     ]
     .spacing(8)
     .width(Length::Fill);
+
+    if discards_pending_account {
+        details = details.push(
+            text("The captured account waiting for confirmation will be discarded.").size(14),
+        );
+    }
 
     if valorant_running {
         details = details.push(running_game_warning());
