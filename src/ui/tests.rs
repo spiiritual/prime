@@ -1731,6 +1731,32 @@ fn launch_is_refused_while_a_login_capture_runs() {
     assert!(app.status.contains("login capture"), "{}", app.status);
 }
 
+#[test]
+fn launch_without_a_captured_login_is_refused_before_switching() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let backup_root = app.repo.launcher_backups_dir();
+    let selected = account_with_backup(&backup_root, "Main", "settings");
+    let uncaptured = AccountProfile::new("Alt", None, Shard::Na).expect("alt");
+    app.state.push_account(selected.clone());
+    app.state.push_account(uncaptured.clone());
+    app.state.select_account(selected.id);
+    app.store_summary = Some(empty_store_summary());
+
+    let task = app.update(Message::LaunchAccount(uncaptured.id));
+
+    assert_eq!(task.units(), 0);
+    assert_eq!(app.launch_preflight_account, None);
+    assert_eq!(app.state.selected_account, Some(selected.id));
+    assert!(app.store_summary.is_some());
+    assert!(
+        app.status.starts_with("Could not launch Alt"),
+        "{}",
+        app.status
+    );
+    assert!(app.status.contains("Re-capture login"), "{}", app.status);
+}
+
 fn finished_launch(previous_account_backup: Option<(AccountId, LauncherSessionBackup)>) -> Message {
     Message::LaunchFinished(Ok(LaunchAccountResult {
         target: crate::launch::LaunchTargetProcess::Valorant,

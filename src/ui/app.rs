@@ -1490,6 +1490,14 @@ impl PrimeApp {
 
                 let summary = account.summary();
 
+                // Riot Client would otherwise start on whichever account it last remembered.
+                if !account.has_launcher_session() {
+                    self.set_status(format!(
+                        "Could not launch {summary}: capture its login first (... > Re-capture login)"
+                    ));
+                    return Task::none();
+                }
+
                 self.close_account_surfaces();
                 self.unavailable_launch_warning = None;
                 self.launch_preflight_account = Some(id);

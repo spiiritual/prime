@@ -290,7 +290,8 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
                 app.loading_frame,
                 is_launching,
                 is_checking_launch,
-                launch_in_progress || app.launcher_capture_in_progress
+                launch_in_progress || app.launcher_capture_in_progress,
+                account.has_launcher_session(),
             )
         ]
         .spacing(10)
@@ -362,6 +363,7 @@ fn launch_button(
     is_launching: bool,
     is_checking_launch: bool,
     launch_blocked: bool,
+    login_captured: bool,
 ) -> Element<'static, Message> {
     let content: Element<_> = if is_launching {
         row![compact_loading_indicator(loading_frame), text("Opening...")]
@@ -380,9 +382,20 @@ fn launch_button(
         text("Launch VALORANT").into()
     };
 
-    button(content)
-        .on_press_maybe((!launch_blocked).then_some(Message::LaunchAccount(account_id)))
-        .into()
+    let button = button(content).on_press_maybe(
+        (!launch_blocked && login_captured).then_some(Message::LaunchAccount(account_id)),
+    );
+
+    if login_captured {
+        return button.into();
+    }
+
+    let tip =
+        container(text("Capture this account's login first: ... > Re-capture login").size(13))
+            .padding([6, 8])
+            .style(iced::widget::container::bordered_box);
+
+    tooltip(button, tip, tooltip::Position::Top).into()
 }
 
 fn account_availability_indicator<'a>(
