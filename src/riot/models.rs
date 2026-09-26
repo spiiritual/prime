@@ -488,6 +488,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn deserializes_v3_player_loadout_without_sprays() {
+        let json = serde_json::json!({
+            "Subject": "puuid",
+            "Version": 4002,
+            "Guns": [{
+                "ID": "vandal",
+                "SkinID": "skin",
+                "SkinLevelID": "skin-level",
+                "ChromaID": "chroma",
+                "Attachments": []
+            }],
+            "ActiveExpressions": [{"AssetID": "spray", "TypeID": "spray-type"}],
+            "DynamicOptions": {},
+            "Identity": {
+                "PlayerCardID": "card",
+                "PlayerTitleID": "title",
+                "AccountLevel": 0,
+                "PreferredLevelBorderID": "border",
+                "HideAccountLevel": true
+            },
+            "Incognito": false
+        });
+
+        let loadout: PlayerLoadoutResponse =
+            serde_json::from_value(json).expect("v3 player loadout");
+
+        assert_eq!(loadout.guns[0].skin_id, "skin");
+        assert_eq!(loadout.guns[0].charm_id, None);
+        assert!(loadout.sprays.is_empty());
+    }
+
+    #[test]
     fn deserializes_storefront_offer_ids() {
         let json = serde_json::json!({
             "FeaturedBundle": {

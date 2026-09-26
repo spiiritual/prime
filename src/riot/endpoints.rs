@@ -82,7 +82,7 @@ pub fn wallet_url(shard: Shard, puuid: &str) -> String {
 
 pub fn player_loadout_url(shard: Shard, puuid: &str) -> String {
     format!(
-        "{}/personalization/v2/players/{puuid}/playerloadout",
+        "{}/personalization/v3/players/{puuid}/playerloadout",
         pd_base_url(shard)
     )
 }
@@ -142,7 +142,7 @@ mod tests {
     fn builds_documented_loadout_url() {
         assert_eq!(
             player_loadout_url(Shard::Eu, "puuid"),
-            "https://pd.eu.a.pvp.net/personalization/v2/players/puuid/playerloadout"
+            "https://pd.eu.a.pvp.net/personalization/v3/players/puuid/playerloadout"
         );
     }
 
