@@ -2109,6 +2109,43 @@ fn confirming_new_current_account_saves_and_selects_profile() {
     assert_eq!(saved.accounts[0].puuid.as_deref(), Some("puuid-a"));
 }
 
+fn empty_store_summary() -> StoreSummary {
+    StoreSummary {
+        currency_balances: vec![],
+        currency_balance_error: None,
+        featured_bundles: vec![],
+        daily_offers: vec![],
+        daily_remaining_seconds: 86_400,
+        bundle_remaining_seconds: 86_400,
+        night_market_remaining_seconds: None,
+        loaded_at: iced::time::Instant::now(),
+        night_market_offers: vec![],
+        accessory_remaining_seconds: None,
+        accessory_offers: vec![],
+    }
+}
+
+#[test]
+fn adding_an_account_clears_the_previous_accounts_shop_and_loadout() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.store_summary = Some(empty_store_summary());
+    app.loadout_summary = Some(LoadoutSummary::without_loadout("old".to_string(), None));
+    let draft = captured_account_draft(
+        &app.repo.launcher_backups_dir(),
+        "puuid-a",
+        "Player",
+        "NA1",
+        Shard::Na,
+    );
+
+    let _ = app.update(Message::CurrentAccountCaptureFinished(Ok(draft)));
+    let _ = app.update(Message::ConfirmCapturedAccount);
+
+    assert_eq!(app.store_summary, None);
+    assert_eq!(app.loadout_summary, None);
+}
+
 #[test]
 fn duplicate_current_account_capture_updates_existing_profile_without_confirmation() {
     let dir = tempdir().expect("temp dir");

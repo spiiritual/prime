@@ -420,6 +420,7 @@ impl PrimeApp {
                         self.state.push_account(account);
                         self.account_availability.remove(&draft.account_id);
                         self.state.select_account(draft.account_id);
+                        self.clear_selected_account_views();
                         self.pending_account = None;
                         self.new_display_name.clear();
                         self.new_username.clear();
