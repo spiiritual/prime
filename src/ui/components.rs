@@ -4,7 +4,7 @@ use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget::Tree,
 };
 use iced::widget::image::Handle;
-use iced::widget::{Column, Row, button, container, image, row, space, text};
+use iced::widget::{Column, Row, button, column, container, image, row, space, text};
 use iced::{
     Color, ContentFit, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector,
     alignment,
@@ -441,6 +441,27 @@ fn preview_image_button_style(
     }
 
     style
+}
+
+/// Why a load failed, with Try again, in place of what it would have shown. `retry` is `None`
+/// while a new load is already running.
+pub(super) fn load_error_panel(
+    title: &'static str,
+    error: &str,
+    retry: Option<Message>,
+) -> Element<'static, Message> {
+    container(
+        column![
+            text(title).size(18),
+            text(error.to_string()).size(14),
+            button("Try again").on_press_maybe(retry)
+        ]
+        .spacing(10),
+    )
+    .padding(16)
+    .width(Length::Fill)
+    .style(container::bordered_box)
+    .into()
 }
 
 pub(super) fn loading_line(label: &'static str, frame: usize) -> Element<'static, Message> {

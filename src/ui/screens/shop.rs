@@ -2,7 +2,8 @@ use iced::widget::{column, container, rich_text, span, stack, text};
 use iced::{Color, Element, Length, Theme, alignment};
 
 use crate::ui::components::{
-    asset_background_image, asset_image, compact_item_name, high_res_image_source, loading_line,
+    asset_background_image, asset_image, compact_item_name, high_res_image_source,
+    load_error_panel, loading_line,
 };
 use crate::ui::data::shop::{
     OfferPrice, RarityTier, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
@@ -20,6 +21,16 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
 
     if app.store_request.is_some() {
         content = content.push(loading_line("Loading shop...", app.loading_frame));
+    } else if let Some(error) = &app.store_error {
+        content = content.push(load_error_panel(
+            "Could not load the shop",
+            error,
+            Some(Message::RetryShop),
+        ));
+    } else if app.store_summary.is_none()
+        && let Some(waiting) = super::account_view_waiting(app, "shop")
+    {
+        content = content.push(waiting);
     }
 
     if let Some(summary) = &app.store_summary {

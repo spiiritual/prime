@@ -3164,6 +3164,126 @@ fn an_import_does_not_start_while_an_update_downloads() {
     assert!(app.status.contains("update"), "{}", app.status);
 }
 
+#[test]
+fn a_failed_shop_load_is_kept_for_the_retry_panel() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, _) = two_account_app(dir.path());
+    let _ = app.update(Message::TabSelected(super::Tab::Shop));
+    let request = app.store_request.expect("shop request").id;
+
+    let _ = app.update(Message::StorefrontLoaded(request, Err("boom".to_string())));
+
+    assert_eq!(app.store_error.as_deref(), Some("boom"));
+}
+
+#[test]
+fn trying_the_shop_again_starts_a_new_load() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, _) = two_account_app(dir.path());
+    app.active_tab = super::Tab::Shop;
+    app.store_error = Some("boom".to_string());
+
+    let _ = app.update(Message::RetryShop);
+
+    assert!(app.store_request.is_some());
+    assert_eq!(app.store_error, None);
+}
+
+#[test]
+fn trying_the_loadout_again_starts_a_new_load() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, _) = two_account_app(dir.path());
+    app.active_tab = super::Tab::Loadout;
+    app.loadout_summary = Some(LoadoutSummary {
+        battle_pass_error: Some("500".to_string()),
+        ..loaded_loadout()
+    });
+
+    let _ = app.update(Message::RetryLoadout);
+
+    assert!(app.loadout_request.is_some());
+}
+
+#[test]
+fn the_shop_waits_for_the_client_version() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, _) = two_account_app(dir.path());
+    app.client_version_input.clear();
+
+    let _ = app.update(Message::TabSelected(super::Tab::Shop));
+    assert_eq!(app.store_request, None);
+
+    let _ = app.update(Message::ClientVersionLoaded {
+        user_requested: false,
+        result: Ok("release-2".to_string()),
+    });
+    assert!(app.store_request.is_some());
+}
+
+#[test]
+fn opening_the_shop_without_accounts_shows_no_error() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.client_version_input = "release-1".to_string();
+
+    let _ = app.update(Message::TabSelected(super::Tab::Shop));
+
+    assert!(!status_message_is_error(&app.status), "{}", app.status);
+}
+
+#[test]
+fn launching_the_selected_account_keeps_its_shop() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = account_with_backup(&app.repo.launcher_backups_dir(), "Main", "settings");
+    app.state.push_account(account.clone());
+    app.state.select_account(account.id);
+    app.store_summary = Some(empty_store_summary());
+    app.launch_preflight_account = Some(account.id);
+
+    let _ = app.update(Message::LaunchPreflightChecked(
+        super::data::account_details::AccountActivityCheck {
+            account_id: account.id,
+            availability: AccountAvailability::Available,
+        },
+        false,
+    ));
+
+    assert_eq!(app.launching_account, Some(account.id));
+    assert!(app.store_summary.is_some());
+}
+
+#[test]
+fn launching_another_account_reloads_the_open_tab_for_it() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let backup_root = app.repo.launcher_backups_dir();
+    let main = account_with_backup(&backup_root, "Main", "settings");
+    let alt = account_with_backup(&backup_root, "Alt", "settings");
+    app.state.push_account(main.clone());
+    app.state.push_account(alt.clone());
+    app.state.select_account(main.id);
+    app.client_version_input = "release-1".to_string();
+    app.active_tab = super::Tab::Shop;
+    app.store_summary = Some(empty_store_summary());
+    app.launch_preflight_account = Some(alt.id);
+
+    let _ = app.update(Message::LaunchPreflightChecked(
+        super::data::account_details::AccountActivityCheck {
+            account_id: alt.id,
+            availability: AccountAvailability::Available,
+        },
+        false,
+    ));
+
+    assert_eq!(app.state.selected_account, Some(alt.id));
+    assert!(
+        app.store_request
+            .is_some_and(|request| request.account_id == alt.id)
+    );
+    assert!(app.status.starts_with("Launching"), "{}", app.status);
+}
+
 fn loaded_loadout() -> LoadoutSummary {
     LoadoutSummary {
         account_level: None,

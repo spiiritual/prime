@@ -79,6 +79,8 @@ impl PrimeApp {
                 loadout_summary: None,
                 store_request: None,
                 loadout_request: None,
+                store_error: None,
+                loadout_error: None,
                 next_request_id: 0,
                 profile_identity_refreshing_account: None,
                 account_ranks_loading: false,
@@ -167,6 +169,14 @@ impl PrimeApp {
     /// errors stay until something the user does replaces them.
     fn set_background_status(&mut self, status: impl Into<String>) {
         if !super::status_message_is_error(&self.status) {
+            self.set_status(status);
+        }
+    }
+
+    /// Shows Shop and Loadout load progress and results, unless launch or login capture progress
+    /// is pinned in the status bar; the tab itself shows its loading line and errors.
+    fn set_view_status(&mut self, status: impl Into<String>) {
+        if !self.progress_pinned() {
             self.set_status(status);
         }
     }
@@ -1332,9 +1342,9 @@ impl PrimeApp {
                             result.launcher_session,
                             result.identity,
                         ) {
-                            self.set_status(format!(
-                                "Store loaded, but profile update failed: {error}"
-                            ));
+                            let error = format!("Store loaded, but profile update failed: {error}");
+                            self.store_error = Some(error.clone());
+                            self.set_view_status(error);
                             return Task::none();
                         }
 
@@ -1347,7 +1357,7 @@ impl PrimeApp {
                             ""
                         };
 
-                        self.set_status(format!(
+                        self.set_view_status(format!(
                             "Loaded {} featured bundle(s), {} daily offer(s), and {} night market offer(s){}",
                             bundle_count, daily_count, night_market_count, balance_status
                         ));
@@ -1359,12 +1369,27 @@ impl PrimeApp {
                     }
                     Err(error) => {
                         if is_current_request {
-                            self.set_status(format!("Store check failed: {error}"));
+                            self.set_view_status(format!("Store check failed: {error}"));
+                            self.store_error = Some(error);
                         }
                     }
                 }
 
                 Task::none()
+            }
+            Message::RetryShop => {
+                if self.selected_account_is_store_loading() {
+                    return Task::none();
+                }
+
+                self.fetch_storefront_task()
+            }
+            Message::RetryLoadout => {
+                if self.selected_account_is_loadout_loading() {
+                    return Task::none();
+                }
+
+                self.fetch_loadout_task()
             }
             Message::ShopTimerTick(now) => {
                 self.now = now;
@@ -1379,8 +1404,9 @@ impl PrimeApp {
                     .is_some_and(|summary| summary.is_expired_at(now))
                 {
                     self.store_summary = None;
-                    self.set_status("Shop reset reached; loading updated shop");
-                    return self.fetch_storefront_task();
+                    let task = self.fetch_storefront_task();
+                    self.set_view_status("Shop reset reached; loading updated shop");
+                    return task;
                 }
 
                 Task::none()
@@ -1427,9 +1453,10 @@ impl PrimeApp {
                             result.launcher_session,
                             result.identity,
                         ) {
-                            self.set_status(format!(
-                                "Loadout loaded, but profile update failed: {error}"
-                            ));
+                            let error =
+                                format!("Loadout loaded, but profile update failed: {error}");
+                            self.loadout_error = Some(error.clone());
+                            self.set_view_status(error);
                             return Task::none();
                         }
 
@@ -1440,7 +1467,7 @@ impl PrimeApp {
                             ""
                         };
 
-                        self.set_status(
+                        self.set_view_status(
                             match (
                                 &result.summary.loadout_error,
                                 &result.summary.battle_pass_error,
@@ -1474,7 +1501,8 @@ impl PrimeApp {
                     }
                     Err(error) => {
                         if is_current_request {
-                            self.set_status(format!("Loadout check failed: {error}"));
+                            self.set_view_status(format!("Loadout check failed: {error}"));
+                            self.loadout_error = Some(error);
                         }
                     }
                 }
@@ -1991,6 +2019,8 @@ impl PrimeApp {
         self.loadout_summary = None;
         self.store_request = None;
         self.loadout_request = None;
+        self.store_error = None;
+        self.loadout_error = None;
     }
 
     /// Loads the active tab after one account changed (selected, added, imported, re-captured or
@@ -2138,14 +2168,19 @@ impl PrimeApp {
     }
 
     fn fetch_storefront_task(&mut self) -> Task<Message> {
+        // Without an account or the client version, the tab explains what it is waiting for; the
+        // version arriving loads the open tab.
         let Some(account) = self.state.selected_account().cloned() else {
-            self.set_status("Select an account before opening the shop");
             return Task::none();
         };
+        if self.client_version_input.trim().is_empty() {
+            return Task::none();
+        }
 
         let request = self.next_view_request(account.id);
         self.store_request = Some(request);
-        self.set_status("Loading shop");
+        self.store_error = None;
+        self.set_view_status("Loading shop");
         let image_cache = self.image_cache.clone();
         Task::perform(
             fetch_storefront(account, self.client_version_input.clone(), image_cache),
@@ -2155,13 +2190,16 @@ impl PrimeApp {
 
     fn fetch_loadout_task(&mut self) -> Task<Message> {
         let Some(account) = self.state.selected_account().cloned() else {
-            self.set_status("Select an account before opening loadout");
             return Task::none();
         };
+        if self.client_version_input.trim().is_empty() {
+            return Task::none();
+        }
 
         let request = self.next_view_request(account.id);
         self.loadout_request = Some(request);
-        self.set_status("Loading loadout");
+        self.loadout_error = None;
+        self.set_view_status("Loading loadout");
         let image_cache = self.image_cache.clone();
         Task::perform(
             fetch_loadout(account, self.client_version_input.clone(), image_cache),
@@ -2245,13 +2283,24 @@ impl PrimeApp {
         let backup = account.launcher_session.clone();
         let saved_sessions = self.saved_launcher_sessions();
 
+        let selection_changed = self.state.selected_account != Some(id);
         self.state.select_account(id);
         self.close_account_surfaces();
         self.unavailable_launch_warning = None;
-        self.clear_selected_account_views();
         self.launching_account = Some(id);
         self.launch_progress_checking = false;
         self.set_status(status);
+
+        // Shop and Loadout show the selected account, so they reload when launching switched it.
+        let reload = if selection_changed {
+            self.clear_selected_account_views();
+            match self.active_tab {
+                Tab::Shop | Tab::Loadout => self.load_active_tab(),
+                Tab::Accounts | Tab::Settings => Task::none(),
+            }
+        } else {
+            Task::none()
+        };
 
         Task::batch([
             self.save_task(),
@@ -2259,6 +2308,7 @@ impl PrimeApp {
                 async move { launch_account(config, backup, saved_sessions).await },
                 Message::LaunchFinished,
             ),
+            reload,
         ])
     }
 

@@ -235,6 +235,9 @@ struct PrimeApp {
     /// The Shop load whose reply is shown; replies to other requests only cache their session.
     store_request: Option<ViewRequest>,
     loadout_request: Option<ViewRequest>,
+    /// Why the selected account's last Shop or Loadout load failed, shown with Try again.
+    store_error: Option<String>,
+    loadout_error: Option<String>,
     next_request_id: u64,
     profile_identity_refreshing_account: Option<AccountId>,
     account_ranks_loading: bool,
@@ -636,10 +639,13 @@ enum Message {
     SavedSettingsApplied(Result<AppliedGameSettingsResult, String>),
     /// The reply to the Shop load with this request ID.
     StorefrontLoaded(u64, Result<StorefrontResult, String>),
+    RetryShop,
     ShopTimerTick(iced::time::Instant),
     LoadingTick,
     /// The reply to the Loadout load with this request ID.
     LoadoutLoaded(u64, Result<LoadoutResult, String>),
+    /// Reloads the loadout and battle pass, which load together.
+    RetryLoadout,
     OpenImageViewer(ImageViewerRequest),
     ImageViewerImageLoaded(ImageViewerSource, Result<PathBuf, String>),
     CloseImageViewer,

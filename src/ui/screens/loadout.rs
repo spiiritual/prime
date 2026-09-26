@@ -2,7 +2,7 @@ use iced::widget::{button, column, container, grid, progress_bar, row, stack, te
 use iced::{Color, Element, Length, Theme, alignment, border};
 
 use crate::ui::components::{
-    asset_image, compact_item_name, high_res_image_source, loading_line,
+    asset_image, compact_item_name, high_res_image_source, load_error_panel, loading_line,
 };
 use crate::ui::data::loadout::{
     BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutGunDisplay,
@@ -81,11 +81,17 @@ fn skins_tab(app: &PrimeApp) -> Element<'_, Message> {
 
     if app.loadout_request.is_some() {
         content = content.push(loading_line("Loading loadout...", app.loading_frame));
+    } else if let Some(waiting) = loadout_not_loaded(app) {
+        content = content.push(waiting);
     }
 
     if let Some(summary) = &app.loadout_summary {
         if let Some(error) = &summary.loadout_error {
-            content = content.push(text(format!("Loadout unavailable: {error}")));
+            content = content.push(load_error_panel(
+                "Loadout unavailable",
+                error,
+                retry_loadout(app),
+            ));
         }
 
         for category in LOADOUT_CATEGORIES {
@@ -112,13 +118,19 @@ fn battle_pass_tab(app: &PrimeApp) -> Element<'_, Message> {
 
     if app.loadout_request.is_some() {
         content = content.push(loading_line("Loading battle pass...", app.loading_frame));
+    } else if let Some(waiting) = loadout_not_loaded(app) {
+        content = content.push(waiting);
     }
 
     if let Some(summary) = &app.loadout_summary {
         if let Some(battle_pass) = &summary.battle_pass {
             content = content.push(battle_pass_panel(battle_pass, app.now));
         } else if let Some(error) = &summary.battle_pass_error {
-            content = content.push(text(format!("Battle pass progress unavailable: {error}")));
+            content = content.push(load_error_panel(
+                "Battle pass progress unavailable",
+                error,
+                retry_loadout(app),
+            ));
         } else if app.loadout_request.is_none() {
             content = content.push(text("No battle pass progress loaded"));
         }
@@ -128,6 +140,29 @@ fn battle_pass_tab(app: &PrimeApp) -> Element<'_, Message> {
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+/// The loadout and battle pass load together, so both sub-tabs show the same failure or wait.
+fn loadout_not_loaded(app: &PrimeApp) -> Option<Element<'static, Message>> {
+    if let Some(error) = &app.loadout_error {
+        return Some(load_error_panel(
+            "Could not load the loadout",
+            error,
+            Some(Message::RetryLoadout),
+        ));
+    }
+
+    if app.loadout_summary.is_none() {
+        return super::account_view_waiting(app, "loadout");
+    }
+
+    None
+}
+
+fn retry_loadout(app: &PrimeApp) -> Option<Message> {
+    app.loadout_request
+        .is_none()
+        .then_some(Message::RetryLoadout)
 }
 
 fn loadout_tab_button_style(
