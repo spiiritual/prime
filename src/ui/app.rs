@@ -1870,13 +1870,16 @@ impl PrimeApp {
 
     fn save_task(&self) -> Task<Message> {
         let repo = self.repo.clone();
-        let state = match self.state_to_save() {
-            Ok(state) => state,
+        let snapshot = match self.state_to_save() {
+            Ok(state) => repo.snapshot(&state),
             Err(error) => return Task::done(Message::Saved(Err(error))),
         };
 
         Task::perform(
-            async move { repo.save(&state).map_err(|error| error.to_string()) },
+            async move {
+                repo.save_snapshot(snapshot)
+                    .map_err(|error| error.to_string())
+            },
             Message::Saved,
         )
     }

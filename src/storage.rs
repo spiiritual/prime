@@ -1,6 +1,8 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -76,11 +78,30 @@ impl StoredState {
 #[derive(Clone, Debug)]
 pub struct AccountRepository {
     path: PathBuf,
+    saves: Arc<SaveSequence>,
+}
+
+/// Orders saves by when their state was captured, so concurrent save tasks cannot interleave
+/// their writes or leave an older state on disk.
+#[derive(Debug, Default)]
+struct SaveSequence {
+    next_generation: AtomicU64,
+    last_written_generation: Mutex<u64>,
+}
+
+/// Accounts state captured for saving, tagged with the order in which it was captured.
+#[derive(Clone, Debug)]
+pub struct SaveSnapshot {
+    generation: u64,
+    pub state: StoredState,
 }
 
 impl AccountRepository {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            saves: Arc::default(),
+        }
     }
 
     pub fn default_path() -> PathBuf {
@@ -122,6 +143,35 @@ impl AccountRepository {
     }
 
     pub fn save(&self, state: &StoredState) -> Result<(), StorageError> {
+        self.save_snapshot(self.snapshot(state))
+    }
+
+    /// Captures `state` for a later [`save_snapshot`](Self::save_snapshot) call.
+    pub fn snapshot(&self, state: &StoredState) -> SaveSnapshot {
+        SaveSnapshot {
+            generation: self.saves.next_generation.fetch_add(1, Ordering::SeqCst) + 1,
+            state: state.clone(),
+        }
+    }
+
+    /// Writes a snapshot unless a newer one has already been written.
+    pub fn save_snapshot(&self, snapshot: SaveSnapshot) -> Result<(), StorageError> {
+        let mut last_written = self
+            .saves
+            .last_written_generation
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+
+        if snapshot.generation <= *last_written {
+            return Ok(());
+        }
+
+        self.write_state(&snapshot.state)?;
+        *last_written = snapshot.generation;
+        Ok(())
+    }
+
+    fn write_state(&self, state: &StoredState) -> Result<(), StorageError> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -214,6 +264,51 @@ mod tests {
     use crate::account::{AccountPenaltyStatus, AccountProfile, Shard};
 
     use super::*;
+
+    #[test]
+    fn older_save_snapshot_never_overwrites_a_newer_one() {
+        let dir = tempdir().expect("temp dir");
+        let repo = AccountRepository::new(dir.path().join("accounts.json"));
+        let mut older = StoredState::default();
+        older.push_account(AccountProfile::new("Older", None, Shard::Na).expect("account"));
+        let mut newer = older.clone();
+        newer.push_account(AccountProfile::new("Newer", None, Shard::Na).expect("account"));
+        let older_snapshot = repo.snapshot(&older);
+        let newer_snapshot = repo.snapshot(&newer);
+
+        repo.save_snapshot(newer_snapshot).expect("save newer");
+        repo.save_snapshot(older_snapshot).expect("skip older");
+
+        assert_eq!(repo.load().expect("load"), newer);
+    }
+
+    #[test]
+    fn concurrent_saves_do_not_fail() {
+        let dir = tempdir().expect("temp dir");
+        let repo = AccountRepository::new(dir.path().join("accounts.json"));
+        let snapshots = (0..16)
+            .map(|index| {
+                let mut state = StoredState::default();
+                for account in 0..=index {
+                    state.push_account(
+                        AccountProfile::new(format!("Account {account}"), None, Shard::Na)
+                            .expect("account"),
+                    );
+                }
+                repo.snapshot(&state)
+            })
+            .collect::<Vec<_>>();
+        let newest = snapshots.last().expect("snapshot").state.clone();
+
+        std::thread::scope(|scope| {
+            for snapshot in snapshots {
+                let repo = repo.clone();
+                scope.spawn(move || repo.save_snapshot(snapshot).expect("save"));
+            }
+        });
+
+        assert_eq!(repo.load().expect("load"), newest);
+    }
 
     #[test]
     fn missing_file_loads_default_state() {
