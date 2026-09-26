@@ -81,8 +81,10 @@ impl PrimeApp {
                 loadout_loading_account: None,
                 profile_identity_refreshing_account: None,
                 account_ranks_loading: false,
+                account_details_loaded_at: None,
                 account_availability: Default::default(),
                 account_availability_loading: false,
+                account_availability_loaded_at: None,
                 settings_profiles: Vec::new(),
                 selected_settings_profile: None,
                 settings_saving_account: None,
@@ -234,7 +236,7 @@ impl PrimeApp {
                         .map(|account| format!("Selected {}", account.summary()))
                         .unwrap_or_else(|| "No account selected".to_string()),
                 );
-                Task::batch([self.save_task(), self.load_selected_account_tab()])
+                Task::batch([self.save_task(), self.load_account_tab(id)])
             }
             Message::NewDisplayNameChanged(value) => {
                 self.new_display_name = value;
@@ -432,7 +434,10 @@ impl PrimeApp {
                         self.pending_account = None;
                         self.new_display_name.clear();
                         self.new_username.clear();
-                        return Task::batch([self.save_task(), self.load_active_tab()]);
+                        return Task::batch([
+                            self.save_task(),
+                            self.load_account_tab(draft.account_id),
+                        ]);
                     }
                     Err(error) => {
                         self.set_status(error.to_string());
@@ -639,7 +644,7 @@ impl PrimeApp {
                         self.import_account_input.clear();
                         self.clear_selected_account_views();
                         self.set_status(format!("Imported {summary}{id_note}"));
-                        return Task::batch([self.save_task(), self.load_active_tab()]);
+                        return Task::batch([self.save_task(), self.load_account_tab(account_id)]);
                     }
                     Err(error) => {
                         self.set_status(format!("Could not import account: {error}"));
@@ -772,10 +777,11 @@ impl PrimeApp {
                     .and_then(|tokens| redirect_session_for_account(account, tokens))
                 {
                     Ok(session) => {
+                        let account_id = account.id;
                         account.session = Some(session);
                         self.redirect_input.clear();
                         self.set_status("Imported Riot redirect token for selected account");
-                        Task::batch([self.save_task(), self.load_active_tab()])
+                        Task::batch([self.save_task(), self.load_account_tab(account_id)])
                     }
                     Err(error) => {
                         self.set_status(format!("Could not import redirect token: {error}"));
@@ -917,7 +923,10 @@ impl PrimeApp {
                             }
                             let summary = account.summary();
                             self.set_status(format!("Refreshed {summary}"));
-                            return Task::batch([self.save_task(), self.load_active_tab()]);
+                            return Task::batch([
+                                self.save_task(),
+                                self.load_account_tab(identity.account_id),
+                            ]);
                         }
 
                         self.set_status(
@@ -931,7 +940,7 @@ impl PrimeApp {
 
                 Task::none()
             }
-            Message::AccountRanksLoaded(result) => {
+            Message::AccountRanksLoaded { result, announce } => {
                 self.account_ranks_loading = false;
 
                 let mut updated = 0usize;
@@ -949,17 +958,16 @@ impl PrimeApp {
                         identity,
                     } = rank;
 
-                    if let Err(error) = cache_account_api_context(
+                    if cache_account_api_context(
                         &mut self.state,
                         account_id,
                         session,
                         launcher_session,
                         identity,
-                    ) {
+                    )
+                    .is_err()
+                    {
                         context_failures += 1;
-                        self.set_status(format!(
-                            "Account details loaded, but profile update failed: {error}"
-                        ));
                         continue;
                     }
 
@@ -987,7 +995,7 @@ impl PrimeApp {
                 }
 
                 let failed = result.failures.len() + context_failures;
-                self.set_status(match (updated, failed, partial) {
+                let status = match (updated, failed, partial) {
                     (0, 0, 0) => "No account details to refresh".to_string(),
                     (0, failed, _) => {
                         format!("Account detail refresh failed for {failed} account(s)")
@@ -1008,7 +1016,10 @@ impl PrimeApp {
                             "Loaded account details for {updated} account(s); {failed} unavailable, {partial} partial"
                         )
                     }
-                });
+                };
+                if announce && !self.progress_pinned() {
+                    self.set_status(status);
+                }
 
                 if updated > 0 {
                     self.save_task()
@@ -1917,14 +1928,21 @@ impl PrimeApp {
         self.loadout_summary = None;
     }
 
-    /// Like `load_active_tab`, but on the Accounts tab only the newly selected account is
-    /// refreshed; the periodic availability check covers the rest.
-    fn load_selected_account_tab(&mut self) -> Task<Message> {
+    /// Loads the active tab after one account changed (selected, added, imported, re-captured or
+    /// refreshed). On the Accounts tab only that account is refreshed, quietly, so the message
+    /// about the change stays on screen; the periodic availability check covers the rest.
+    fn load_account_tab(&mut self, account_id: AccountId) -> Task<Message> {
         if self.active_tab != Tab::Accounts {
             return self.load_active_tab();
         }
 
-        let Some(account) = self.state.selected_account().cloned() else {
+        let Some(account) = self
+            .state
+            .accounts
+            .iter()
+            .find(|account| account.id == account_id)
+            .cloned()
+        else {
             return Task::none();
         };
 
@@ -1944,18 +1962,32 @@ impl PrimeApp {
 
     fn load_active_tab(&mut self) -> Task<Message> {
         match self.active_tab {
-            Tab::Accounts => Task::batch([
-                if self.account_ranks_loading {
-                    Task::none()
-                } else {
-                    self.fetch_account_ranks_task()
-                },
-                if self.account_availability_loading || self.launch_preflight_account.is_some() {
-                    Task::none()
-                } else {
-                    self.fetch_account_availabilities_task()
-                },
-            ]),
+            Tab::Accounts => {
+                let now = iced::time::Instant::now();
+                let fresh = |loaded_at: Option<iced::time::Instant>| {
+                    loaded_at.is_some_and(|loaded_at| {
+                        now.saturating_duration_since(loaded_at) < super::ACCOUNTS_TAB_RELOAD_AFTER
+                    })
+                };
+                let reload_details =
+                    !self.account_ranks_loading && !fresh(self.account_details_loaded_at);
+                let reload_availability = !self.account_availability_loading
+                    && self.launch_preflight_account.is_none()
+                    && !fresh(self.account_availability_loaded_at);
+
+                Task::batch([
+                    if reload_details {
+                        self.fetch_account_ranks_task()
+                    } else {
+                        Task::none()
+                    },
+                    if reload_availability {
+                        self.fetch_account_availabilities_task()
+                    } else {
+                        Task::none()
+                    },
+                ])
+            }
             Tab::Shop
                 if self.store_summary.is_none() && !self.selected_account_is_store_loading() =>
             {
@@ -1972,7 +2004,13 @@ impl PrimeApp {
     }
 
     fn fetch_account_availabilities_task(&mut self) -> Task<Message> {
-        self.fetch_account_availabilities_task_for(self.state.accounts.clone())
+        let task = self.fetch_account_availabilities_task_for(self.state.accounts.clone());
+
+        if task.units() > 0 {
+            self.account_availability_loaded_at = Some(iced::time::Instant::now());
+        }
+
+        task
     }
 
     fn fetch_account_availabilities_task_for(
@@ -1997,13 +2035,21 @@ impl PrimeApp {
     }
 
     fn fetch_account_ranks_task(&mut self) -> Task<Message> {
-        self.fetch_account_ranks_task_for(self.state.accounts.clone(), true)
+        let task = self.fetch_account_ranks_task_for(self.state.accounts.clone(), true);
+
+        if task.units() > 0 {
+            self.account_details_loaded_at = Some(iced::time::Instant::now());
+        }
+
+        task
     }
 
+    /// Starts a details load. `announce` shows its progress and result in the status bar, unless
+    /// launch or login capture progress is pinned there.
     fn fetch_account_ranks_task_for(
         &mut self,
         accounts: Vec<AccountProfile>,
-        show_status: bool,
+        announce: bool,
     ) -> Task<Message> {
         if accounts.is_empty() {
             return Task::none();
@@ -2013,15 +2059,16 @@ impl PrimeApp {
             return Task::none();
         }
 
+        let announce = announce && !self.progress_pinned();
         self.account_ranks_loading = true;
-        if show_status {
+        if announce {
             self.set_status("Loading account details");
         }
         let client_version = self.client_version_input.clone();
 
         Task::perform(
             fetch_account_ranks(accounts, client_version),
-            Message::AccountRanksLoaded,
+            move |result| Message::AccountRanksLoaded { result, announce },
         )
     }
 
@@ -2290,7 +2337,7 @@ impl PrimeApp {
         self.set_status(format!(
             "Duplicate account: Prime did not add a new profile because this Riot account is already in Prime; updated and selected {summary}"
         ));
-        self.save_task()
+        Task::batch([self.save_task(), self.load_account_tab(account_id)])
     }
 
     fn restore_active_tab_scroll_task(&self) -> Task<Message> {
@@ -2302,6 +2349,12 @@ impl PrimeApp {
 
     pub(super) fn launch_in_progress(&self) -> bool {
         self.launching_account.is_some() || self.launch_preflight_account.is_some()
+    }
+
+    /// Launch and login capture progress stays in the status bar while it runs, so background
+    /// results don't replace it.
+    fn progress_pinned(&self) -> bool {
+        self.launch_in_progress() || self.launcher_capture_in_progress
     }
 
     /// Login capture and launching both rewrite Riot Client's live login data, so only one may run.
@@ -2380,7 +2433,7 @@ impl PrimeApp {
             self.set_status(format!(
                 "Captured launcher session for {summary} ({captured_puuid})"
             ));
-            return Task::batch([self.save_task(), self.load_active_tab()]);
+            return Task::batch([self.save_task(), self.load_account_tab(account_id)]);
         }
 
         self.set_status(match remove_launcher_session_backup(

@@ -2562,6 +2562,105 @@ fn selecting_an_account_refreshes_it_without_a_full_reload() {
     assert_eq!(app.status, format!("Selected {}", alt.summary()));
 }
 
+fn accounts_tab_app(dir: &Path) -> (PrimeApp, AccountProfile) {
+    let mut app = test_app(dir);
+    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    account.puuid = Some("puuid-a".to_string());
+    app.state.push_account(account.clone());
+    app.state.select_account(account.id);
+    app.client_version_input = "release-1".to_string();
+    app.active_tab = super::Tab::Accounts;
+    (app, account)
+}
+
+#[test]
+fn refresh_profile_result_is_not_replaced_by_a_details_reload() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account) = accounts_tab_app(dir.path());
+
+    let _ = app.update(Message::ProfileIdentityLoaded(Ok(
+        super::data::account_details::RefreshedProfileIdentity {
+            account_id: account.id,
+            session: AuthSession::new("access", None, None, "Bearer", Some(3600), 100),
+            launcher_session: None,
+            puuid: "puuid-a".to_string(),
+            game_name: "Player".to_string(),
+            tag_line: "NA1".to_string(),
+        },
+    )));
+
+    assert!(app.status.starts_with("Refreshed "), "{}", app.status);
+}
+
+#[test]
+fn import_result_is_not_replaced_by_a_details_reload() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = accounts_tab_app(dir.path());
+    let imported = AccountProfile::new("Alt", None, Shard::Na).expect("alt");
+
+    let _ = app.update(Message::AccountImported(Ok(
+        crate::account_transfer::ImportedAccount {
+            original_id: AccountId::new(),
+            account: imported,
+            id_changed: true,
+            imported_launcher_file_count: 1,
+        },
+    )));
+
+    assert!(
+        app.status.ends_with("with a new local ID"),
+        "{}",
+        app.status
+    );
+}
+
+#[test]
+fn background_account_details_leave_the_status_alone() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = accounts_tab_app(dir.path());
+    app.status = "Added Main".to_string();
+
+    let _ = app.update(Message::AccountRanksLoaded {
+        result: Default::default(),
+        announce: false,
+    });
+
+    assert_eq!(app.status, "Added Main");
+}
+
+#[test]
+fn opening_accounts_during_a_launch_keeps_the_launch_progress() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account) = accounts_tab_app(dir.path());
+    app.active_tab = super::Tab::Settings;
+    app.launching_account = Some(account.id);
+    app.status = "Riot Client is open; waiting for VALORANT".to_string();
+
+    let _ = app.update(Message::TabSelected(super::Tab::Accounts));
+
+    assert_eq!(app.status, "Riot Client is open; waiting for VALORANT");
+}
+
+#[test]
+fn reopening_accounts_soon_after_a_load_does_not_refetch() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = accounts_tab_app(dir.path());
+    app.active_tab = super::Tab::Settings;
+
+    let _ = app.update(Message::TabSelected(super::Tab::Accounts));
+    assert!(app.account_ranks_loading);
+    let _ = app.update(Message::AccountRanksLoaded {
+        result: Default::default(),
+        announce: true,
+    });
+    let _ = app.update(Message::AccountAvailabilitiesLoaded(Default::default()));
+    let _ = app.update(Message::TabSelected(super::Tab::Settings));
+    let _ = app.update(Message::TabSelected(super::Tab::Accounts));
+
+    assert!(!app.account_ranks_loading);
+    assert!(!app.account_availability_loading);
+}
+
 #[test]
 fn development_builds_do_not_report_update_checks_as_failed() {
     let dir = tempdir().expect("temp dir");

@@ -32,6 +32,8 @@ use data::shop::{StoreSummary, StorefrontResult};
 const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
 const LAUNCH_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const ACCOUNT_AVAILABILITY_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+/// Opening the Accounts tab reloads every account's details only when they are older than this.
+const ACCOUNTS_TAB_RELOAD_AFTER: Duration = Duration::from_secs(60);
 const STATUS_FLASH_DURATION: Duration = Duration::from_secs(4);
 const STATUS_FLASH_TICK_INTERVAL: Duration = Duration::from_millis(500);
 const CLIENT_VERSION_RETRY_INTERVAL: Duration = Duration::from_secs(30);
@@ -234,8 +236,12 @@ struct PrimeApp {
     loadout_loading_account: Option<AccountId>,
     profile_identity_refreshing_account: Option<AccountId>,
     account_ranks_loading: bool,
+    /// When the last all-account details and availability loads started, so reopening the
+    /// Accounts tab doesn't refetch everything each time.
+    account_details_loaded_at: Option<iced::time::Instant>,
     account_availability: HashMap<AccountId, AccountAvailability>,
     account_availability_loading: bool,
+    account_availability_loaded_at: Option<iced::time::Instant>,
     settings_profiles: Vec<GameSettingsProfileMetadata>,
     selected_settings_profile: Option<String>,
     settings_saving_account: Option<AccountId>,
@@ -552,7 +558,12 @@ enum Message {
     ),
     RefreshProfileIdentity(AccountId),
     ProfileIdentityLoaded(Result<RefreshedProfileIdentity, String>),
-    AccountRanksLoaded(AccountRanksResult),
+    /// Rank, level and penalty results. `announce` is false for follow-up refreshes of one
+    /// account, whose results only update the cards.
+    AccountRanksLoaded {
+        result: AccountRanksResult,
+        announce: bool,
+    },
     AccountAvailabilityTimerTick(iced::time::Instant),
     WindowResized(iced::Size),
     StatusTimerTick(iced::time::Instant),
