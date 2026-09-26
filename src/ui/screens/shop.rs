@@ -112,18 +112,16 @@ fn bundle_row(summary: &StoreSummary, now: iced::time::Instant) -> Element<'_, M
 }
 
 fn store_bundle_card(bundle: &StoreBundleDisplay, remaining_seconds: i64) -> Element<'_, Message> {
-    let price = bundle
-        .price
-        .as_ref()
-        .map(OfferPrice::label)
-        .unwrap_or_else(|| "Price unavailable".to_string());
     let rarity_for_style = bundle.rarity.clone();
+    let mut meta = bundle.item_count_label();
+    if bundle.discount_percent > 0 {
+        meta.push_str(&format!(" | {}% off", bundle.discount_percent));
+    }
     let details = column![
         compact_item_name(&bundle.bundle.display_name, 20, SHOP_BUNDLE_NAME_HEIGHT),
-        text(price).size(16),
+        price_line(bundle.price.as_ref(), bundle.original_price.as_ref(), 16),
         text(format!(
-            "{} | Expires in {}",
-            bundle.item_count_label(),
+            "{meta} | Expires in {}",
             format_duration(remaining_seconds)
         ))
         .size(14),
@@ -218,7 +216,11 @@ fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {
             16,
             SHOP_ITEM_NAME_HEIGHT,
         ))
-        .push(offer_price_line(offer));
+        .push(price_line(
+            offer.price.as_ref(),
+            offer.original_price.as_ref(),
+            14,
+        ));
 
     if offer.discount_percent > 0 {
         details = details.push(text(format!("{}% off", offer.discount_percent)).size(13));
@@ -231,12 +233,17 @@ fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {
         .into()
 }
 
-fn offer_price_line(offer: &StoreOfferDisplay) -> Element<'_, Message> {
-    let Some(price) = &offer.price else {
-        return text("Price unavailable").size(14).into();
+/// The price, after the struck-through original price when it's discounted.
+fn price_line(
+    price: Option<&OfferPrice>,
+    original_price: Option<&OfferPrice>,
+    size: u32,
+) -> Element<'static, Message> {
+    let Some(price) = price else {
+        return text("Price unavailable").size(size).into();
     };
 
-    if let Some(original_price) = &offer.original_price
+    if let Some(original_price) = original_price
         && original_price != price
     {
         return rich_text::<(), Message, Theme, iced::Renderer>([
@@ -246,11 +253,11 @@ fn offer_price_line(offer: &StoreOfferDisplay) -> Element<'_, Message> {
             span(" "),
             span(price.label()).color(Color::WHITE),
         ])
-        .size(14)
+        .size(size)
         .into();
     }
 
-    text(price.label()).size(14).into()
+    text(price.label()).size(size).into()
 }
 
 fn rarity_card_style(theme: &Theme, rarity: Option<&str>) -> iced::widget::container::Style {

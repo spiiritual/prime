@@ -311,7 +311,7 @@ fn store_summary_counts_night_market() {
             .iter()
             .map(StoreBundleDisplay::label)
             .collect::<Vec<_>>(),
-        ["Give Back Bundle (1420 VP), 1 item"]
+        ["Give Back Bundle (1,420 VP), 1 item"]
     );
     assert_eq!(
         summary
@@ -319,7 +319,7 @@ fn store_summary_counts_night_market() {
             .iter()
             .map(StoreOfferDisplay::label)
             .collect::<Vec<_>>(),
-        ["Prime Vandal Level 1 (1775 VP)", "b"]
+        ["Prime Vandal Level 1 (1,775 VP)", "b"]
     );
     assert_eq!(summary.daily_remaining_seconds, 30);
     assert_eq!(summary.bundle_remaining_seconds, 20);
@@ -330,7 +330,7 @@ fn store_summary_counts_night_market() {
             .iter()
             .map(StoreOfferDisplay::label)
             .collect::<Vec<_>>(),
-        ["Prime Vandal Level 1 (1775 VP -> 1200 VP), 10% off"]
+        ["Prime Vandal Level 1 (1,775 VP -> 1,200 VP), 10% off"]
     );
 }
 
@@ -452,7 +452,7 @@ fn store_summary_includes_accessory_store_offers() {
             .iter()
             .map(StoreAccessoryDisplay::label)
             .collect::<Vec<_>>(),
-        ["Penguin Buddy Level 1 (2500 Kingdom Credits)"]
+        ["Penguin Buddy Level 1 (2,500 Kingdom Credits)"]
     );
 }
 
@@ -4290,4 +4290,114 @@ fn a_battle_pass_that_had_already_ended_does_not_keep_reloading() {
 
     assert!(app.loadout_request.is_none());
     assert!(!countdown_timer_active(&app));
+}
+
+fn priced_bundle_json(
+    base_cost: Option<i64>,
+    discounted_cost: Option<i64>,
+    items: serde_json::Value,
+) -> serde_json::Value {
+    let mut bundle = featured_bundle_json("bundle", 3_600);
+    bundle["Items"] = items;
+    if let Some(cost) = base_cost {
+        bundle["TotalBaseCost"] = serde_json::json!({ "vp": cost });
+    }
+    if let Some(cost) = discounted_cost {
+        bundle["TotalDiscountedCost"] = serde_json::json!({ "vp": cost });
+    }
+    bundle
+}
+
+fn bundle_item_json(
+    base_price: i64,
+    discount_percent: i64,
+    discounted_price: i64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "Item": { "ItemTypeID": "skin", "ItemID": "item", "Amount": 1 },
+        "BasePrice": base_price,
+        "CurrencyID": "vp",
+        "DiscountPercent": discount_percent,
+        "DiscountedPrice": discounted_price,
+        "IsPromoItem": false
+    })
+}
+
+#[test]
+fn offer_prices_use_thousands_separators() {
+    let summary = summary_with_bundles(
+        vec![priced_bundle_json(
+            Some(7_100),
+            Some(7_100),
+            serde_json::json!([]),
+        )],
+        3_600,
+        iced::time::Instant::now(),
+    );
+
+    let price = summary.featured_bundles[0].price.as_ref().expect("price");
+
+    assert!(price.label().starts_with("7,100 "), "{}", price.label());
+}
+
+#[test]
+fn a_discounted_bundle_shows_its_original_price_and_discount() {
+    let summary = summary_with_bundles(
+        vec![priced_bundle_json(
+            Some(8_000),
+            Some(6_000),
+            serde_json::json!([]),
+        )],
+        3_600,
+        iced::time::Instant::now(),
+    );
+    let bundle = &summary.featured_bundles[0];
+
+    assert_eq!(bundle.price.as_ref().map(|price| price.amount), Some(6_000));
+    assert_eq!(
+        bundle.original_price.as_ref().map(|price| price.amount),
+        Some(8_000)
+    );
+    assert_eq!(bundle.discount_percent, 25);
+}
+
+#[test]
+fn a_bundle_at_full_price_shows_no_discount() {
+    let summary = summary_with_bundles(
+        vec![priced_bundle_json(
+            Some(8_000),
+            Some(8_000),
+            serde_json::json!([]),
+        )],
+        3_600,
+        iced::time::Instant::now(),
+    );
+    let bundle = &summary.featured_bundles[0];
+
+    assert_eq!(bundle.original_price, None);
+    assert_eq!(bundle.discount_percent, 0);
+}
+
+#[test]
+fn a_free_bundle_item_is_not_counted_at_full_price() {
+    let summary = summary_with_bundles(
+        vec![priced_bundle_json(
+            None,
+            None,
+            serde_json::json!([
+                bundle_item_json(1_000, 100, 0),
+                bundle_item_json(500, 0, 500)
+            ]),
+        )],
+        3_600,
+        iced::time::Instant::now(),
+    );
+
+    assert_eq!(
+        summary.featured_bundles[0]
+            .price
+            .as_ref()
+            .map(|price| price.amount),
+        Some(500)
+    );
 }

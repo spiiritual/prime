@@ -314,6 +314,8 @@ impl StoreAccessoryDisplay {
 pub(in crate::ui) struct StoreBundleDisplay {
     pub(in crate::ui) bundle: BundleDisplay,
     pub(in crate::ui) price: Option<OfferPrice>,
+    pub(in crate::ui) original_price: Option<OfferPrice>,
+    pub(in crate::ui) discount_percent: i64,
     pub(in crate::ui) item_count: i64,
     pub(in crate::ui) rarity: Option<String>,
     /// Seconds left when the shop loaded, if Riot reported this bundle's own end time.
@@ -349,7 +351,11 @@ pub(in crate::ui) struct OfferPrice {
 
 impl OfferPrice {
     pub(in crate::ui) fn label(&self) -> String {
-        format!("{} {}", self.amount, self.currency.display_name)
+        format!(
+            "{} {}",
+            format_whole_number(self.amount),
+            self.currency.display_name
+        )
     }
 }
 
@@ -522,10 +528,25 @@ pub(in crate::ui) fn store_bundle_display(
     };
     let rarity = strongest_bundle_rarity(bundle, skins);
     let item_count = bundle.items.len() as i64;
+    let price = bundle_price(bundle, currencies);
+    let original_price = bundle_original_price(bundle, currencies).filter(|original| {
+        price.as_ref().is_some_and(|price| {
+            price.currency == original.currency && original.amount > price.amount
+        })
+    });
+    let discount_percent = match (&price, &original_price) {
+        (Some(price), Some(original)) => {
+            // Rounded to the nearest percent, as the game shows it.
+            ((original.amount - price.amount) * 100 + original.amount / 2) / original.amount
+        }
+        _ => 0,
+    };
 
     StoreBundleDisplay {
         bundle: BundleDisplay::from(resolved),
-        price: bundle_price(bundle, currencies),
+        price,
+        original_price,
+        discount_percent,
         item_count,
         rarity,
         remaining_seconds: Some(bundle.duration_remaining_in_seconds)
@@ -550,9 +571,33 @@ pub(in crate::ui) fn bundle_price(
         .or_else(|| summed_bundle_item_price(bundle, currencies))
 }
 
+/// The bundle's price before its discount.
+fn bundle_original_price(bundle: &StoreBundle, currencies: &CurrencyCatalog) -> Option<OfferPrice> {
+    match (&bundle.total_base_cost, &bundle.total_discounted_cost) {
+        (Some(costs), _) => offer_price(costs, currencies),
+        (None, None) => summed_bundle_items(bundle, currencies, |item| item.base_price),
+        (None, Some(_)) => None,
+    }
+}
+
 pub(in crate::ui) fn summed_bundle_item_price(
     bundle: &StoreBundle,
     currencies: &CurrencyCatalog,
+) -> Option<OfferPrice> {
+    summed_bundle_items(bundle, currencies, |item| {
+        // A 100% discount makes the item free, so its discounted price of 0 is the real one.
+        if item.discount_percent > 0 || item.discounted_price > 0 {
+            item.discounted_price
+        } else {
+            item.base_price
+        }
+    })
+}
+
+fn summed_bundle_items(
+    bundle: &StoreBundle,
+    currencies: &CurrencyCatalog,
+    price_of: impl Fn(&crate::riot::models::BundleItem) -> i64,
 ) -> Option<OfferPrice> {
     let currency_id = bundle
         .currency_id
@@ -570,13 +615,7 @@ pub(in crate::ui) fn summed_bundle_item_price(
         .items
         .iter()
         .filter(|item| item.currency_id.eq_ignore_ascii_case(currency_id))
-        .map(|item| {
-            if item.discounted_price > 0 {
-                item.discounted_price
-            } else {
-                item.base_price
-            }
-        })
+        .map(price_of)
         .sum();
 
     Some(OfferPrice {
