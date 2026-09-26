@@ -15,6 +15,7 @@ use super::data::account_details::{
     penalty_status_from_response, rank_name_for_competitive_tier,
 };
 use super::data::cache_account_api_context;
+use super::data::game_settings::{AppliedGameSettingsResult, SavedGameSettingsResult};
 use super::data::launch_flow::CapturedAccountDraft;
 use super::data::launch_flow::{
     LaunchAccountResult, is_pending_launcher_capture_error, load_accounts, require_launcher_session,
@@ -29,12 +30,15 @@ use super::data::shop::{
     StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay, StoreSummary, format_whole_number,
 };
 use super::{
-    Message, PrimeApp, loading_status_active, masked_account_export_payload, status_bar_visible,
-    status_message_is_error, status_visible_at,
+    Message, PendingSettingsApply, PrimeApp, loading_status_active, masked_account_export_payload,
+    status_bar_visible, status_message_is_error, status_visible_at,
 };
 use crate::account::{
     AccountId, AccountPenalty, AccountPenaltyDuration, AccountPenaltyStatus, AccountProfile,
     AuthSession, CompetitiveRank, LauncherSessionBackup, Shard,
+};
+use crate::game_settings::{
+    GameSettingsProfileMetadata, GameSettingsProfilePurpose, GameSettingsProfileSummary,
 };
 use crate::riot::content::{
     AccessoryCatalog, Buddy, BuddyLevel, BundleCatalog, ContractCatalog, ContractChapter,
@@ -3660,4 +3664,232 @@ fn cache_account_api_context_rejects_missing_account() {
     .expect_err("missing account");
 
     assert!(err.contains("profile no longer exists"));
+}
+
+fn settings_profile_metadata(
+    name: &str,
+    purpose: GameSettingsProfilePurpose,
+    captured_at_unix: i64,
+) -> GameSettingsProfileMetadata {
+    GameSettingsProfileMetadata {
+        id: format!("{captured_at_unix}-profile-id"),
+        name: name.to_string(),
+        purpose,
+        source_account_id: AccountId::new(),
+        source_display_name: "Main".to_string(),
+        source_puuid: "Main-puuid".to_string(),
+        captured_at_unix,
+        settings_version: Some(15),
+        summary: GameSettingsProfileSummary {
+            sensitivity_count: 1,
+            crosshair_count: 0,
+            keybind_count: 0,
+            minimap_count: 0,
+            gameplay_interface_count: 0,
+            examples: vec![],
+        },
+    }
+}
+
+fn settings_api_identity() -> ApiIdentity {
+    ApiIdentity {
+        puuid: "Main-puuid".to_string(),
+        game_name: None,
+        tag_line: None,
+        shard: Shard::Na,
+    }
+}
+
+fn settings_saved(account_id: AccountId, profile: GameSettingsProfileMetadata) -> Message {
+    Message::AccountSettingsSaved(Ok(SavedGameSettingsResult {
+        account_id,
+        session: AuthSession::new("fresh", None, None, "Bearer", Some(3600), 100),
+        launcher_session: None,
+        identity: settings_api_identity(),
+        profile,
+    }))
+}
+
+fn settings_app(dir: &Path) -> (PrimeApp, AccountId) {
+    let mut app = test_app(dir);
+    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let account_id = account.id;
+    app.state.push_account(account);
+    (app, account_id)
+}
+
+fn profile_ids(app: &PrimeApp) -> Vec<String> {
+    app.settings_profiles
+        .iter()
+        .map(|profile| profile.id.clone())
+        .collect()
+}
+
+#[test]
+fn saving_settings_keeps_the_profile_chosen_for_apply() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let chosen =
+        settings_profile_metadata("Alt settings", GameSettingsProfilePurpose::Profile, 100);
+    app.settings_profiles = vec![chosen.clone()];
+    app.selected_settings_profile = Some(chosen.id.clone());
+    app.settings_saving_account = Some(account_id);
+    let saved =
+        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
+
+    let _ = app.update(settings_saved(account_id, saved.clone()));
+
+    assert_eq!(app.selected_settings_profile, Some(chosen.id.clone()));
+    assert_eq!(profile_ids(&app), [saved.id, chosen.id]);
+}
+
+#[test]
+fn saving_the_first_settings_profile_chooses_it_for_apply() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let saved =
+        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
+
+    let _ = app.update(settings_saved(account_id, saved.clone()));
+
+    assert_eq!(app.selected_settings_profile, Some(saved.id));
+}
+
+#[test]
+fn saved_settings_profile_is_listed_when_the_account_update_fails() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let saved =
+        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
+
+    let _ = app.update(settings_saved(AccountId::new(), saved.clone()));
+
+    assert_eq!(profile_ids(&app), [saved.id]);
+    assert!(
+        app.status.contains("account update failed"),
+        "{}",
+        app.status
+    );
+}
+
+#[test]
+fn loaded_settings_profiles_choose_a_saved_profile_over_a_backup() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = settings_app(dir.path());
+    let backup = settings_profile_metadata("Main backup", GameSettingsProfilePurpose::Backup, 300);
+    let profile =
+        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
+
+    let _ = app.update(Message::GameSettingsProfilesLoaded(Ok(vec![
+        backup.clone(),
+        profile.clone(),
+    ])));
+
+    assert_eq!(profile_ids(&app), [backup.id, profile.id.clone()]);
+    assert_eq!(app.selected_settings_profile, Some(profile.id));
+}
+
+#[test]
+fn applying_settings_asks_to_confirm_the_profile_and_account() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let backup = settings_profile_metadata("Main backup", GameSettingsProfilePurpose::Backup, 300);
+    let profile =
+        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
+    app.settings_profiles = vec![backup, profile.clone()];
+    app.selected_settings_profile = Some(profile.id.clone());
+
+    let task = app.update(Message::RequestApplySavedSettings(account_id));
+
+    assert_eq!(task.units(), 0);
+    assert_eq!(app.settings_applying_account, None);
+    assert_eq!(
+        app.confirm_apply_settings,
+        Some(PendingSettingsApply {
+            account_id,
+            profile_id: profile.id,
+        })
+    );
+
+    let _ = app.update(Message::CancelApplySavedSettings);
+
+    assert_eq!(app.confirm_apply_settings, None);
+    assert_eq!(app.settings_applying_account, None);
+}
+
+#[test]
+fn confirming_apply_starts_it() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let profile =
+        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
+    app.settings_profiles = vec![profile.clone()];
+    app.selected_settings_profile = Some(profile.id.clone());
+    let _ = app.update(Message::RequestApplySavedSettings(account_id));
+
+    let task = app.update(Message::ConfirmApplySavedSettings);
+
+    assert!(task.units() > 0);
+    assert_eq!(app.confirm_apply_settings, None);
+    assert_eq!(app.settings_applying_account, Some(account_id));
+    assert!(app.status.contains("Main settings"), "{}", app.status);
+}
+
+#[test]
+fn applied_settings_status_names_the_backup() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let source =
+        settings_profile_metadata("Alt settings", GameSettingsProfilePurpose::Profile, 200);
+    let backup = settings_profile_metadata("Main backup", GameSettingsProfilePurpose::Backup, 300);
+    app.settings_applying_account = Some(account_id);
+
+    let _ = app.update(Message::SavedSettingsApplied(Ok(
+        AppliedGameSettingsResult {
+            account_id,
+            session: AuthSession::new("fresh", None, None, "Bearer", Some(3600), 100),
+            launcher_session: None,
+            identity: settings_api_identity(),
+            source_profile: source,
+            backup_profile: backup.clone(),
+        },
+    )));
+
+    assert!(app.status.contains("Main backup"), "{}", app.status);
+    assert!(!app.status.contains(&backup.id), "{}", app.status);
+}
+
+#[test]
+fn deleting_a_settings_profile_asks_first_and_moves_the_choice() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = settings_app(dir.path());
+    let deleted =
+        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
+    let kept = settings_profile_metadata("Alt settings", GameSettingsProfilePurpose::Profile, 100);
+    app.settings_profiles = vec![deleted.clone(), kept.clone()];
+    app.selected_settings_profile = Some(deleted.id.clone());
+
+    let task = app.update(Message::RequestDeleteSettingsProfile(deleted.id.clone()));
+
+    assert_eq!(task.units(), 0);
+    assert_eq!(
+        app.confirm_delete_settings_profile,
+        Some(deleted.id.clone())
+    );
+
+    let task = app.update(Message::ConfirmDeleteSettingsProfile);
+
+    assert!(task.units() > 0);
+    assert_eq!(app.confirm_delete_settings_profile, None);
+
+    let _ = app.update(Message::SettingsProfileDeleted(deleted.id.clone(), Ok(())));
+
+    assert_eq!(profile_ids(&app), std::slice::from_ref(&kept.id));
+    assert_eq!(app.selected_settings_profile, Some(kept.id));
+    assert!(
+        app.status
+            .contains("Deleted settings profile Main settings"),
+        "{}",
+        app.status
+    );
 }

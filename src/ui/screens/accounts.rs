@@ -1,9 +1,11 @@
+use std::fmt;
+
 use iced::widget::{button, column, container, pick_list, row, space, text, text_input, tooltip};
 use iced::{Color, Element, Length, Padding, Theme, alignment};
 use time::{OffsetDateTime, UtcOffset};
 
 use crate::account::{AccountId, AccountProfile, CompetitiveRank, Shard};
-use crate::game_settings::GameSettingsProfileMetadata;
+use crate::game_settings::{GameSettingsProfileMetadata, GameSettingsProfilePurpose};
 
 use crate::ui::components::{anchored_popover, compact_loading_indicator};
 use crate::ui::data::account_details::AccountAvailability;
@@ -111,11 +113,36 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         .into()
 }
 
+/// A saved settings profile as the picker shows it.
+#[derive(Clone, Debug, PartialEq)]
+struct SettingsProfileChoice {
+    profile: GameSettingsProfileMetadata,
+    label: String,
+}
+
+impl SettingsProfileChoice {
+    fn new(profile: &GameSettingsProfileMetadata) -> Self {
+        Self {
+            label: settings_profile_label(profile),
+            profile: profile.clone(),
+        }
+    }
+}
+
+impl fmt::Display for SettingsProfileChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
 fn settings_profiles_section(app: &PrimeApp) -> Element<'_, Message> {
     let mut profiles = column![
         text("Settings profiles").size(18),
-        text("Saved VALORANT settings profiles can be applied to any account with API access.")
-            .size(13)
+        text(
+            "Saved VALORANT settings profiles can be applied to any account with API access. \
+             Applying one first backs up that account's current settings, listed here as a backup."
+        )
+        .size(13)
     ]
     .spacing(8)
     .width(Length::Fill);
@@ -123,33 +150,30 @@ fn settings_profiles_section(app: &PrimeApp) -> Element<'_, Message> {
     if app.settings_profiles.is_empty() {
         profiles = profiles.push(text("No saved settings profiles yet").size(13));
     } else {
-        let selected_profile = app
-            .selected_settings_profile
-            .as_ref()
-            .and_then(|selected| {
-                app.settings_profiles
-                    .iter()
-                    .find(|profile| &profile.id == selected)
-                    .cloned()
-            })
-            .or_else(|| app.settings_profiles.first().cloned());
+        let profile_to_apply = app.settings_profile_to_apply();
+        let settings_busy =
+            app.settings_saving_account.is_some() || app.settings_applying_account.is_some();
 
         profiles = profiles.push(
             row![
                 text("Profile to apply").size(13).width(Length::Fill),
                 pick_list(
-                    app.settings_profiles.clone(),
-                    selected_profile,
-                    Message::GameSettingsProfileSelected
+                    app.settings_profiles
+                        .iter()
+                        .map(SettingsProfileChoice::new)
+                        .collect::<Vec<_>>(),
+                    profile_to_apply.map(SettingsProfileChoice::new),
+                    |choice| Message::GameSettingsProfileSelected(choice.profile)
                 )
-                .width(320)
+                .width(380)
             ]
             .spacing(10)
             .align_y(alignment::Vertical::Center),
         );
 
         for profile in &app.settings_profiles {
-            profiles = profiles.push(settings_profile_card(profile));
+            let chosen = profile_to_apply.is_some_and(|chosen| chosen.id == profile.id);
+            profiles = profiles.push(settings_profile_card(profile, chosen, !settings_busy));
         }
     }
 
@@ -160,23 +184,42 @@ fn settings_profiles_section(app: &PrimeApp) -> Element<'_, Message> {
         .into()
 }
 
-fn settings_profile_card(profile: &GameSettingsProfileMetadata) -> Element<'_, Message> {
+fn settings_profile_card(
+    profile: &GameSettingsProfileMetadata,
+    chosen: bool,
+    can_delete: bool,
+) -> Element<'_, Message> {
+    let kind = match profile.purpose {
+        GameSettingsProfilePurpose::Profile => "Saved profile",
+        GameSettingsProfilePurpose::Backup => "Backup made by Apply",
+    };
     let version = profile
         .settings_version
         .map(|version| format!("Version {version}"))
         .unwrap_or_else(|| "Version unknown".to_string());
     let details = format!(
-        "{} | Source: {} | Saved: {}",
+        "{kind} | {} | Source: {} | Saved: {}",
         version,
         profile.source_display_name,
         last_refreshed_label(Some(profile.captured_at_unix))
     );
+    let select = if chosen {
+        button("Selected")
+    } else {
+        button("Select").on_press(Message::GameSettingsProfileSelected(profile.clone()))
+    };
 
     container(
         column![
             row![
                 text(&profile.name).size(15).width(Length::Fill),
-                button("Select").on_press(Message::GameSettingsProfileSelected(profile.clone()))
+                select,
+                button("Delete")
+                    .style(iced::widget::button::danger)
+                    .on_press_maybe(
+                        can_delete
+                            .then(|| Message::RequestDeleteSettingsProfile(profile.id.clone()))
+                    )
             ]
             .spacing(10)
             .align_y(alignment::Vertical::Center),
@@ -587,7 +630,7 @@ fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Me
                 .width(Length::Fill)
                 .on_press_maybe(
                     (!settings_busy && account_has_api_access && !app.settings_profiles.is_empty())
-                        .then_some(Message::ApplySavedSettings(account_id))
+                        .then_some(Message::RequestApplySavedSettings(account_id))
                 ),
             button("Export account")
                 .width(Length::Fill)
@@ -615,6 +658,20 @@ fn last_refreshed_label(timestamp: Option<i64>) -> String {
     let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
 
     format_refreshed_at(refreshed_at, offset)
+}
+
+/// Names a saved settings profile with its save time, since repeated saves share a name.
+pub(in crate::ui) fn settings_profile_label(profile: &GameSettingsProfileMetadata) -> String {
+    let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
+
+    settings_profile_label_at(&profile.name, profile.captured_at_unix, offset)
+}
+
+fn settings_profile_label_at(name: &str, captured_at_unix: i64, offset: UtcOffset) -> String {
+    match OffsetDateTime::from_unix_timestamp(captured_at_unix) {
+        Ok(saved_at) => format!("{name} (saved {})", format_refreshed_at(saved_at, offset)),
+        Err(_) => name.to_string(),
+    }
 }
 
 fn launcher_session_captured_at_unix(account: &AccountProfile) -> Option<i64> {
@@ -785,6 +842,14 @@ mod tests {
                 UtcOffset::UTC,
             ),
             "2027-01-15 5:00 PM"
+        );
+    }
+
+    #[test]
+    fn settings_profile_label_includes_the_saved_time() {
+        assert_eq!(
+            settings_profile_label_at("Main settings", 1_800_032_400, UtcOffset::UTC),
+            "Main settings (saved 2027-01-15 5:00 PM)"
         );
     }
 

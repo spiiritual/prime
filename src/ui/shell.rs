@@ -5,6 +5,7 @@ use iced::widget::{
 use iced::{Color, ContentFit, Element, Length, Padding, Theme, alignment};
 
 use crate::account::AccountProfile;
+use crate::game_settings::GameSettingsProfileMetadata;
 
 use super::components::{anchored_popover, currency_balance_display, loading_indicator};
 use super::{
@@ -49,6 +50,28 @@ impl PrimeApp {
                 .find(|account| account.id == account_id)
         });
 
+        let pending_settings_apply = self.confirm_apply_settings.as_ref().and_then(|pending| {
+            let account = self
+                .state
+                .accounts
+                .iter()
+                .find(|account| account.id == pending.account_id)?;
+            let profile = self
+                .settings_profiles
+                .iter()
+                .find(|profile| profile.id == pending.profile_id)?;
+            Some((account, profile))
+        });
+
+        let pending_settings_delete =
+            self.confirm_delete_settings_profile
+                .as_ref()
+                .and_then(|profile_id| {
+                    self.settings_profiles
+                        .iter()
+                        .find(|profile| &profile.id == profile_id)
+                });
+
         let content: Element<_> = if self.show_add_account_prompt {
             stack![
                 content,
@@ -83,6 +106,16 @@ impl PrimeApp {
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+        } else if let Some((account, profile)) = pending_settings_apply {
+            stack![content, apply_settings_prompt_overlay(account, profile)]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else if let Some(profile) = pending_settings_delete {
+            stack![content, delete_settings_profile_prompt_overlay(profile)]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
         } else if let Some(warning) = &self.unavailable_launch_warning {
             stack![content, unavailable_launch_prompt_overlay(warning)]
                 .width(Length::Fill)
@@ -549,6 +582,77 @@ fn delete_account_prompt_overlay(account: &AccountProfile) -> Element<'_, Messag
                 button("Delete")
                     .style(iced::widget::button::danger)
                     .on_press(Message::ConfirmDeleteAccount(account.id))
+            ]
+            .spacing(10)
+        ]
+        .spacing(18),
+    )
+    .padding(24)
+    .width(560)
+    .style(add_account_prompt_style);
+
+    opaque(
+        container(prompt)
+            .padding(14)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center)
+            .style(add_account_prompt_scrim_style),
+    )
+}
+
+fn apply_settings_prompt_overlay<'a>(
+    account: &'a AccountProfile,
+    profile: &'a GameSettingsProfileMetadata,
+) -> Element<'a, Message> {
+    confirmation_prompt_overlay(
+        format!(
+            "Apply {} to {}?",
+            screens::settings_profile_label(profile),
+            account.display_name
+        ),
+        format!(
+            "This replaces {name}'s sensitivity, crosshair, keybind, minimap and gameplay settings. \
+             Prime first saves {name}'s current settings as \"{name} backup\", which you can apply \
+             to undo this.",
+            name = account.display_name
+        ),
+        Message::CancelApplySavedSettings,
+        button("Apply settings").on_press(Message::ConfirmApplySavedSettings),
+    )
+}
+
+fn delete_settings_profile_prompt_overlay(
+    profile: &GameSettingsProfileMetadata,
+) -> Element<'_, Message> {
+    confirmation_prompt_overlay(
+        format!("Delete {}?", screens::settings_profile_label(profile)),
+        "This removes the saved settings from this PC. It doesn't change any account's VALORANT \
+         settings."
+            .to_string(),
+        Message::CancelDeleteSettingsProfile,
+        button("Delete")
+            .style(iced::widget::button::danger)
+            .on_press(Message::ConfirmDeleteSettingsProfile),
+    )
+}
+
+fn confirmation_prompt_overlay<'a>(
+    title: String,
+    details: String,
+    cancel: Message,
+    confirm: iced::widget::Button<'a, Message>,
+) -> Element<'a, Message> {
+    let prompt = container(
+        column![
+            column![text(title).size(20), text(details).size(14)]
+                .spacing(8)
+                .width(Length::Fill),
+            row![
+                space().width(Length::Fill),
+                button("Cancel").on_press(cancel),
+                confirm
             ]
             .spacing(10)
         ]

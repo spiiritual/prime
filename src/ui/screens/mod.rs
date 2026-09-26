@@ -8,6 +8,8 @@ use iced::widget::text;
 
 use super::{Message, PrimeApp, Tab};
 
+pub(super) use accounts::settings_profile_label;
+
 pub(super) fn tab(app: &PrimeApp, tab: Tab) -> Element<'_, Message> {
     match tab {
         Tab::Accounts => accounts::tab(app),

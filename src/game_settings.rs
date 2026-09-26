@@ -318,10 +318,21 @@ impl GameSettingsProfileRepository {
     }
 
     pub fn profile_metadata(&self) -> Result<Vec<GameSettingsProfileMetadata>, GameSettingsError> {
-        let mut profiles = self.metadata()?;
+        let mut profiles = self.saved_metadata()?;
         profiles.retain(|profile| profile.purpose == GameSettingsProfilePurpose::Profile);
+        Ok(profiles)
+    }
+
+    /// Every saved settings file, including the backups Apply makes, newest first.
+    pub fn saved_metadata(&self) -> Result<Vec<GameSettingsProfileMetadata>, GameSettingsError> {
+        let mut profiles = self.metadata()?;
         profiles.sort_by_key(|profile| Reverse(profile.captured_at_unix));
         Ok(profiles)
+    }
+
+    pub fn delete(&self, id: &str) -> Result<(), GameSettingsError> {
+        fs::remove_file(self.profile_path(id))?;
+        Ok(())
     }
 
     fn metadata(&self) -> Result<Vec<GameSettingsProfileMetadata>, GameSettingsError> {
@@ -927,5 +938,81 @@ mod tests {
             [profile.id.as_str()]
         );
         assert_eq!(repository.latest_profile().expect("latest").id, profile.id);
+    }
+
+    fn saved_profile(
+        purpose: GameSettingsProfilePurpose,
+        captured_at_unix: i64,
+    ) -> GameSettingsProfile {
+        GameSettingsProfile {
+            id: format!(
+                "{captured_at_unix}-{}",
+                new_profile_id(AccountId::new(), purpose.clone())
+            ),
+            name: "Main".to_string(),
+            purpose,
+            source_account_id: AccountId::new(),
+            source_display_name: "Main".to_string(),
+            source_puuid: "puuid".to_string(),
+            captured_at_unix,
+            preference_base_url: "https://player-preferences-usw2.pp.sgp.pvp.net".to_string(),
+            settings_version: Some(15),
+            preference: ValorantSettingsDocument::new(serde_json::json!({
+                "type": VALORANT_PLAYER_SETTINGS_TYPE,
+                "data": {"roamingSetttingsVersion": 15}
+            })),
+        }
+    }
+
+    #[test]
+    fn saved_listing_includes_backups_newest_first() {
+        let dir = tempfile::tempdir().expect("profile dir");
+        let repository = GameSettingsProfileRepository::new(dir.path());
+        let profile = saved_profile(GameSettingsProfilePurpose::Profile, 100);
+        let backup = saved_profile(GameSettingsProfilePurpose::Backup, 200);
+        repository.save(&profile).expect("save profile");
+        repository.save(&backup).expect("save backup");
+
+        let saved = repository.saved_metadata().expect("saved listing");
+
+        assert_eq!(
+            saved
+                .iter()
+                .map(|saved| saved.id.as_str())
+                .collect::<Vec<_>>(),
+            [backup.id.as_str(), profile.id.as_str()]
+        );
+        assert_eq!(
+            repository
+                .profile_metadata()
+                .expect("profile listing")
+                .iter()
+                .map(|saved| saved.id.as_str())
+                .collect::<Vec<_>>(),
+            [profile.id.as_str()]
+        );
+    }
+
+    #[test]
+    fn delete_removes_a_saved_profile() {
+        let dir = tempfile::tempdir().expect("profile dir");
+        let repository = GameSettingsProfileRepository::new(dir.path());
+        let profile = saved_profile(GameSettingsProfilePurpose::Profile, 100);
+        let kept = saved_profile(GameSettingsProfilePurpose::Backup, 200);
+        repository.save(&profile).expect("save profile");
+        repository.save(&kept).expect("save backup");
+
+        repository.delete(&profile.id).expect("delete");
+
+        assert!(repository.load(&profile.id).is_err());
+        assert_eq!(
+            repository
+                .saved_metadata()
+                .expect("saved listing")
+                .iter()
+                .map(|saved| saved.id.as_str())
+                .collect::<Vec<_>>(),
+            [kept.id.as_str()]
+        );
     }
 }

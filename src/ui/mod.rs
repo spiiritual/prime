@@ -251,6 +251,8 @@ struct PrimeApp {
     selected_settings_profile: Option<String>,
     settings_saving_account: Option<AccountId>,
     settings_applying_account: Option<AccountId>,
+    confirm_apply_settings: Option<PendingSettingsApply>,
+    confirm_delete_settings_profile: Option<String>,
     launcher_capture_in_progress: bool,
     launcher_capture_kind: Option<LauncherCaptureKind>,
     /// The running add or re-capture that reopened Riot Client for a sign-in.
@@ -266,6 +268,13 @@ struct PrimeApp {
     image_cache_clearing: bool,
     loading_frame: usize,
     now: iced::time::Instant,
+}
+
+/// An Apply waiting for confirmation: the saved settings profile and the account it would change.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PendingSettingsApply {
+    account_id: AccountId,
+    profile_id: String,
 }
 
 /// A Shop or Loadout load for one account. Each load gets a new ID, so a reply to an earlier
@@ -633,9 +642,15 @@ enum Message {
     AccountAvailabilitiesLoaded(AccountAvailabilityRefresh),
     GameSettingsProfilesLoaded(Result<Vec<GameSettingsProfileMetadata>, String>),
     GameSettingsProfileSelected(GameSettingsProfileMetadata),
+    RequestDeleteSettingsProfile(String),
+    CancelDeleteSettingsProfile,
+    ConfirmDeleteSettingsProfile,
+    SettingsProfileDeleted(String, Result<(), String>),
     SaveAccountSettings(AccountId),
     AccountSettingsSaved(Result<SavedGameSettingsResult, String>),
-    ApplySavedSettings(AccountId),
+    RequestApplySavedSettings(AccountId),
+    CancelApplySavedSettings,
+    ConfirmApplySavedSettings,
     SavedSettingsApplied(Result<AppliedGameSettingsResult, String>),
     /// The reply to the Shop load with this request ID.
     StorefrontLoaded(u64, Result<StorefrontResult, String>),

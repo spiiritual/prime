@@ -33,7 +33,16 @@ pub(in crate::ui) async fn load_game_settings_profiles(
     profile_dir: PathBuf,
 ) -> Result<Vec<GameSettingsProfileMetadata>, String> {
     GameSettingsProfileRepository::new(profile_dir)
-        .profile_metadata()
+        .saved_metadata()
+        .map_err(|error| error.to_string())
+}
+
+pub(in crate::ui) async fn delete_game_settings_profile(
+    profile_dir: PathBuf,
+    profile_id: String,
+) -> Result<(), String> {
+    GameSettingsProfileRepository::new(profile_dir)
+        .delete(&profile_id)
         .map_err(|error| error.to_string())
 }
 

@@ -6,6 +6,7 @@ use crate::account::{
     LauncherSessionBackup, Shard,
 };
 use crate::account_transfer::{export_account, import_account};
+use crate::game_settings::{GameSettingsProfileMetadata, GameSettingsProfilePurpose};
 use crate::image_cache::ImageCache;
 use crate::launch::{LaunchConfig, LaunchTargetProcess};
 use crate::riot::auth::{RedirectTokens, parse_redirect_tokens};
@@ -22,7 +23,8 @@ use super::data::account_details::{
     fetch_profile_identity,
 };
 use super::data::game_settings::{
-    apply_game_settings_profile, load_game_settings_profiles, save_game_settings_profile,
+    apply_game_settings_profile, delete_game_settings_profile, load_game_settings_profiles,
+    save_game_settings_profile,
 };
 use super::data::image_assets::fetch_current_client_version;
 use super::data::launch_flow::{
@@ -35,8 +37,8 @@ use super::data::shop::fetch_storefront;
 use super::data::{cache_account_api_context, non_empty_path};
 use super::{
     AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, LoginCapture,
-    LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, Tab, TabScrollOffsets,
-    ViewRequest,
+    LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsApply, PrimeApp, Tab,
+    TabScrollOffsets, ViewRequest,
 };
 
 impl PrimeApp {
@@ -92,6 +94,8 @@ impl PrimeApp {
                 selected_settings_profile: None,
                 settings_saving_account: None,
                 settings_applying_account: None,
+                confirm_apply_settings: None,
+                confirm_delete_settings_profile: None,
                 launcher_capture_in_progress: false,
                 launcher_capture_kind: None,
                 login_capture: None,
@@ -148,6 +152,8 @@ impl PrimeApp {
             || self.exported_account.is_some()
             || self.confirm_delete_account.is_some()
             || self.confirm_recapture_account.is_some()
+            || self.confirm_apply_settings.is_some()
+            || self.confirm_delete_settings_profile.is_some()
             || self.unavailable_launch_warning.is_some()
             || self.app_update_status.prompt_update().is_some()
             || (super::image_viewer_enabled() && self.image_viewer.is_some())
@@ -1138,10 +1144,7 @@ impl PrimeApp {
                                     .any(|profile| &profile.id == selected)
                             })
                         {
-                            self.selected_settings_profile = self
-                                .settings_profiles
-                                .first()
-                                .map(|profile| profile.id.clone());
+                            self.selected_settings_profile = self.default_settings_profile_id();
                         }
                     }
                     Err(error) => {
@@ -1205,6 +1208,15 @@ impl PrimeApp {
 
                 match result {
                     Ok(result) => {
+                        // The profile file is saved either way, so list it before the account
+                        // update that can still fail.
+                        self.settings_profiles
+                            .retain(|profile| profile.id != result.profile.id);
+                        self.settings_profiles.insert(0, result.profile.clone());
+                        if self.selected_settings_profile.is_none() {
+                            self.selected_settings_profile = Some(result.profile.id.clone());
+                        }
+
                         if let Err(error) = cache_account_api_context(
                             &mut self.state,
                             result.account_id,
@@ -1213,15 +1225,12 @@ impl PrimeApp {
                             result.identity,
                         ) {
                             self.set_status(format!(
-                                "Saved settings profile, but account update failed: {error}"
+                                "Saved settings profile {}, but account update failed: {error}",
+                                result.profile.name
                             ));
                             return Task::none();
                         }
 
-                        self.settings_profiles
-                            .retain(|profile| profile.id != result.profile.id);
-                        self.settings_profiles.insert(0, result.profile.clone());
-                        self.selected_settings_profile = Some(result.profile.id.clone());
                         self.set_status(format!("Saved settings profile {}", result.profile.name));
                         Task::batch([self.save_task(), self.load_settings_profiles_task()])
                     }
@@ -1231,7 +1240,68 @@ impl PrimeApp {
                     }
                 }
             }
-            Message::ApplySavedSettings(account_id) => {
+            Message::RequestDeleteSettingsProfile(profile_id) => {
+                if self.settings_saving_account.is_some()
+                    || self.settings_applying_account.is_some()
+                {
+                    return Task::none();
+                }
+
+                self.close_account_surfaces();
+                if self
+                    .settings_profiles
+                    .iter()
+                    .any(|profile| profile.id == profile_id)
+                {
+                    self.confirm_delete_settings_profile = Some(profile_id);
+                } else {
+                    self.set_status("Settings profile no longer exists");
+                }
+
+                Task::none()
+            }
+            Message::CancelDeleteSettingsProfile => {
+                self.confirm_delete_settings_profile = None;
+                Task::none()
+            }
+            Message::ConfirmDeleteSettingsProfile => {
+                let Some(profile_id) = self.confirm_delete_settings_profile.take() else {
+                    return Task::none();
+                };
+                let profile_dir = self.repo.settings_profiles_dir();
+
+                Task::perform(
+                    delete_game_settings_profile(profile_dir, profile_id.clone()),
+                    move |result| Message::SettingsProfileDeleted(profile_id.clone(), result),
+                )
+            }
+            Message::SettingsProfileDeleted(profile_id, result) => {
+                let name = self
+                    .settings_profiles
+                    .iter()
+                    .find(|profile| profile.id == profile_id)
+                    .map(|profile| profile.name.clone())
+                    .unwrap_or_else(|| "settings profile".to_string());
+
+                match result {
+                    Ok(()) => {
+                        self.settings_profiles
+                            .retain(|profile| profile.id != profile_id);
+                        if self.selected_settings_profile.as_ref() == Some(&profile_id) {
+                            self.selected_settings_profile = self.default_settings_profile_id();
+                        }
+                        self.set_status(format!("Deleted settings profile {name}"));
+                        Task::none()
+                    }
+                    Err(error) => {
+                        self.set_status(format!(
+                            "Could not delete settings profile {name}: {error}"
+                        ));
+                        self.load_settings_profiles_task()
+                    }
+                }
+            }
+            Message::RequestApplySavedSettings(account_id) => {
                 if self.settings_saving_account.is_some()
                     || self.settings_applying_account.is_some()
                     || self.update_blocks_new_work()
@@ -1239,10 +1309,47 @@ impl PrimeApp {
                     return Task::none();
                 }
 
-                if self.settings_profiles.is_empty() {
+                if !self
+                    .state
+                    .accounts
+                    .iter()
+                    .any(|account| account.id == account_id)
+                {
+                    self.open_account_menu = None;
+                    self.account_switcher_open = false;
+                    self.set_status("Account profile no longer exists");
+                    return Task::none();
+                }
+
+                let Some(profile_id) = self
+                    .settings_profile_to_apply()
+                    .map(|profile| profile.id.clone())
+                else {
                     self.set_status(
                         "Could not apply account settings: save a settings profile first",
                     );
+                    return Task::none();
+                };
+
+                self.close_account_surfaces();
+                self.confirm_apply_settings = Some(PendingSettingsApply {
+                    account_id,
+                    profile_id,
+                });
+                Task::none()
+            }
+            Message::CancelApplySavedSettings => {
+                self.confirm_apply_settings = None;
+                Task::none()
+            }
+            Message::ConfirmApplySavedSettings => {
+                let Some(pending) = self.confirm_apply_settings.take() else {
+                    return Task::none();
+                };
+                if self.settings_saving_account.is_some()
+                    || self.settings_applying_account.is_some()
+                    || self.update_blocks_new_work()
+                {
                     return Task::none();
                 }
 
@@ -1250,24 +1357,31 @@ impl PrimeApp {
                     .state
                     .accounts
                     .iter()
-                    .find(|account| account.id == account_id)
+                    .find(|account| account.id == pending.account_id)
                     .cloned()
                 else {
-                    self.open_account_menu = None;
-                    self.account_switcher_open = false;
                     self.set_status("Account profile no longer exists");
+                    return Task::none();
+                };
+                let Some(profile_name) = self
+                    .settings_profiles
+                    .iter()
+                    .find(|profile| profile.id == pending.profile_id)
+                    .map(|profile| profile.name.clone())
+                else {
+                    self.set_status(
+                        "Could not apply account settings: that settings profile no longer exists",
+                    );
                     return Task::none();
                 };
 
                 let summary = account.summary();
                 let profile_dir = self.repo.settings_profiles_dir();
-                let profile_id = self.selected_settings_profile.clone();
-                self.close_account_surfaces();
-                self.settings_applying_account = Some(account_id);
-                self.set_status(format!("Applying settings profile to {summary}"));
+                self.settings_applying_account = Some(pending.account_id);
+                self.set_status(format!("Applying {profile_name} to {summary}"));
 
                 Task::perform(
-                    apply_game_settings_profile(account, profile_dir, profile_id),
+                    apply_game_settings_profile(account, profile_dir, Some(pending.profile_id)),
                     Message::SavedSettingsApplied,
                 )
             }
@@ -1292,18 +1406,19 @@ impl PrimeApp {
                             self.set_status(format!(
                                 "Applied saved settings, but profile update failed: {error}"
                             ));
-                            return Task::none();
+                            return self.load_settings_profiles_task();
                         }
 
                         self.set_status(format!(
-                            "Applied settings profile {} and backed up previous target settings as {}",
-                            result.source_profile.name, result.backup_profile.id
+                            "Applied settings profile {} and backed up the previous settings as {}",
+                            result.source_profile.name, result.backup_profile.name
                         ));
                         Task::batch([self.save_task(), self.load_settings_profiles_task()])
                     }
                     Err(error) => {
                         self.set_status(format!("Could not apply account settings: {error}"));
-                        Task::none()
+                        // Apply may have saved its backup before failing.
+                        self.load_settings_profiles_task()
                     }
                 }
             }
@@ -2004,6 +2119,8 @@ impl PrimeApp {
         self.exported_account = None;
         self.confirm_delete_account = None;
         self.confirm_recapture_account = None;
+        self.confirm_apply_settings = None;
+        self.confirm_delete_settings_profile = None;
         self.capture_prompt_valorant_running = false;
     }
 
@@ -2356,6 +2473,32 @@ impl PrimeApp {
             async move { cache.size_bytes().map_err(|error| error.to_string()) },
             Message::ImageCacheSizeLoaded,
         )
+    }
+
+    /// The profile Apply uses: the chosen one, or else the default choice.
+    pub(super) fn settings_profile_to_apply(&self) -> Option<&GameSettingsProfileMetadata> {
+        self.selected_settings_profile
+            .as_ref()
+            .and_then(|selected| {
+                self.settings_profiles
+                    .iter()
+                    .find(|profile| &profile.id == selected)
+            })
+            .or_else(|| {
+                let id = self.default_settings_profile_id()?;
+                self.settings_profiles
+                    .iter()
+                    .find(|profile| profile.id == id)
+            })
+    }
+
+    /// The newest saved profile, or the newest backup when no profile is saved.
+    fn default_settings_profile_id(&self) -> Option<String> {
+        self.settings_profiles
+            .iter()
+            .find(|profile| profile.purpose == GameSettingsProfilePurpose::Profile)
+            .or_else(|| self.settings_profiles.first())
+            .map(|profile| profile.id.clone())
     }
 
     fn load_settings_profiles_task(&self) -> Task<Message> {
