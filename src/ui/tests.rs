@@ -2054,6 +2054,45 @@ fn finished_launch_ignores_a_previous_login_for_a_replaced_slot() {
 }
 
 #[test]
+fn a_finished_launch_check_leaves_a_dialog_opened_meanwhile() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    app.state.push_account(account.clone());
+    app.launch_preflight_account = Some(account.id);
+    let _ = app.update(Message::OpenImportAccount);
+    let _ = app.update(Message::ImportAccountInputChanged("export".to_string()));
+
+    let _ = app.update(Message::LaunchPreflightChecked(
+        super::data::account_details::AccountActivityCheck {
+            account_id: account.id,
+            availability: AccountAvailability::Available,
+        },
+        false,
+    ));
+
+    assert_eq!(app.launching_account, Some(account.id));
+    assert!(app.show_import_account_prompt);
+    assert_eq!(app.import_account_input, "export");
+}
+
+#[test]
+fn closing_the_import_prompt_forgets_the_pasted_export() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    app.state.push_account(account.clone());
+    let _ = app.update(Message::OpenImportAccount);
+    let _ = app.update(Message::ImportAccountInputChanged("export".to_string()));
+
+    let _ = app.update(Message::RequestDeleteAccount(account.id));
+    let _ = app.update(Message::CancelDeleteAccount);
+    let _ = app.update(Message::OpenImportAccount);
+
+    assert_eq!(app.import_account_input, "");
+}
+
+#[test]
 fn launch_warns_before_closing_a_running_game() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());

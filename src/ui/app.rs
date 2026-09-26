@@ -2116,6 +2116,8 @@ impl PrimeApp {
         self.open_account_menu = None;
         self.show_add_account_prompt = false;
         self.show_import_account_prompt = false;
+        // The pasted export holds the account's login, so it isn't kept once the prompt closes.
+        self.import_account_input.clear();
         self.exported_account = None;
         self.confirm_delete_account = None;
         self.confirm_recapture_account = None;
@@ -2402,7 +2404,7 @@ impl PrimeApp {
 
         let selection_changed = self.state.selected_account != Some(id);
         self.state.select_account(id);
-        self.close_account_surfaces();
+        // Dialogs were closed when the launch was asked for; any open now were opened since.
         self.unavailable_launch_warning = None;
         self.launching_account = Some(id);
         self.launch_progress_checking = false;
