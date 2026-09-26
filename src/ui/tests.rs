@@ -582,6 +582,52 @@ fn store_summary_expires_at_earliest_shop_section_reset() {
 }
 
 #[test]
+fn store_summary_expires_when_a_tick_skips_past_the_reset() {
+    let loaded_at = iced::time::Instant::now();
+    let summary = StoreSummary {
+        currency_balances: vec![],
+        currency_balance_error: None,
+        featured_bundles: vec![],
+        daily_offers: vec![],
+        daily_remaining_seconds: 30,
+        bundle_remaining_seconds: 20,
+        night_market_remaining_seconds: Some(10),
+        loaded_at,
+        night_market_offers: vec![],
+        accessory_remaining_seconds: None,
+        accessory_offers: vec![],
+    };
+    let late = loaded_at + Duration::from_secs(45);
+
+    assert!(summary.is_expired_at(late));
+    assert_eq!(summary.bundle_remaining_seconds_at(late), 0);
+    assert_eq!(summary.night_market_remaining_seconds_at(late), 0);
+}
+
+#[test]
+fn store_summary_ignores_sections_the_server_reports_as_zero() {
+    let loaded_at = iced::time::Instant::now();
+    let summary = StoreSummary {
+        currency_balances: vec![],
+        currency_balance_error: None,
+        featured_bundles: vec![],
+        daily_offers: vec![],
+        daily_remaining_seconds: 30,
+        bundle_remaining_seconds: 0,
+        night_market_remaining_seconds: Some(0),
+        loaded_at,
+        night_market_offers: vec![],
+        accessory_remaining_seconds: Some(-5),
+        accessory_offers: vec![],
+    };
+
+    assert!(!summary.is_expired_at(loaded_at));
+    assert!(!summary.is_expired_at(loaded_at + Duration::from_secs(29)));
+    assert!(summary.is_expired_at(loaded_at + Duration::from_secs(30)));
+    assert_eq!(summary.accessory_remaining_seconds_at(loaded_at), 0);
+}
+
+#[test]
 fn format_whole_number_groups_thousands() {
     assert_eq!(format_whole_number(0), "0");
     assert_eq!(format_whole_number(1000), "1,000");

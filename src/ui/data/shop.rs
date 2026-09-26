@@ -208,16 +208,18 @@ impl StoreSummary {
     }
 
     pub(in crate::ui) fn is_expired_at(&self, now: iced::time::Instant) -> bool {
-        let section_expired =
-            self.daily_remaining_seconds_at(now) == 0 || self.bundle_remaining_seconds_at(now) == 0;
-        let night_market_expired = self
-            .night_market_remaining_seconds
-            .is_some_and(|_| self.night_market_remaining_seconds_at(now) == 0);
-        let accessory_expired = self
-            .accessory_remaining_seconds
-            .is_some_and(|_| self.accessory_remaining_seconds_at(now) == 0);
+        // A section the server already reported as 0 cannot trigger a reload, or the shop would
+        // reload on every tick.
+        let reached_reset = |original_seconds: i64| {
+            original_seconds > 0 && remaining_seconds_at(original_seconds, self.loaded_at, now) <= 0
+        };
 
-        section_expired || night_market_expired || accessory_expired
+        reached_reset(self.daily_remaining_seconds)
+            || reached_reset(self.bundle_remaining_seconds)
+            || self
+                .night_market_remaining_seconds
+                .is_some_and(reached_reset)
+            || self.accessory_remaining_seconds.is_some_and(reached_reset)
     }
 }
 
@@ -231,7 +233,7 @@ pub(in crate::ui) fn remaining_seconds_at(
         .map(|duration| i64::try_from(duration.as_secs()).unwrap_or(i64::MAX))
         .unwrap_or(0);
 
-    original_seconds.saturating_sub(elapsed_seconds)
+    original_seconds.saturating_sub(elapsed_seconds).max(0)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
