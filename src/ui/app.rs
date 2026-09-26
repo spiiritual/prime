@@ -106,7 +106,7 @@ impl PrimeApp {
                     load_game_settings_profiles(profile_dir),
                     Message::GameSettingsProfilesLoaded,
                 ),
-                Task::perform(fetch_current_client_version(), Message::ClientVersionLoaded),
+                fetch_client_version_task(false),
                 Task::perform(check_for_update(), |result| Message::AppUpdateChecked {
                     user_requested: false,
                     result: result.map_err(|error| error.to_string()),
@@ -132,6 +132,14 @@ impl PrimeApp {
     fn set_status(&mut self, status: impl Into<String>) {
         self.status = status.into();
         self.status_changed_at = iced::time::Instant::now();
+    }
+
+    /// Shows a status from background work the user didn't ask for, unless an error is on screen;
+    /// errors stay until something the user does replaces them.
+    fn set_background_status(&mut self, status: impl Into<String>) {
+        if !super::status_message_is_error(&self.status) {
+            self.set_status(status);
+        }
     }
 
     fn handle_message(&mut self, message: Message) -> Task<Message> {
@@ -711,27 +719,47 @@ impl PrimeApp {
             }
             Message::RefreshClientVersion => {
                 self.set_status("Refreshing Riot client version");
-                Task::perform(fetch_current_client_version(), Message::ClientVersionLoaded)
+                fetch_client_version_task(true)
             }
-            Message::ClientVersionLoaded(result) => {
-                match result {
-                    Ok(version) => {
-                        if self.client_version_input.trim().is_empty() {
-                            self.client_version_input = version.clone();
-                        }
+            Message::RetryClientVersion => {
+                if self.client_version_input.trim().is_empty() {
+                    fetch_client_version_task(false)
+                } else {
+                    Task::none()
+                }
+            }
+            Message::ClientVersionLoaded {
+                user_requested,
+                result,
+            } => match result {
+                Ok(version) => {
+                    // The automatic lookup only fills an empty field; a manual refresh replaces it.
+                    if user_requested || self.client_version_input.trim().is_empty() {
+                        self.client_version_input = version.clone();
+                    }
+                    if user_requested {
                         self.set_status(format!("Current Riot client version: {version}"));
                     }
-                    Err(error) => {
-                        if self.status == "Loading accounts" {
-                            self.set_status(format!(
-                                "Could not fetch Riot client version: {error}"
-                            ));
-                        }
-                    }
-                }
 
-                self.load_active_tab()
-            }
+                    self.load_active_tab()
+                }
+                Err(error) => {
+                    let status = format!("Could not fetch Riot client version: {error}");
+
+                    if user_requested {
+                        self.set_status(status);
+                        return Task::none();
+                    }
+
+                    // Rank, level, availability, Shop and Loadout all need the version, so keep
+                    // trying in the background.
+                    self.set_background_status(status);
+                    Task::perform(
+                        async { tokio::time::sleep(super::CLIENT_VERSION_RETRY_INTERVAL).await },
+                        |()| Message::RetryClientVersion,
+                    )
+                }
+            },
             Message::ImportRedirect => {
                 let Some(account) = self.state.selected_account_mut() else {
                     self.account_switcher_open = false;
@@ -1699,10 +1727,13 @@ impl PrimeApp {
     ) -> Task<Message> {
         match result {
             Ok(UpdateCheckOutcome::Available(update)) => {
-                self.set_status(format!(
-                    "Prime {} is available; download it when ready",
-                    update.latest_version
-                ));
+                // A background check opens the update prompt, which says the same thing.
+                if user_requested {
+                    self.set_status(format!(
+                        "Prime {} is available; download it when ready",
+                        update.latest_version
+                    ));
+                }
                 self.app_update_status = AppUpdateStatus::Available(update);
             }
             Ok(UpdateCheckOutcome::NotInstalled) => {
@@ -2425,6 +2456,15 @@ pub(super) fn cancel_unavailable_launch_state(
     *launch_preflight_account = None;
     *launching_account = None;
     *launch_progress_checking = false;
+}
+
+fn fetch_client_version_task(user_requested: bool) -> Task<Message> {
+    Task::perform(fetch_current_client_version(), move |result| {
+        Message::ClientVersionLoaded {
+            user_requested,
+            result,
+        }
+    })
 }
 
 fn check_capture_prompt_game_task() -> Task<Message> {

@@ -34,6 +34,7 @@ const LAUNCH_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const ACCOUNT_AVAILABILITY_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 const STATUS_FLASH_DURATION: Duration = Duration::from_secs(4);
 const STATUS_FLASH_TICK_INTERVAL: Duration = Duration::from_millis(500);
+const CLIENT_VERSION_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 const MAIN_PANEL_SCROLLABLE_ID: &str = "main-panel-scrollable";
 
 fn image_viewer_enabled() -> bool {
@@ -534,7 +535,12 @@ enum Message {
     RedirectChanged(String),
     ClientVersionChanged(String),
     RefreshClientVersion,
-    ClientVersionLoaded(Result<String, String>),
+    ClientVersionLoaded {
+        user_requested: bool,
+        result: Result<String, String>,
+    },
+    /// Tries the automatic client version lookup again after it failed.
+    RetryClientVersion,
     ImportRedirect,
     RequestLauncherSessionLogin(AccountId),
     CancelLauncherSessionLogin,

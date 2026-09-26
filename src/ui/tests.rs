@@ -2510,6 +2510,93 @@ fn development_builds_do_not_report_update_checks_as_failed() {
 }
 
 #[test]
+fn a_manual_client_version_refresh_replaces_the_field() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.client_version_input = "x".to_string();
+
+    let _ = app.update(Message::ClientVersionLoaded {
+        user_requested: true,
+        result: Ok("release-2".to_string()),
+    });
+
+    assert_eq!(app.client_version_input, "release-2");
+    assert!(app.status.contains("release-2"), "{}", app.status);
+}
+
+#[test]
+fn a_failed_manual_client_version_refresh_is_reported() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let _ = app.update(Message::RefreshClientVersion);
+
+    let _ = app.update(Message::ClientVersionLoaded {
+        user_requested: true,
+        result: Err("offline".to_string()),
+    });
+
+    assert!(
+        app.status
+            .starts_with("Could not fetch Riot client version"),
+        "{}",
+        app.status
+    );
+    assert!(!loading_status_active(&app.status));
+}
+
+#[test]
+fn the_startup_client_version_does_not_replace_a_startup_error() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.status = "Failed to load accounts: disk error".to_string();
+
+    let _ = app.update(Message::ClientVersionLoaded {
+        user_requested: false,
+        result: Ok("release-1".to_string()),
+    });
+
+    assert_eq!(app.client_version_input, "release-1");
+    assert_eq!(app.status, "Failed to load accounts: disk error");
+}
+
+#[test]
+fn a_failed_startup_client_version_fetch_is_shown_and_retried() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.status = "Loaded 1 account profile(s)".to_string();
+
+    let task = app.update(Message::ClientVersionLoaded {
+        user_requested: false,
+        result: Err("offline".to_string()),
+    });
+
+    assert!(
+        app.status
+            .starts_with("Could not fetch Riot client version"),
+        "{}",
+        app.status
+    );
+    assert!(task.units() > 0, "a retry is scheduled");
+}
+
+#[test]
+fn a_background_update_check_leaves_the_status_alone() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.status = "Failed to load accounts: disk error".to_string();
+
+    let _ = app.update(Message::AppUpdateChecked {
+        user_requested: false,
+        result: Ok(crate::updater::UpdateCheckOutcome::Available(
+            crate::updater::sample_update("9.9.9"),
+        )),
+    });
+
+    assert_eq!(app.status, "Failed to load accounts: disk error");
+    assert!(app.app_update_status.prompt_update().is_some());
+}
+
+#[test]
 fn failed_update_install_is_not_labelled_as_a_failed_check() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());

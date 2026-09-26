@@ -157,6 +157,22 @@ pub enum UpdateError {
     Join(#[from] tokio::task::JoinError),
 }
 
+/// An update to the given version, for tests elsewhere in the crate.
+#[cfg(test)]
+pub(crate) fn sample_update(latest_version: &str) -> AvailableUpdate {
+    available_update_from_info(
+        CURRENT_VERSION.to_string(),
+        Box::new(UpdateInfo {
+            TargetFullRelease: velopack::VelopackAsset {
+                PackageId: "prime".to_string(),
+                Version: latest_version.to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
