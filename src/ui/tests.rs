@@ -1965,7 +1965,7 @@ fn add_current_account_starts_capture_without_login_prompt() {
     assert!(app.launcher_capture_in_progress);
     assert_eq!(
         app.launcher_capture_kind,
-        Some(super::LauncherCaptureKind::CurrentAccount)
+        Some(super::LauncherCaptureKind::Current)
     );
     assert!(!app.show_add_account_prompt);
     assert_eq!(app.status, "Capturing the Riot account currently signed in");

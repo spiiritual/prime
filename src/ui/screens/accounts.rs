@@ -169,8 +169,7 @@ fn settings_profile_card(profile: &GameSettingsProfileMetadata) -> Element<'_, M
 }
 
 fn add_account_button(app: &PrimeApp) -> Element<'static, Message> {
-    let is_capturing_new_account =
-        app.launcher_capture_kind == Some(LauncherCaptureKind::NewAccount);
+    let is_capturing_new_account = app.launcher_capture_kind == Some(LauncherCaptureKind::New);
     let content: Element<_> = if is_capturing_new_account {
         row![
             compact_loading_indicator(app.loading_frame),
@@ -199,7 +198,7 @@ fn add_account_button(app: &PrimeApp) -> Element<'static, Message> {
 
 fn add_current_account_button(app: &PrimeApp) -> Element<'static, Message> {
     let is_capturing_current_account =
-        app.launcher_capture_kind == Some(LauncherCaptureKind::CurrentAccount);
+        app.launcher_capture_kind == Some(LauncherCaptureKind::Current);
     let content: Element<_> = if is_capturing_current_account {
         row![
             compact_loading_indicator(app.loading_frame),

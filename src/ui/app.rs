@@ -263,7 +263,7 @@ impl PrimeApp {
                 self.new_username.clear();
                 self.status = "Capturing the Riot account currently signed in".to_string();
                 self.launcher_capture_in_progress = true;
-                self.launcher_capture_kind = Some(super::LauncherCaptureKind::CurrentAccount);
+                self.launcher_capture_kind = Some(super::LauncherCaptureKind::Current);
 
                 Task::perform(
                     async move { start_current_account_capture(account_id, backup_root).await },
@@ -289,7 +289,7 @@ impl PrimeApp {
                     "Opening Riot Client. When it appears, sign in normally with \"Stay signed in\" ticked."
                         .to_string();
                 self.launcher_capture_in_progress = true;
-                self.launcher_capture_kind = Some(super::LauncherCaptureKind::NewAccount);
+                self.launcher_capture_kind = Some(super::LauncherCaptureKind::New);
 
                 Task::perform(
                     async move { start_account_capture(account_id, backup_root, config).await },
@@ -797,7 +797,7 @@ impl PrimeApp {
                     "Opening Riot Client and waiting for remembered login capture for {summary}"
                 );
                 self.launcher_capture_in_progress = true;
-                self.launcher_capture_kind = Some(super::LauncherCaptureKind::ExistingAccount);
+                self.launcher_capture_kind = Some(super::LauncherCaptureKind::Existing);
                 // Capture into a separate slot so the account's working backup is only replaced
                 // after the login is confirmed to belong to this account.
                 let staging_id = AccountId::new();

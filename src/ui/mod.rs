@@ -252,9 +252,9 @@ struct PrimeApp {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum LauncherCaptureKind {
-    NewAccount,
-    CurrentAccount,
-    ExistingAccount,
+    New,
+    Current,
+    Existing,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

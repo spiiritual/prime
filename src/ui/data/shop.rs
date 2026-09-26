@@ -759,18 +759,6 @@ pub(in crate::ui) fn format_duration(seconds: i64) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::format_duration;
-
-    #[test]
-    fn format_duration_includes_ticking_seconds() {
-        assert_eq!(format_duration(3_661), "1h 1m 1s");
-        assert_eq!(format_duration(61), "1m 1s");
-        assert_eq!(format_duration(5), "5s");
-    }
-}
-
 pub(in crate::ui) async fn fetch_storefront(
     account: AccountProfile,
     client_version: String,
@@ -811,4 +799,16 @@ pub(in crate::ui) async fn fetch_storefront(
         launcher_session: resolved.launcher_session,
         identity: resolved.identity,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_duration;
+
+    #[test]
+    fn format_duration_includes_ticking_seconds() {
+        assert_eq!(format_duration(3_661), "1h 1m 1s");
+        assert_eq!(format_duration(61), "1m 1s");
+        assert_eq!(format_duration(5), "5s");
+    }
 }
