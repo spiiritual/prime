@@ -160,6 +160,38 @@ impl PrimeApp {
             || (super::image_viewer_enabled() && self.image_viewer.is_some())
     }
 
+    /// What Escape does: cancel the dialog on top, in the order the view stacks them, or else close
+    /// an open popover.
+    fn escape_message(&self) -> Option<Message> {
+        let message = if super::image_viewer_enabled() && self.image_viewer.is_some() {
+            Message::CloseImageViewer
+        } else if self.show_add_account_prompt {
+            Message::CancelAddAccountCapture
+        } else if self.show_import_account_prompt {
+            Message::CancelImportAccount
+        } else if self.exported_account.is_some() {
+            Message::CloseAccountExport
+        } else if self.confirm_delete_account.is_some() {
+            Message::CancelDeleteAccount
+        } else if self.confirm_recapture_account.is_some() {
+            Message::CancelLauncherSessionLogin
+        } else if self.confirm_apply_settings.is_some() {
+            Message::CancelApplySavedSettings
+        } else if self.confirm_delete_settings_profile.is_some() {
+            Message::CancelDeleteSettingsProfile
+        } else if self.unavailable_launch_warning.is_some() {
+            Message::CancelUnavailableLaunch
+        } else if self.app_update_status.prompt_update().is_some() {
+            Message::DismissAppUpdate
+        } else if self.account_switcher_open || self.open_account_menu.is_some() {
+            Message::DismissPopovers
+        } else {
+            return None;
+        };
+
+        Some(message)
+    }
+
     fn close_popovers(&mut self) {
         self.account_switcher_open = false;
         self.open_account_menu = None;
@@ -1256,6 +1288,10 @@ impl PrimeApp {
                     }
                 }
             }
+            Message::EscapePressed => match self.escape_message() {
+                Some(message) => self.handle_message(message),
+                None => Task::none(),
+            },
             Message::RequestDeleteSettingsProfile(profile_id) => {
                 if self.settings_saving_account.is_some()
                     || self.settings_applying_account.is_some()

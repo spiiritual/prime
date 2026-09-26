@@ -67,8 +67,10 @@ fn app_theme(_: &PrimeApp) -> Theme {
 }
 
 fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
-    let mut subscriptions =
-        vec![iced::window::resize_events().map(|(_, size)| Message::WindowResized(size))];
+    let mut subscriptions = vec![
+        iced::window::resize_events().map(|(_, size)| Message::WindowResized(size)),
+        iced::keyboard::listen().filter_map(escape_key_message),
+    ];
 
     if countdown_timer_active(app) {
         subscriptions
@@ -136,6 +138,16 @@ fn countdown_timer_active(app: &PrimeApp) -> bool {
             }
             Tab::Accounts | Tab::Settings => false,
         }
+}
+
+fn escape_key_message(event: iced::keyboard::Event) -> Option<Message> {
+    match event {
+        iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+            ..
+        } => Some(Message::EscapePressed),
+        _ => None,
+    }
 }
 
 /// The status bar's spinner marks a progress message, not unrelated work in the background.
@@ -607,6 +619,8 @@ enum Message {
     ToggleAccountSwitcher,
     /// A click outside the open account switcher or account menu.
     DismissPopovers,
+    /// Escape closes the topmost dialog or popover.
+    EscapePressed,
     SelectAccount(AccountId),
     NewDisplayNameChanged(String),
     NewUsernameChanged(String),

@@ -4570,3 +4570,65 @@ fn an_account_with_no_rank_reads_unranked_and_a_failed_one_unavailable() {
         "Rank unavailable"
     );
 }
+
+fn key_press(key: iced::keyboard::Key) -> iced::keyboard::Event {
+    iced::keyboard::Event::KeyPressed {
+        key: key.clone(),
+        modified_key: key,
+        physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Escape),
+        location: iced::keyboard::Location::Standard,
+        modifiers: iced::keyboard::Modifiers::default(),
+        text: None,
+        repeat: false,
+    }
+}
+
+#[test]
+fn only_the_escape_key_asks_to_close() {
+    let escape = key_press(iced::keyboard::Key::Named(
+        iced::keyboard::key::Named::Escape,
+    ));
+    let enter = key_press(iced::keyboard::Key::Named(
+        iced::keyboard::key::Named::Enter,
+    ));
+
+    assert!(matches!(
+        super::escape_key_message(escape),
+        Some(Message::EscapePressed)
+    ));
+    assert!(super::escape_key_message(enter).is_none());
+}
+
+#[test]
+fn escape_closes_the_open_dialog() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let _ = app.update(Message::OpenImportAccount);
+
+    let _ = app.update(Message::EscapePressed);
+
+    assert!(!app.show_import_account_prompt);
+}
+
+#[test]
+fn escape_closes_an_open_account_menu() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, main, _) = two_account_app(dir.path());
+    app.open_account_menu = Some(main.id);
+
+    let _ = app.update(Message::EscapePressed);
+
+    assert_eq!(app.open_account_menu, None);
+}
+
+#[test]
+fn escape_does_not_close_an_import_that_is_running() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let _ = app.update(Message::OpenImportAccount);
+    app.import_account_in_progress = true;
+
+    let _ = app.update(Message::EscapePressed);
+
+    assert!(app.show_import_account_prompt);
+}
