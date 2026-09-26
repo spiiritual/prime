@@ -272,7 +272,7 @@ impl PrimeApp {
                 self.new_display_name.clear();
                 self.new_username.clear();
                 self.status =
-                    "Opening Riot Client. Log in with Remember Me enabled to add the account."
+                    "Opening Riot Client. When it appears, sign in normally with \"Stay signed in\" ticked."
                         .to_string();
                 self.launcher_capture_in_progress = true;
                 self.launcher_capture_kind = Some(super::LauncherCaptureKind::NewAccount);

@@ -225,7 +225,7 @@ pub(in crate::ui) async fn wait_for_launcher_session_capture(
     }
 
     Err(
-        "timed out waiting for Riot Client remembered login; make sure Remember Me is enabled"
+        "timed out waiting for the Riot Client login; sign in with \"Stay signed in\" ticked"
             .to_string(),
     )
 }

@@ -317,7 +317,7 @@ pub fn adopt_launcher_session_backup(
 
 #[derive(Debug, Error)]
 pub enum LauncherSessionError {
-    #[error("Riot private settings file was not found in the default Riot Client data folders")]
+    #[error("Riot Client has no remembered login; sign in with \"Stay signed in\" ticked")]
     PrivateSettingsNotFound,
     #[error("failed to read Riot private settings file at {path}: {source}")]
     ReadPrivateSettings { path: PathBuf, source: io::Error },
