@@ -85,7 +85,8 @@ impl PrimeApp {
                 loadout_error: None,
                 next_request_id: 0,
                 profile_identity_refreshing: Default::default(),
-                account_ranks_loading: false,
+                account_ranks_loading: Default::default(),
+                unranked_accounts: Default::default(),
                 account_details_loaded_at: None,
                 account_availability: Default::default(),
                 account_availability_loading: false,
@@ -835,9 +836,10 @@ impl PrimeApp {
                 {
                     Ok(session) => {
                         let account_id = account.id;
+                        let summary = account.summary();
                         account.session = Some(session);
                         self.redirect_input.clear();
-                        self.set_status("Imported Riot redirect token for selected account");
+                        self.set_status(format!("Imported Riot redirect token for {summary}"));
                         Task::batch([self.save_task(), self.load_account_tab(account_id)])
                     }
                     Err(error) => {
@@ -991,7 +993,7 @@ impl PrimeApp {
                 Task::none()
             }
             Message::AccountRanksLoaded { result, announce } => {
-                self.account_ranks_loading = false;
+                self.account_ranks_loading.clear();
 
                 let mut updated = 0usize;
                 let mut partial = 0usize;
@@ -1019,6 +1021,12 @@ impl PrimeApp {
                     {
                         context_failures += 1;
                         continue;
+                    }
+
+                    if matches!(rank, Ok(None)) {
+                        self.unranked_accounts.insert(account_id);
+                    } else {
+                        self.unranked_accounts.remove(&account_id);
                     }
 
                     if let Some(account) = self
@@ -2198,7 +2206,7 @@ impl PrimeApp {
         };
 
         Task::batch([
-            if self.account_ranks_loading {
+            if !self.account_ranks_loading.is_empty() {
                 Task::none()
             } else {
                 self.fetch_account_ranks_task_for(vec![account.clone()], false)
@@ -2221,7 +2229,7 @@ impl PrimeApp {
                     })
                 };
                 let reload_details =
-                    !self.account_ranks_loading && !fresh(self.account_details_loaded_at);
+                    self.account_ranks_loading.is_empty() && !fresh(self.account_details_loaded_at);
                 let reload_availability = !self.account_availability_loading
                     && self.launch_preflight_account.is_none()
                     && !fresh(self.account_availability_loaded_at);
@@ -2321,7 +2329,7 @@ impl PrimeApp {
         }
 
         let announce = announce && !self.progress_pinned();
-        self.account_ranks_loading = true;
+        self.account_ranks_loading = accounts.iter().map(|account| account.id).collect();
         if announce {
             self.set_status("Loading account details");
         }

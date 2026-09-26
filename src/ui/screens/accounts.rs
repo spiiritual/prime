@@ -403,7 +403,7 @@ fn level_badge(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Mes
             .clip(true)
             .style(level_badge_style)
             .into()
-    } else if app.account_ranks_loading {
+    } else if app.account_ranks_loading.contains(&account.id) {
         loading_level_badge(app.loading_frame)
     } else {
         neutral_rank_badge("Level unavailable")
@@ -506,10 +506,19 @@ fn rank_badge<'a>(app: &PrimeApp, account: &'a AccountProfile) -> Element<'a, Me
             .clip(true)
             .style(move |theme| rank_badge_style(theme, Some(color)))
             .into()
-    } else if app.account_ranks_loading {
+    } else if app.account_ranks_loading.contains(&account.id) {
         loading_rank_badge(app.loading_frame)
     } else {
-        neutral_rank_badge("Unavailable")
+        neutral_rank_badge(missing_rank_label(app, account.id))
+    }
+}
+
+/// What the rank badge says without a rank: the account has none, or it couldn't be loaded.
+pub(in crate::ui) fn missing_rank_label(app: &PrimeApp, account_id: AccountId) -> &'static str {
+    if app.unranked_accounts.contains(&account_id) {
+        "Unranked"
+    } else {
+        "Rank unavailable"
     }
 }
 

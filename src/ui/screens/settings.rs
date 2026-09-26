@@ -101,8 +101,14 @@ fn app_update_controls(app: &PrimeApp) -> Element<'_, Message> {
 }
 
 fn token_import_controls(app: &PrimeApp) -> Element<'_, Message> {
+    let target = match app.state.selected_account() {
+        Some(account) => format!("Imports into {}", account.summary()),
+        None => "Select an account first; the token is imported into the selected one.".to_string(),
+    };
+
     column![
         text("Advanced API token import"),
+        text(target).size(13),
         text("Riot sign-in redirect URL").size(13),
         row![
             text_input(

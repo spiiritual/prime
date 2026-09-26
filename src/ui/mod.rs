@@ -105,7 +105,7 @@ fn loading_indicator_active(app: &PrimeApp) -> bool {
     app.store_request.is_some()
         || app.loadout_request.is_some()
         || !app.profile_identity_refreshing.is_empty()
-        || app.account_ranks_loading
+        || !app.account_ranks_loading.is_empty()
         || app.account_availability_loading
         || app.launcher_capture_in_progress
         || app.launch_preflight_account.is_some()
@@ -261,7 +261,10 @@ struct PrimeApp {
     next_request_id: u64,
     /// Accounts whose Riot profile refresh is running.
     profile_identity_refreshing: HashSet<AccountId>,
-    account_ranks_loading: bool,
+    /// Accounts whose rank, level and penalties are loading.
+    account_ranks_loading: HashSet<AccountId>,
+    /// Accounts whose rank loaded and turned out to be none.
+    unranked_accounts: HashSet<AccountId>,
     /// When the last all-account details and availability loads started, so reopening the
     /// Accounts tab doesn't refetch everything each time.
     account_details_loaded_at: Option<iced::time::Instant>,

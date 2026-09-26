@@ -8,6 +8,8 @@ use iced::widget::text;
 
 use super::{Message, PrimeApp, Tab};
 
+#[cfg(test)]
+pub(super) use accounts::missing_rank_label;
 pub(super) use accounts::settings_profile_label;
 
 pub(super) fn tab(app: &PrimeApp, tab: Tab) -> Element<'_, Message> {

@@ -3090,6 +3090,11 @@ fn token_import_accepts_the_accounts_own_token() {
     let _ = app.update(Message::ImportRedirect);
 
     assert!(app.state.accounts[0].session.is_some(), "{}", app.status);
+    assert!(
+        app.status.contains(&app.state.accounts[0].summary()),
+        "{}",
+        app.status
+    );
 }
 
 #[test]
@@ -3280,7 +3285,7 @@ fn selecting_an_account_refreshes_it_without_a_full_reload() {
 
     let _ = app.update(Message::SelectAccount(alt.id));
 
-    assert!(app.account_ranks_loading);
+    assert!(!app.account_ranks_loading.is_empty());
     assert!(app.account_availability_loading);
     assert_eq!(app.status, format!("Selected {}", alt.summary()));
 }
@@ -3400,7 +3405,7 @@ fn reopening_accounts_soon_after_a_load_does_not_refetch() {
     app.active_tab = super::Tab::Settings;
 
     let _ = app.update(Message::TabSelected(super::Tab::Accounts));
-    assert!(app.account_ranks_loading);
+    assert!(!app.account_ranks_loading.is_empty());
     let _ = app.update(Message::AccountRanksLoaded {
         result: Default::default(),
         announce: true,
@@ -3409,7 +3414,7 @@ fn reopening_accounts_soon_after_a_load_does_not_refetch() {
     let _ = app.update(Message::TabSelected(super::Tab::Settings));
     let _ = app.update(Message::TabSelected(super::Tab::Accounts));
 
-    assert!(!app.account_ranks_loading);
+    assert!(app.account_ranks_loading.is_empty());
     assert!(!app.account_availability_loading);
 }
 
@@ -4512,4 +4517,56 @@ fn opening_settings_refreshes_the_image_cache_size() {
 
     // Restoring the tab's scroll position is one task; the size refresh is another.
     assert_eq!(task.units(), 2);
+}
+
+fn rank_result(account_id: AccountId, rank: Result<Option<CompetitiveRank>, String>) -> Message {
+    Message::AccountRanksLoaded {
+        result: super::data::account_details::AccountRanksResult {
+            ranks: vec![super::data::account_details::AccountRankResult {
+                account_id,
+                rank,
+                account_level: Ok(20),
+                penalty_status: Ok(AccountPenaltyStatus::default()),
+                session: AuthSession::new("fresh", None, None, "Bearer", Some(3600), 100),
+                launcher_session: None,
+                identity: ApiIdentity {
+                    puuid: "Main-puuid".to_string(),
+                    game_name: None,
+                    tag_line: None,
+                    shard: Shard::Na,
+                },
+            }],
+            failures: vec![],
+        },
+        announce: false,
+    }
+}
+
+#[test]
+fn only_the_accounts_being_loaded_show_loading() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, main, alt) = two_account_app(dir.path());
+
+    let _ = app.update(Message::SelectAccount(alt.id));
+
+    assert!(app.account_ranks_loading.contains(&alt.id));
+    assert!(!app.account_ranks_loading.contains(&main.id));
+}
+
+#[test]
+fn an_account_with_no_rank_reads_unranked_and_a_failed_one_unavailable() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, main, alt) = two_account_app(dir.path());
+
+    let _ = app.update(rank_result(main.id, Ok(None)));
+    let _ = app.update(rank_result(alt.id, Err("offline".to_string())));
+
+    assert_eq!(
+        super::screens::missing_rank_label(&app, main.id),
+        "Unranked"
+    );
+    assert_eq!(
+        super::screens::missing_rank_label(&app, alt.id),
+        "Rank unavailable"
+    );
 }
