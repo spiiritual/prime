@@ -1068,6 +1068,21 @@ fn changing_the_status_restarts_its_display_time() {
 }
 
 #[test]
+fn repeating_an_action_shows_its_status_again() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let _ = app.update(Message::SaveSettings);
+    app.status_changed_at = iced::time::Instant::now() - Duration::from_secs(60);
+    app.now = iced::time::Instant::now();
+    assert!(!status_bar_visible(&app));
+
+    let _ = app.update(Message::SaveSettings);
+
+    assert_eq!(app.status, "Saved settings");
+    assert!(status_bar_visible(&app));
+}
+
+#[test]
 fn loading_status_detection_still_tracks_hidden_progress_messages() {
     assert!(loading_status_active("Loading shop"));
     assert!(loading_status_active("Refreshing Riot client version"));
