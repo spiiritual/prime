@@ -1430,6 +1430,24 @@ fn staged_recapture(backup_root: &Path, puuid: &str, settings: &str) -> Captured
 }
 
 #[test]
+fn recapture_asks_for_confirmation_before_starting() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    app.state.push_account(account.clone());
+
+    let _ = app.update(Message::RequestLauncherSessionLogin(account.id));
+
+    assert_eq!(app.confirm_recapture_account, Some(account.id));
+    assert!(!app.launcher_capture_in_progress);
+
+    let _ = app.update(Message::CancelLauncherSessionLogin);
+
+    assert_eq!(app.confirm_recapture_account, None);
+    assert!(!app.launcher_capture_in_progress);
+}
+
+#[test]
 fn recapture_as_a_different_account_keeps_the_existing_backup() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());

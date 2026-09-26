@@ -192,6 +192,7 @@ struct PrimeApp {
     import_account_in_progress: bool,
     exported_account: Option<AccountExportOutput>,
     confirm_delete_account: Option<AccountId>,
+    confirm_recapture_account: Option<AccountId>,
     pending_account: Option<CapturedAccountDraft>,
     store_summary: Option<StoreSummary>,
     loadout_summary: Option<LoadoutSummary>,
@@ -492,6 +493,8 @@ enum Message {
     RefreshClientVersion,
     ClientVersionLoaded(Result<String, String>),
     ImportRedirect,
+    RequestLauncherSessionLogin(AccountId),
+    CancelLauncherSessionLogin,
     StartLauncherSessionLogin(AccountId),
     /// Re-capture for the given account finished; the capture is staged in its own slot.
     LauncherSessionLoginStarted(

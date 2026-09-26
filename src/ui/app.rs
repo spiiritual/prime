@@ -65,6 +65,7 @@ impl PrimeApp {
                 import_account_in_progress: false,
                 exported_account: None,
                 confirm_delete_account: None,
+                confirm_recapture_account: None,
                 pending_account: None,
                 store_summary: None,
                 loadout_summary: None,
@@ -718,7 +719,24 @@ impl PrimeApp {
                     }
                 }
             }
+            Message::RequestLauncherSessionLogin(account_id) => {
+                self.close_account_surfaces();
+
+                if self.state.accounts.iter().any(|account| account.id == account_id) {
+                    self.confirm_recapture_account = Some(account_id);
+                } else {
+                    self.status = "Account profile no longer exists".to_string();
+                }
+
+                Task::none()
+            }
+            Message::CancelLauncherSessionLogin => {
+                self.confirm_recapture_account = None;
+                Task::none()
+            }
             Message::StartLauncherSessionLogin(account_id) => {
+                self.confirm_recapture_account = None;
+
                 if self.launcher_capture_in_progress {
                     self.status = "Launcher login capture is already in progress".to_string();
                     return Task::none();
@@ -1711,6 +1729,7 @@ impl PrimeApp {
         self.show_import_account_prompt = false;
         self.exported_account = None;
         self.confirm_delete_account = None;
+        self.confirm_recapture_account = None;
     }
 
     fn close_account_surfaces(&mut self) {

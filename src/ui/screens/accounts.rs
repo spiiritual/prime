@@ -528,7 +528,7 @@ fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Me
         column![
             button("Re-capture login")
                 .width(Length::Fill)
-                .on_press(Message::StartLauncherSessionLogin(account_id)),
+                .on_press(Message::RequestLauncherSessionLogin(account_id)),
             button("Refresh profile")
                 .width(Length::Fill)
                 .on_press(Message::RefreshProfileIdentity(account_id)),

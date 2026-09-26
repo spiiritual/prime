@@ -42,6 +42,13 @@ impl PrimeApp {
                 .find(|account| account.id == account_id)
         });
 
+        let pending_recapture_account = self.confirm_recapture_account.and_then(|account_id| {
+            self.state
+                .accounts
+                .iter()
+                .find(|account| account.id == account_id)
+        });
+
         let content: Element<_> = if self.show_add_account_prompt {
             stack![content, add_account_prompt_overlay()]
                 .width(Length::Fill)
@@ -59,6 +66,11 @@ impl PrimeApp {
                 .into()
         } else if let Some(account) = pending_delete_account {
             stack![content, delete_account_prompt_overlay(account)]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else if let Some(account) = pending_recapture_account {
+            stack![content, recapture_prompt_overlay(account)]
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
@@ -514,6 +526,47 @@ fn delete_account_prompt_overlay(account: &AccountProfile) -> Element<'_, Messag
     )
     .padding(24)
     .width(560)
+    .style(add_account_prompt_style);
+
+    opaque(
+        container(prompt)
+            .padding(14)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center)
+            .style(add_account_prompt_scrim_style),
+    )
+}
+
+fn recapture_prompt_overlay(account: &AccountProfile) -> Element<'_, Message> {
+    let prompt = container(
+        column![
+            column![
+                text(format!("Re-capture login for {}?", account.display_name)).size(20),
+                text(
+                    "Prime will close Riot Client and VALORANT, clear the current remembered login, and open the Riot login screen."
+                )
+                .size(14),
+                text(format!(
+                    "Tick \"Stay signed in\" and sign in to {}. If you sign in to a different Riot account, the saved login is left unchanged.",
+                    account.summary()
+                ))
+                .size(14)
+            ]
+            .spacing(8)
+            .width(Length::Fill),
+            row![
+                space().width(Length::Fill),
+                button("Cancel").on_press(Message::CancelLauncherSessionLogin),
+                button("Continue").on_press(Message::StartLauncherSessionLogin(account.id))
+            ]
+            .spacing(10)
+        ]
+        .spacing(18),
+    )
+    .padding(24)
+    .width(640)
     .style(add_account_prompt_style);
 
     opaque(
