@@ -2187,6 +2187,23 @@ fn availability_refresh(
 }
 
 #[test]
+fn selecting_an_account_refreshes_it_without_a_full_reload() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let main = AccountProfile::new("Main", None, Shard::Na).expect("main");
+    let alt = AccountProfile::new("Alt", None, Shard::Na).expect("alt");
+    app.state.push_account(main);
+    app.state.push_account(alt.clone());
+    app.client_version_input = "release-1".to_string();
+
+    let _ = app.update(Message::SelectAccount(alt.id));
+
+    assert!(app.account_ranks_loading);
+    assert!(app.account_availability_loading);
+    assert_eq!(app.status, format!("Selected {}", alt.summary()));
+}
+
+#[test]
 fn availability_polling_resumes_when_the_window_is_restored() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());

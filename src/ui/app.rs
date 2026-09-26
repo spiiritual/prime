@@ -210,7 +210,7 @@ impl PrimeApp {
                     .selected_account()
                     .map(|account| format!("Selected {}", account.summary()))
                     .unwrap_or_else(|| "No account selected".to_string());
-                Task::batch([self.save_task(), self.load_active_tab()])
+                Task::batch([self.save_task(), self.load_selected_account_tab()])
             }
             Message::NewDisplayNameChanged(value) => {
                 self.new_display_name = value;
@@ -1829,6 +1829,31 @@ impl PrimeApp {
         self.loadout_summary = None;
     }
 
+    /// Like `load_active_tab`, but on the Accounts tab only the newly selected account is
+    /// refreshed; the periodic availability check covers the rest.
+    fn load_selected_account_tab(&mut self) -> Task<Message> {
+        if self.active_tab != Tab::Accounts {
+            return self.load_active_tab();
+        }
+
+        let Some(account) = self.state.selected_account().cloned() else {
+            return Task::none();
+        };
+
+        Task::batch([
+            if self.account_ranks_loading {
+                Task::none()
+            } else {
+                self.fetch_account_ranks_task_for(vec![account.clone()], false)
+            },
+            if self.account_availability_loading || self.launch_preflight_account.is_some() {
+                Task::none()
+            } else {
+                self.fetch_account_availabilities_task_for(vec![account])
+            },
+        ])
+    }
+
     fn load_active_tab(&mut self) -> Task<Message> {
         match self.active_tab {
             Tab::Accounts => Task::batch([
@@ -1859,7 +1884,14 @@ impl PrimeApp {
     }
 
     fn fetch_account_availabilities_task(&mut self) -> Task<Message> {
-        if self.state.accounts.is_empty() {
+        self.fetch_account_availabilities_task_for(self.state.accounts.clone())
+    }
+
+    fn fetch_account_availabilities_task_for(
+        &mut self,
+        accounts: Vec<AccountProfile>,
+    ) -> Task<Message> {
+        if accounts.is_empty() {
             return Task::none();
         }
 
@@ -1868,7 +1900,6 @@ impl PrimeApp {
         }
 
         self.account_availability_loading = true;
-        let accounts = self.state.accounts.clone();
         let client_version = self.client_version_input.clone();
 
         Task::perform(
@@ -1878,7 +1909,15 @@ impl PrimeApp {
     }
 
     fn fetch_account_ranks_task(&mut self) -> Task<Message> {
-        if self.state.accounts.is_empty() {
+        self.fetch_account_ranks_task_for(self.state.accounts.clone(), true)
+    }
+
+    fn fetch_account_ranks_task_for(
+        &mut self,
+        accounts: Vec<AccountProfile>,
+        show_status: bool,
+    ) -> Task<Message> {
+        if accounts.is_empty() {
             return Task::none();
         }
 
@@ -1887,8 +1926,9 @@ impl PrimeApp {
         }
 
         self.account_ranks_loading = true;
-        self.status = "Loading account details".to_string();
-        let accounts = self.state.accounts.clone();
+        if show_status {
+            self.status = "Loading account details".to_string();
+        }
         let client_version = self.client_version_input.clone();
 
         Task::perform(
