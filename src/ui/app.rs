@@ -221,8 +221,7 @@ impl PrimeApp {
                 Task::none()
             }
             Message::AddAccount => {
-                if self.launcher_capture_in_progress {
-                    self.status = "Launcher login capture is already in progress".to_string();
+                if self.login_capture_blocked() {
                     return Task::none();
                 }
 
@@ -235,8 +234,7 @@ impl PrimeApp {
                 Task::none()
             }
             Message::AddCurrentAccount => {
-                if self.launcher_capture_in_progress {
-                    self.status = "Launcher login capture is already in progress".to_string();
+                if self.login_capture_blocked() {
                     return Task::none();
                 }
 
@@ -256,8 +254,7 @@ impl PrimeApp {
                 )
             }
             Message::ConfirmAddAccountCapture => {
-                if self.launcher_capture_in_progress {
-                    self.status = "Launcher login capture is already in progress".to_string();
+                if self.login_capture_blocked() {
                     return Task::none();
                 }
 
@@ -717,6 +714,10 @@ impl PrimeApp {
                 }
             }
             Message::RequestLauncherSessionLogin(account_id) => {
+                if self.login_capture_blocked() {
+                    return Task::none();
+                }
+
                 self.close_account_surfaces();
 
                 if self
@@ -739,8 +740,7 @@ impl PrimeApp {
             Message::StartLauncherSessionLogin(account_id) => {
                 self.confirm_recapture_account = None;
 
-                if self.launcher_capture_in_progress {
-                    self.status = "Launcher login capture is already in progress".to_string();
+                if self.login_capture_blocked() {
                     return Task::none();
                 }
 
@@ -1346,6 +1346,12 @@ impl PrimeApp {
                     return Task::none();
                 }
 
+                if self.launcher_capture_in_progress {
+                    self.status =
+                        "Wait for the login capture to finish before launching VALORANT".to_string();
+                    return Task::none();
+                }
+
                 let Some(account) = self
                     .state
                     .accounts
@@ -1441,6 +1447,12 @@ impl PrimeApp {
             }
             Message::LaunchAnyway(id) => {
                 if self.launching_account.is_some() || self.launch_preflight_account.is_some() {
+                    return Task::none();
+                }
+
+                if self.launcher_capture_in_progress {
+                    self.status =
+                        "Wait for the login capture to finish before launching VALORANT".to_string();
                     return Task::none();
                 }
 
@@ -2015,6 +2027,27 @@ impl PrimeApp {
             MAIN_PANEL_SCROLLABLE_ID,
             self.tab_scroll_offsets.get(self.active_tab),
         )
+    }
+
+    pub(super) fn launch_in_progress(&self) -> bool {
+        self.launching_account.is_some() || self.launch_preflight_account.is_some()
+    }
+
+    /// Login capture and launching both rewrite Riot Client's live login data, so only one may run.
+    /// Returns true (and explains why in the status) when a capture cannot start right now.
+    fn login_capture_blocked(&mut self) -> bool {
+        if self.launcher_capture_in_progress {
+            self.status = "Launcher login capture is already in progress".to_string();
+            return true;
+        }
+
+        if self.launch_in_progress() {
+            self.status =
+                "Wait for VALORANT to finish launching before capturing a login".to_string();
+            return true;
+        }
+
+        false
     }
 
     /// Drops an unsaved captured account and its backup folder, which holds a live login.

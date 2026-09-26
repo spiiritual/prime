@@ -184,7 +184,10 @@ fn add_account_button(app: &PrimeApp) -> Element<'static, Message> {
     };
 
     let button: Element<'static, Message> = button(content)
-        .on_press_maybe((!app.launcher_capture_in_progress).then_some(Message::AddAccount))
+        .on_press_maybe(
+            (!app.launcher_capture_in_progress && !app.launch_in_progress())
+                .then_some(Message::AddAccount),
+        )
         .into();
     let tip =
         container(text("Adds an account by opening Riot Client for a login capture").size(13))
@@ -210,7 +213,10 @@ fn add_current_account_button(app: &PrimeApp) -> Element<'static, Message> {
     };
 
     let button: Element<'static, Message> = button(content)
-        .on_press_maybe((!app.launcher_capture_in_progress).then_some(Message::AddCurrentAccount))
+        .on_press_maybe(
+            (!app.launcher_capture_in_progress && !app.launch_in_progress())
+                .then_some(Message::AddCurrentAccount),
+        )
         .into();
     let tip = container(text("Adds the Riot account currently logged into Riot Client").size(13))
         .padding([6, 8])
@@ -285,7 +291,7 @@ fn account_card<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'
                 app.loading_frame,
                 is_launching,
                 is_checking_launch,
-                launch_in_progress
+                launch_in_progress || app.launcher_capture_in_progress
             )
         ]
         .spacing(10)
@@ -356,7 +362,7 @@ fn launch_button(
     loading_frame: usize,
     is_launching: bool,
     is_checking_launch: bool,
-    launch_in_progress: bool,
+    launch_blocked: bool,
 ) -> Element<'static, Message> {
     let content: Element<_> = if is_launching {
         row![compact_loading_indicator(loading_frame), text("Opening...")]
@@ -376,7 +382,7 @@ fn launch_button(
     };
 
     button(content)
-        .on_press_maybe((!launch_in_progress).then_some(Message::LaunchAccount(account_id)))
+        .on_press_maybe((!launch_blocked).then_some(Message::LaunchAccount(account_id)))
         .into()
 }
 
@@ -528,7 +534,10 @@ fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Me
         column![
             button("Re-capture login")
                 .width(Length::Fill)
-                .on_press(Message::RequestLauncherSessionLogin(account_id)),
+                .on_press_maybe(
+                    (!app.launcher_capture_in_progress && !app.launch_in_progress())
+                        .then_some(Message::RequestLauncherSessionLogin(account_id))
+                ),
             button("Refresh profile")
                 .width(Length::Fill)
                 .on_press(Message::RefreshProfileIdentity(account_id)),

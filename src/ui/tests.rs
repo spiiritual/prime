@@ -1478,6 +1478,45 @@ fn loading_accounts_removes_unreferenced_backup_slots() {
 }
 
 #[test]
+fn login_capture_is_refused_while_an_account_is_launching() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    app.state.push_account(account.clone());
+    app.launching_account = Some(account.id);
+
+    for message in [
+        Message::AddAccount,
+        Message::AddCurrentAccount,
+        Message::ConfirmAddAccountCapture,
+        Message::RequestLauncherSessionLogin(account.id),
+        Message::StartLauncherSessionLogin(account.id),
+    ] {
+        let _ = app.update(message);
+
+        assert!(!app.launcher_capture_in_progress);
+        assert!(!app.show_add_account_prompt);
+        assert_eq!(app.confirm_recapture_account, None);
+        assert!(app.status.contains("launching"), "{}", app.status);
+    }
+}
+
+#[test]
+fn launch_is_refused_while_a_login_capture_runs() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    app.state.push_account(account.clone());
+    app.launcher_capture_in_progress = true;
+
+    let _ = app.update(Message::LaunchAccount(account.id));
+
+    assert_eq!(app.launching_account, None);
+    assert_eq!(app.launch_preflight_account, None);
+    assert!(app.status.contains("login capture"), "{}", app.status);
+}
+
+#[test]
 fn recapture_asks_for_confirmation_before_starting() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
