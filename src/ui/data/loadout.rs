@@ -82,10 +82,22 @@ impl LoadoutSummary {
         }
     }
 
+    /// A pass that had already ended when it loaded has nothing to count down.
     pub(in crate::ui) fn battle_pass_timer_active(&self) -> bool {
         self.battle_pass
             .as_ref()
-            .is_some_and(|battle_pass| battle_pass.remaining_seconds.is_some())
+            .and_then(|battle_pass| battle_pass.remaining_seconds)
+            .is_some_and(|seconds| seconds > 0)
+    }
+
+    /// Whether the battle pass shown has ended since it loaded, so the next act can be loaded.
+    pub(in crate::ui) fn battle_pass_ended_at(&self, now: iced::time::Instant) -> bool {
+        self.battle_pass_timer_active()
+            && self
+                .battle_pass
+                .as_ref()
+                .and_then(|battle_pass| battle_pass.remaining_seconds_at(now))
+                .is_some_and(|seconds| seconds <= 0)
     }
 }
 

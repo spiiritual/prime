@@ -30,8 +30,9 @@ use super::data::shop::{
     StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay, StoreSummary, format_whole_number,
 };
 use super::{
-    Message, PendingSettingsApply, PrimeApp, loading_status_active, masked_account_export_payload,
-    status_bar_visible, status_message_is_error, status_spinner_active, status_visible_at,
+    Message, PendingSettingsApply, PrimeApp, countdown_timer_active, loading_status_active,
+    masked_account_export_payload, status_bar_visible, status_message_is_error,
+    status_spinner_active, status_visible_at,
 };
 use crate::account::{
     AccountId, AccountPenalty, AccountPenaltyDuration, AccountPenaltyStatus, AccountProfile,
@@ -3983,4 +3984,92 @@ fn deleting_a_settings_profile_asks_first_and_moves_the_choice() {
         "{}",
         app.status
     );
+}
+
+fn seconds_ago(seconds: u64) -> iced::time::Instant {
+    iced::time::Instant::now()
+        .checked_sub(Duration::from_secs(seconds))
+        .expect("earlier instant")
+}
+
+fn loadout_with_battle_pass(
+    remaining_seconds: i64,
+    loaded_at: iced::time::Instant,
+) -> LoadoutSummary {
+    LoadoutSummary {
+        battle_pass: Some(BattlePassProgressDisplay {
+            remaining_seconds: Some(remaining_seconds),
+            loaded_at,
+            ..battle_pass_display()
+        }),
+        ..loaded_loadout()
+    }
+}
+
+#[test]
+fn countdown_timer_runs_only_where_a_countdown_shows() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.store_summary = Some(empty_store_summary());
+    app.loadout_summary = Some(loadout_with_battle_pass(3_600, iced::time::Instant::now()));
+
+    app.active_tab = super::Tab::Accounts;
+    assert!(!countdown_timer_active(&app));
+
+    app.active_tab = super::Tab::Shop;
+    assert!(countdown_timer_active(&app));
+
+    app.window_minimized = true;
+    assert!(!countdown_timer_active(&app));
+    app.window_minimized = false;
+
+    app.active_tab = super::Tab::Loadout;
+    app.active_loadout_tab = super::LoadoutTab::Skins;
+    assert!(!countdown_timer_active(&app));
+
+    app.active_loadout_tab = super::LoadoutTab::BattlePass;
+    assert!(countdown_timer_active(&app));
+}
+
+#[test]
+fn opening_the_shop_after_its_reset_reloads_it() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, _) = two_account_app(dir.path());
+    app.store_summary = Some(StoreSummary {
+        daily_remaining_seconds: 10,
+        loaded_at: seconds_ago(20),
+        ..empty_store_summary()
+    });
+
+    let _ = app.update(Message::TabSelected(super::Tab::Shop));
+
+    assert!(app.store_request.is_some());
+    assert!(app.store_summary.is_none());
+}
+
+#[test]
+fn an_ended_battle_pass_reloads_the_loadout() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, _) = two_account_app(dir.path());
+    app.active_tab = super::Tab::Loadout;
+    app.active_loadout_tab = super::LoadoutTab::BattlePass;
+    app.loadout_summary = Some(loadout_with_battle_pass(10, seconds_ago(20)));
+
+    let _ = app.update(Message::ShopTimerTick(iced::time::Instant::now()));
+
+    assert!(app.loadout_request.is_some());
+}
+
+#[test]
+fn a_battle_pass_that_had_already_ended_does_not_keep_reloading() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, _) = two_account_app(dir.path());
+    app.active_tab = super::Tab::Loadout;
+    app.active_loadout_tab = super::LoadoutTab::BattlePass;
+    app.loadout_summary = Some(loadout_with_battle_pass(0, seconds_ago(20)));
+
+    let _ = app.update(Message::ShopTimerTick(iced::time::Instant::now()));
+
+    assert!(app.loadout_request.is_none());
+    assert!(!countdown_timer_active(&app));
 }

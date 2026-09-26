@@ -233,6 +233,8 @@ impl PrimeApp {
             }
             Message::TabSelected(tab) => {
                 self.active_tab = tab;
+                // Countdowns don't tick on other tabs, so bring them up to date.
+                self.now = iced::time::Instant::now();
                 self.image_viewer = None;
                 self.close_account_surfaces();
                 self.unavailable_launch_warning = None;
@@ -243,6 +245,7 @@ impl PrimeApp {
             }
             Message::LoadoutTabSelected(tab) => {
                 self.active_loadout_tab = tab;
+                self.now = iced::time::Instant::now();
                 Task::none()
             }
             Message::MainPanelScrolled { tab, offset } => {
@@ -1095,6 +1098,9 @@ impl PrimeApp {
                 let minimized = size.width <= 0.0 || size.height <= 0.0;
                 let restored = self.window_minimized && !minimized;
                 self.window_minimized = minimized;
+                if restored {
+                    self.now = iced::time::Instant::now();
+                }
 
                 if restored
                     && self.active_tab == Tab::Accounts
@@ -1511,18 +1517,27 @@ impl PrimeApp {
             Message::ShopTimerTick(now) => {
                 self.now = now;
 
-                if self.store_request.is_some() {
-                    return Task::none();
-                }
-
-                if self
-                    .store_summary
-                    .as_ref()
-                    .is_some_and(|summary| summary.is_expired_at(now))
+                if self.store_request.is_none()
+                    && self
+                        .store_summary
+                        .as_ref()
+                        .is_some_and(|summary| summary.is_expired_at(now))
                 {
                     self.store_summary = None;
                     let task = self.fetch_storefront_task();
                     self.set_view_status("Shop reset reached; loading updated shop");
+                    return task;
+                }
+
+                if self.loadout_request.is_none()
+                    && self
+                        .loadout_summary
+                        .as_ref()
+                        .is_some_and(|summary| summary.battle_pass_ended_at(now))
+                {
+                    self.loadout_summary = None;
+                    let task = self.fetch_loadout_task();
+                    self.set_view_status("Battle pass act ended; loading the new one");
                     return task;
                 }
 
@@ -2204,15 +2219,23 @@ impl PrimeApp {
                     },
                 ])
             }
+            // Countdowns only tick on their own tab, so a reset reached elsewhere reloads here.
             Tab::Shop
-                if self.store_summary.is_none() && !self.selected_account_is_store_loading() =>
+                if !self.selected_account_is_store_loading()
+                    && self.store_summary.as_ref().is_none_or(|summary| {
+                        summary.is_expired_at(iced::time::Instant::now())
+                    }) =>
             {
+                self.store_summary = None;
                 self.fetch_storefront_task()
             }
             Tab::Loadout
-                if self.loadout_summary.is_none()
-                    && !self.selected_account_is_loadout_loading() =>
+                if !self.selected_account_is_loadout_loading()
+                    && self.loadout_summary.as_ref().is_none_or(|summary| {
+                        summary.battle_pass_ended_at(iced::time::Instant::now())
+                    }) =>
             {
+                self.loadout_summary = None;
                 self.fetch_loadout_task()
             }
             _ => Task::none(),

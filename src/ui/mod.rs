@@ -70,12 +70,7 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
     let mut subscriptions =
         vec![iced::window::resize_events().map(|(_, size)| Message::WindowResized(size))];
 
-    if app.store_summary.is_some()
-        || app
-            .loadout_summary
-            .as_ref()
-            .is_some_and(LoadoutSummary::battle_pass_timer_active)
-    {
+    if countdown_timer_active(app) {
         subscriptions
             .push(iced::time::every(SHOP_RESET_CHECK_INTERVAL).map(Message::ShopTimerTick));
     }
@@ -124,6 +119,23 @@ fn loading_indicator_active(app: &PrimeApp) -> bool {
                 .as_ref()
                 .is_some_and(|image| image.high_res_loading)
         || loading_status_active(&app.status)
+}
+
+/// Countdowns tick only while one is on screen. A reset reached meanwhile is caught when the tab
+/// opens.
+fn countdown_timer_active(app: &PrimeApp) -> bool {
+    !app.window_minimized
+        && match app.active_tab {
+            Tab::Shop => app.store_summary.is_some(),
+            Tab::Loadout => {
+                app.active_loadout_tab == LoadoutTab::BattlePass
+                    && app
+                        .loadout_summary
+                        .as_ref()
+                        .is_some_and(LoadoutSummary::battle_pass_timer_active)
+            }
+            Tab::Accounts | Tab::Settings => false,
+        }
 }
 
 /// The status bar's spinner marks a progress message, not unrelated work in the background.
