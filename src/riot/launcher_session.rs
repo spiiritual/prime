@@ -623,6 +623,61 @@ rso-authenticator:
         assert!(!backup_root.path().join(account_id.to_string()).exists());
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn failed_copy_keeps_the_previous_backup_intact() {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        let source = tempdir().expect("source");
+        let target_root = tempdir().expect("target root");
+        let target = target_root.path().join("Data");
+        fs::create_dir_all(&target).expect("target");
+        fs::write(target.join("old.txt"), "old").expect("old file");
+        fs::write(source.path().join("a.txt"), "new").expect("new file");
+        fs::write(source.path().join("locked.txt"), "locked").expect("locked file");
+        let _lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(source.path().join("locked.txt"))
+            .expect("lock source file");
+
+        replace_dir_contents(source.path(), &target).expect_err("locked source file");
+
+        assert_eq!(
+            fs::read_to_string(target.join("old.txt")).expect("old file"),
+            "old"
+        );
+        assert!(!target.join("a.txt").exists());
+        assert_eq!(
+            fs::read_dir(target_root.path()).expect("target root").count(),
+            1,
+            "no leftover staging folders"
+        );
+    }
+
+    #[test]
+    fn replacing_contents_leaves_no_staging_folders() {
+        let source = tempdir().expect("source");
+        let target_root = tempdir().expect("target root");
+        let target = target_root.path().join("Data");
+        fs::create_dir_all(&target).expect("target");
+        fs::write(target.join("old.txt"), "old").expect("old file");
+        fs::create_dir(source.path().join("nested")).expect("nested");
+        fs::write(source.path().join("nested").join("a.txt"), "new").expect("new file");
+
+        replace_dir_contents(source.path(), &target).expect("replace");
+
+        assert!(!target.join("old.txt").exists());
+        assert_eq!(
+            fs::read_to_string(target.join("nested").join("a.txt")).expect("new file"),
+            "new"
+        );
+        assert_eq!(
+            fs::read_dir(target_root.path()).expect("target root").count(),
+            1
+        );
+    }
+
     #[test]
     fn applies_backup_by_replacing_target_data_folder() {
         let backup_source = tempdir().expect("backup source");
