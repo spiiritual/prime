@@ -171,6 +171,9 @@ struct PrimeApp {
     image_cache: ImageCache,
     image_viewer: Option<ImageViewerImage>,
     state: StoredState,
+    /// False until accounts.json loads successfully; saving is refused until then so an empty
+    /// in-memory state can never overwrite the user's saved accounts.
+    accounts_loaded: bool,
     active_tab: Tab,
     active_loadout_tab: LoadoutTab,
     tab_scroll_offsets: TabScrollOffsets,

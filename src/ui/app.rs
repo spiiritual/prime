@@ -46,6 +46,7 @@ impl PrimeApp {
                 image_cache,
                 image_viewer: None,
                 state: StoredState::default(),
+                accounts_loaded: false,
                 active_tab: Tab::Accounts,
                 active_loadout_tab: LoadoutTab::Skins,
                 tab_scroll_offsets: TabScrollOffsets::default(),
@@ -128,6 +129,7 @@ impl PrimeApp {
                             .map(|path| path.display().to_string())
                             .unwrap_or_default();
                         self.state = loaded.state;
+                        self.accounts_loaded = true;
                         self.status = if let Some(error) = loaded.legacy_cleanup_error {
                             format!("Could not remove old Riot Client sessions: {error}")
                         } else if !loaded.removed_legacy_sessions.is_empty() {
@@ -144,7 +146,9 @@ impl PrimeApp {
                         };
                     }
                     Err(error) => {
-                        self.status = format!("Failed to load accounts: {error}");
+                        self.status = format!(
+                            "Failed to load accounts: {error}. Changes will not be saved until accounts.json loads."
+                        );
                     }
                 }
 
@@ -1853,9 +1857,23 @@ impl PrimeApp {
             .is_some_and(|account_id| Some(account_id) == self.state.selected_account)
     }
 
+    pub(super) fn state_to_save(&self) -> Result<StoredState, String> {
+        if !self.accounts_loaded {
+            return Err(format!(
+                "accounts were not loaded from {}, so Prime did not save changes to avoid overwriting them",
+                self.repo.path().display()
+            ));
+        }
+
+        Ok(self.state.clone())
+    }
+
     fn save_task(&self) -> Task<Message> {
         let repo = self.repo.clone();
-        let state = self.state.clone();
+        let state = match self.state_to_save() {
+            Ok(state) => state,
+            Err(error) => return Task::done(Message::Saved(Err(error))),
+        };
 
         Task::perform(
             async move { repo.save(&state).map_err(|error| error.to_string()) },

@@ -61,6 +61,7 @@ fn test_app(repo_dir: &Path) -> PrimeApp {
     let (mut app, _) = PrimeApp::boot();
     app.repo = AccountRepository::new(repo_dir.join("accounts.json"));
     app.state = StoredState::default();
+    app.accounts_loaded = true;
     app.pending_account = None;
     app.show_add_account_prompt = false;
     app.launcher_capture_in_progress = false;
@@ -1411,6 +1412,33 @@ fn require_launcher_session_accepts_ready_backup() {
     let accepted = require_launcher_session(Some(backup)).expect("ready backup");
 
     assert_eq!(accepted.puuid, "puuid");
+}
+
+#[test]
+fn accounts_are_not_saved_before_a_successful_load() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.accounts_loaded = false;
+
+    assert!(app.state_to_save().is_err());
+
+    let _ = app.update(Message::Loaded(Err("accounts.json is invalid".to_string())));
+
+    assert!(app.state_to_save().is_err());
+    assert!(!app.accounts_loaded);
+}
+
+#[test]
+fn accounts_are_saved_after_a_successful_load() {
+    let dir = tempdir().expect("temp dir");
+    let repo = AccountRepository::new(dir.path().join("accounts.json"));
+    let mut app = test_app(dir.path());
+    app.accounts_loaded = false;
+
+    let _ = app.update(Message::Loaded(load_accounts(&repo)));
+
+    assert!(app.accounts_loaded);
+    assert!(app.state_to_save().is_ok());
 }
 
 fn account_with_backup(backup_root: &Path, name: &str, settings: &str) -> AccountProfile {
