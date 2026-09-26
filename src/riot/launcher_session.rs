@@ -13,10 +13,10 @@ mod backup_files;
 mod private_settings;
 
 use backup_files::{clear_dir, replace_dir_contents};
-pub use private_settings::private_settings_refresh_token;
 use private_settings::{
     private_settings_is_legacy_ssid_login, update_private_settings_refresh_token,
 };
+pub use private_settings::{private_settings_refresh_token, private_settings_signed_in_puuid};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CapturedLauncherSession {
@@ -104,7 +104,17 @@ pub fn sync_launcher_session_backup_from_data_dir(
     }
 
     let source_data_dir = source_data_dir.as_ref();
-    read_data_dir_refresh_token(source_data_dir)?;
+    let settings = read_data_dir_private_settings(source_data_dir)?;
+    private_settings_refresh_token(&settings).ok_or(LauncherSessionError::MissingRefreshToken)?;
+
+    // Only save the live login back when it belongs to this account. If Riot rejected the restored
+    // login and someone signed in to another account, that login must not land in this backup.
+    let signed_in_this_account = private_settings_signed_in_puuid(&settings)
+        .is_some_and(|puuid| puuid.eq_ignore_ascii_case(&backup.puuid));
+    if !signed_in_this_account {
+        return Err(LauncherSessionError::DifferentAccountSignedIn);
+    }
+
     replace_dir_contents(source_data_dir, &backup.data_dir)?;
 
     Ok(LauncherSessionBackup {
@@ -164,15 +174,17 @@ fn read_backup_private_settings(
 }
 
 fn read_data_dir_refresh_token(data_dir: &Path) -> Result<String, LauncherSessionError> {
-    let settings_path = data_dir.join(PRIVATE_SETTINGS_FILE);
-    let settings = fs::read_to_string(&settings_path).map_err(|source| {
-        LauncherSessionError::ReadPrivateSettings {
-            path: settings_path,
-            source,
-        }
-    })?;
+    let settings = read_data_dir_private_settings(data_dir)?;
 
     private_settings_refresh_token(&settings).ok_or(LauncherSessionError::MissingRefreshToken)
+}
+
+fn read_data_dir_private_settings(data_dir: &Path) -> Result<String, LauncherSessionError> {
+    let settings_path = data_dir.join(PRIVATE_SETTINGS_FILE);
+    fs::read_to_string(&settings_path).map_err(|source| LauncherSessionError::ReadPrivateSettings {
+        path: settings_path,
+        source,
+    })
 }
 
 /// Removes captured backup slots saved by older Riot Client versions, which stored the remembered
@@ -326,6 +338,10 @@ pub enum LauncherSessionError {
     #[error("Riot Client did not save a remembered login; log in with Stay signed in enabled")]
     MissingRefreshToken,
     #[error(
+        "Riot Client is signed in to a different account, or the account could not be confirmed; the saved login was left unchanged"
+    )]
+    DifferentAccountSignedIn,
+    #[error(
         "captured launcher session backup does not exist at {0}; re-capture this account's login"
     )]
     BackupMissing(PathBuf),
@@ -345,14 +361,30 @@ mod tests {
 
     use super::*;
 
+    fn fake_id_token(puuid: &str) -> String {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+        let encode = |value: serde_json::Value| URL_SAFE_NO_PAD.encode(value.to_string());
+        format!(
+            "{}.{}.signature",
+            encode(serde_json::json!({"alg": "RS256", "typ": "id_token+jwt"})),
+            encode(serde_json::json!({"sub": puuid, "acct": {"game_name": "Main"}}))
+        )
+    }
+
     fn remembered_login_settings(refresh_token: &str) -> String {
+        remembered_login_settings_for("account-puuid", refresh_token)
+    }
+
+    fn remembered_login_settings_for(puuid: &str, refresh_token: &str) -> String {
         format!(
             concat!(
                 "psl:\n",
                 "    authorization:\n",
                 "        riot-client:\n",
                 "            claims: []\n",
-                "            id_token: \"id-token\"\n",
+                "            id_token: \"{}\"\n",
                 "            is_dpop_bound: false\n",
                 "            refresh_token: \"{}\"\n",
                 "            refresh_token_write_count: 1\n",
@@ -366,6 +398,7 @@ mod tests {
                 "        name: \"tdid\"\n",
                 "        value: \"tdid-value\"\n",
             ),
+            fake_id_token(puuid),
             refresh_token
         )
     }
@@ -642,6 +675,75 @@ rso-authenticator:
         assert_eq!(
             read_backup_refresh_token(&synced).expect("refresh token"),
             "live-refresh"
+        );
+    }
+
+    #[test]
+    fn reads_signed_in_puuid_from_id_token() {
+        assert_eq!(
+            private_settings_signed_in_puuid(&remembered_login_settings_for("abc-123", "refresh"))
+                .as_deref(),
+            Some("abc-123")
+        );
+        assert_eq!(
+            private_settings_signed_in_puuid(legacy_ssid_settings()),
+            None
+        );
+    }
+
+    #[test]
+    fn sync_refuses_when_a_different_account_is_signed_in() {
+        let source = tempdir().expect("source");
+        let backup_dir = tempdir().expect("backup");
+        fs::write(
+            source.path().join(PRIVATE_SETTINGS_FILE),
+            remembered_login_settings_for("someone-else", "other-refresh"),
+        )
+        .expect("live settings");
+        fs::write(backup_dir.path().join(PRIVATE_SETTINGS_FILE), "old").expect("old settings");
+        let backup = LauncherSessionBackup {
+            data_dir: backup_dir.path().to_path_buf(),
+            captured_at_unix: 100,
+            puuid: "account-puuid".to_string(),
+        };
+
+        let err = sync_launcher_session_backup_from_data_dir(&backup, source.path())
+            .expect_err("different account");
+
+        assert!(matches!(
+            err,
+            LauncherSessionError::DifferentAccountSignedIn
+        ));
+        assert_eq!(
+            fs::read_to_string(backup_dir.path().join(PRIVATE_SETTINGS_FILE)).expect("settings"),
+            "old"
+        );
+    }
+
+    #[test]
+    fn sync_refuses_when_the_signed_in_account_is_unknown() {
+        let source = tempdir().expect("source");
+        let backup_dir = tempdir().expect("backup");
+        fs::write(
+            source.path().join(PRIVATE_SETTINGS_FILE),
+            "psl:\n    authorization:\n        riot-client:\n            refresh_token: \"refresh\"\n",
+        )
+        .expect("live settings");
+        fs::write(backup_dir.path().join(PRIVATE_SETTINGS_FILE), "old").expect("old settings");
+
+        let err = sync_launcher_session_backup_from_data_dir(
+            &backup_at(backup_dir.path()),
+            source.path(),
+        )
+        .expect_err("unknown account");
+
+        assert!(matches!(
+            err,
+            LauncherSessionError::DifferentAccountSignedIn
+        ));
+        assert_eq!(
+            fs::read_to_string(backup_dir.path().join(PRIVATE_SETTINGS_FILE)).expect("settings"),
+            "old"
         );
     }
 

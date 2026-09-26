@@ -1,13 +1,33 @@
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
 const PSL_REFRESH_TOKEN_PATH: [&str; 4] = ["psl", "authorization", "riot-client", "refresh_token"];
+const PSL_ID_TOKEN_PATH: [&str; 4] = ["psl", "authorization", "riot-client", "id_token"];
 
 /// Reads the remembered Riot Client refresh token from `RiotGamesPrivateSettings.yaml`.
 pub fn private_settings_refresh_token(contents: &str) -> Option<String> {
-    let lines = contents.split('\n').collect::<Vec<_>>();
-    let index = find_yaml_path_line(&lines, &PSL_REFRESH_TOKEN_PATH)?;
-    let (_, value) = lines[index].trim().split_once(':')?;
-    let token = unquote_yaml_scalar(value);
+    yaml_path_value(contents, &PSL_REFRESH_TOKEN_PATH)
+}
 
-    (!token.is_empty() && token != "null" && token != "~").then_some(token)
+/// Reads the PUUID of the account Riot Client remembers from the `sub` claim of its stored ID
+/// token. The token is decoded locally, not verified; it only identifies which login was saved.
+pub fn private_settings_signed_in_puuid(contents: &str) -> Option<String> {
+    let id_token = yaml_path_value(contents, &PSL_ID_TOKEN_PATH)?;
+    let payload = id_token.split('.').nth(1)?;
+    let claims = URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
+    let claims: serde_json::Value = serde_json::from_slice(&claims).ok()?;
+    let puuid = claims.get("sub")?.as_str()?.trim();
+
+    (!puuid.is_empty()).then(|| puuid.to_string())
+}
+
+fn yaml_path_value(contents: &str, path: &[&str]) -> Option<String> {
+    let lines = contents.split('\n').collect::<Vec<_>>();
+    let index = find_yaml_path_line(&lines, path)?;
+    let (_, value) = lines[index].trim().split_once(':')?;
+    let value = unquote_yaml_scalar(value);
+
+    (!value.is_empty() && value != "null" && value != "~").then_some(value)
 }
 
 /// True when the file holds a login saved by older Riot Client versions: an `ssid` cookie in the
