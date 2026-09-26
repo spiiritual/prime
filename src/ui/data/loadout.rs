@@ -688,7 +688,6 @@ pub(in crate::ui) struct WeaponDisplay {
     pub(in crate::ui) category: &'static str,
     pub(in crate::ui) display_icon: Option<String>,
     pub(in crate::ui) viewer_icon: Option<String>,
-    pub(in crate::ui) cached_icon: Option<PathBuf>,
 }
 
 impl From<ResolvedWeapon> for WeaponDisplay {
@@ -699,7 +698,6 @@ impl From<ResolvedWeapon> for WeaponDisplay {
             category: weapon_category(weapon.category.as_deref()),
             display_icon: weapon.display_icon,
             viewer_icon: weapon.viewer_icon,
-            cached_icon: None,
         }
     }
 }

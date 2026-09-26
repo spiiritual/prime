@@ -4,10 +4,11 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use iced::futures::future::{join4, try_join4};
+use iced::futures::stream::{self, StreamExt};
 
 use crate::riot::content::{ContentError, WeaponContent};
 
-use super::loadout::{BattlePassRewardDisplay, LoadoutSummary, SkinDisplay, WeaponDisplay};
+use super::loadout::{BattlePassRewardDisplay, LoadoutSummary, SkinDisplay};
 use super::shop::{AccessoryDisplay, BundleDisplay, StoreSummary};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -91,12 +92,17 @@ impl<T> CachedCatalog<T> {
 // Image downloads never fail a tab: an item whose art cannot be fetched keeps `cached_icon: None`
 // and the view shows a placeholder for it.
 
+/// How many images download at once on a first load.
+const ICON_DOWNLOADS_AT_ONCE: usize = 8;
+
 pub(in crate::ui) async fn cache_store_images(
     summary: &mut StoreSummary,
     image_cache: &ImageCache,
 ) {
+    let mut downloads: Vec<IconDownload<'_>> = Vec::new();
+
     for bundle in &mut summary.featured_bundles {
-        cache_bundle_icon(&mut bundle.bundle, image_cache).await;
+        downloads.push(Box::pin(cache_bundle_icon(&mut bundle.bundle, image_cache)));
     }
 
     for offer in summary
@@ -104,21 +110,27 @@ pub(in crate::ui) async fn cache_store_images(
         .iter_mut()
         .chain(summary.night_market_offers.iter_mut())
     {
-        cache_skin_icon(&mut offer.skin, image_cache).await;
+        downloads.push(Box::pin(cache_skin_icon(&mut offer.skin, image_cache)));
     }
 
     for offer in &mut summary.accessory_offers {
-        cache_accessory_icon(&mut offer.accessory, image_cache).await;
+        downloads.push(Box::pin(cache_accessory_icon(
+            &mut offer.accessory,
+            image_cache,
+        )));
     }
+
+    download_icons(downloads).await;
 }
 
 pub(in crate::ui) async fn cache_loadout_images(
     summary: &mut LoadoutSummary,
     image_cache: &ImageCache,
 ) {
+    let mut downloads: Vec<IconDownload<'_>> = Vec::new();
+
     for gun in &mut summary.gun_skins {
-        cache_weapon_icon(&mut gun.weapon, image_cache).await;
-        cache_skin_icon(&mut gun.skin, image_cache).await;
+        downloads.push(Box::pin(cache_skin_icon(&mut gun.skin, image_cache)));
     }
 
     if let Some(battle_pass) = &mut summary.battle_pass {
@@ -128,9 +140,20 @@ pub(in crate::ui) async fn cache_loadout_images(
             .chain(battle_pass.unearned_rewards.iter_mut())
             .chain(battle_pass.locked_paid_rewards.iter_mut())
         {
-            cache_battle_pass_reward_icon(reward, image_cache).await;
+            downloads.push(Box::pin(cache_battle_pass_reward_icon(reward, image_cache)));
         }
     }
+
+    download_icons(downloads).await;
+}
+
+type IconDownload<'a> = std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+
+async fn download_icons(downloads: Vec<IconDownload<'_>>) {
+    stream::iter(downloads)
+        .buffer_unordered(ICON_DOWNLOADS_AT_ONCE)
+        .collect::<Vec<()>>()
+        .await;
 }
 
 async fn cached_icon(
@@ -145,16 +168,6 @@ async fn cached_icon(
 pub(in crate::ui) async fn cache_skin_icon(skin: &mut SkinDisplay, image_cache: &ImageCache) {
     skin.cached_icon =
         cached_icon(image_cache, "skins", &skin.uuid, skin.display_icon.as_ref()).await;
-}
-
-pub(in crate::ui) async fn cache_weapon_icon(weapon: &mut WeaponDisplay, image_cache: &ImageCache) {
-    weapon.cached_icon = cached_icon(
-        image_cache,
-        "weapons",
-        &weapon.uuid,
-        weapon.display_icon.as_ref(),
-    )
-    .await;
 }
 
 pub(in crate::ui) async fn cache_accessory_icon(
@@ -287,6 +300,47 @@ mod tests {
         let catalog = block_on(cache.get_or_fetch(|| async { Ok(3) })).expect("retry");
 
         assert_eq!(*catalog, 3);
+    }
+
+    /// Pending once, so every download that has started is in flight at the same time.
+    struct YieldOnce(bool);
+
+    impl Future for YieldOnce {
+        type Output = ();
+
+        fn poll(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<()> {
+            if self.0 {
+                return std::task::Poll::Ready(());
+            }
+            self.0 = true;
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    }
+
+    #[test]
+    fn icon_downloads_run_at_the_same_time() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let in_flight = AtomicUsize::new(0);
+        let most_in_flight = AtomicUsize::new(0);
+        let downloads = (0..4)
+            .map(|_| {
+                Box::pin(async {
+                    let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                    most_in_flight.fetch_max(now, Ordering::SeqCst);
+                    YieldOnce(false).await;
+                    in_flight.fetch_sub(1, Ordering::SeqCst);
+                }) as IconDownload<'_>
+            })
+            .collect();
+
+        block_on(download_icons(downloads));
+
+        assert_eq!(most_in_flight.load(Ordering::SeqCst), 4);
     }
 
     #[test]

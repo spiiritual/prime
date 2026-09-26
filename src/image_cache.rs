@@ -1,6 +1,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use directories::ProjectDirs;
 use thiserror::Error;
@@ -184,13 +185,24 @@ pub enum ImageCacheError {
 /// Writes through a temporary file so an interrupted write never leaves a truncated image that
 /// later loads would treat as already cached.
 fn write_cache_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    // Images download at the same time, so each write gets its own partial file.
+    static NEXT_PARTIAL: AtomicU64 = AtomicU64::new(0);
+
     let mut partial = path.as_os_str().to_owned();
-    partial.push(".partial");
+    partial.push(format!(
+        ".{}-{}.partial",
+        std::process::id(),
+        NEXT_PARTIAL.fetch_add(1, Ordering::Relaxed)
+    ));
     let partial = PathBuf::from(partial);
 
     fs::write(&partial, bytes)?;
     if let Err(error) = fs::rename(&partial, path) {
         let _ = fs::remove_file(&partial);
+        // Another download of the same image may have finished first.
+        if path.exists() {
+            return Ok(());
+        }
         return Err(error);
     }
 
@@ -213,6 +225,18 @@ mod tests {
 
         assert_eq!(fs::read(&path).expect("image"), [1, 2, 3]);
         assert_eq!(fs::read_dir(dir.path()).expect("cache dir").count(), 1);
+    }
+
+    #[test]
+    fn cache_file_writes_do_not_share_a_partial_file() {
+        let dir = tempdir().expect("cache dir");
+        let path = dir.path().join("skin.png");
+        // Another download of the same image holding the plain partial name.
+        fs::create_dir(dir.path().join("skin.png.partial")).expect("other writer");
+
+        write_cache_file(&path, &[1, 2, 3]).expect("write");
+
+        assert_eq!(fs::read(&path).expect("image"), [1, 2, 3]);
     }
 
     #[test]
