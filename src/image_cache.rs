@@ -75,7 +75,7 @@ impl ImageCache {
             .error_for_status()?
             .bytes()
             .await?;
-        fs::write(&path, bytes)?;
+        write_cache_file(&path, &bytes)?;
 
         Ok(path)
     }
@@ -181,11 +181,39 @@ pub enum ImageCacheError {
     Http(#[from] reqwest::Error),
 }
 
+/// Writes through a temporary file so an interrupted write never leaves a truncated image that
+/// later loads would treat as already cached.
+fn write_cache_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut partial = path.as_os_str().to_owned();
+    partial.push(".partial");
+    let partial = PathBuf::from(partial);
+
+    fs::write(&partial, bytes)?;
+    if let Err(error) = fs::rename(&partial, path) {
+        let _ = fs::remove_file(&partial);
+        return Err(error);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn cache_file_write_leaves_only_the_finished_image() {
+        let dir = tempdir().expect("cache dir");
+        let path = dir.path().join("skin.png");
+        fs::write(&path, [9]).expect("stale file");
+
+        write_cache_file(&path, &[1, 2, 3]).expect("write");
+
+        assert_eq!(fs::read(&path).expect("image"), [1, 2, 3]);
+        assert_eq!(fs::read_dir(dir.path()).expect("cache dir").count(), 1);
+    }
 
     #[test]
     fn size_bytes_counts_nested_files() {
