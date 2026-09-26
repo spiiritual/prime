@@ -585,12 +585,7 @@ fn unavailable_launch_prompt_overlay(warning: &UnavailableLaunchWarning) -> Elem
         column![
             column![
                 text(format!("Launch {} anyway?", warning.display_name)).size(20),
-                text(format!(
-                    "This account appears unavailable ({}). Launching may interrupt that active VALORANT session.",
-                    warning.reason
-                ))
-                .size(14)
-                .width(Length::Fill)
+                text(&warning.reason).size(14).width(Length::Fill)
             ]
             .spacing(8)
             .width(Length::Fill),

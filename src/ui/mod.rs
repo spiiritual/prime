@@ -525,7 +525,8 @@ enum Message {
     ClearImageCache,
     ImageCacheCleared(Result<(), String>),
     LaunchAccount(AccountId),
-    LaunchPreflightChecked(AccountActivityCheck),
+    /// Preflight result for a launch, and whether VALORANT was already running.
+    LaunchPreflightChecked(AccountActivityCheck, bool),
     CancelUnavailableLaunch,
     LaunchAnyway(AccountId),
     LaunchProgressTick,

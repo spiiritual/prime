@@ -1375,7 +1375,7 @@ impl PrimeApp {
                     async move {
                         let api = crate::riot::client::RiotApi::new().map_err(|_| ()).ok();
 
-                        match api {
+                        let check = match api {
                             Some(api) => {
                                 fetch_account_availability(&api, account, client_version).await
                             }
@@ -1383,12 +1383,22 @@ impl PrimeApp {
                                 account_id: id,
                                 availability: AccountAvailability::activity_check_failed(),
                             },
-                        }
+                        };
+                        let valorant_running =
+                            tokio::task::spawn_blocking(crate::launch::valorant_process_is_running)
+                                .await
+                                .ok()
+                                .and_then(Result::ok)
+                                .unwrap_or(false);
+
+                        (check, valorant_running)
                     },
-                    Message::LaunchPreflightChecked,
+                    |(check, valorant_running)| {
+                        Message::LaunchPreflightChecked(check, valorant_running)
+                    },
                 )
             }
-            Message::LaunchPreflightChecked(check) => {
+            Message::LaunchPreflightChecked(check, valorant_running) => {
                 if self.launch_preflight_account != Some(check.account_id) {
                     return Task::none();
                 }
@@ -1408,16 +1418,34 @@ impl PrimeApp {
                     return Task::none();
                 };
 
-                match launch_preflight_decision(&check.availability) {
+                let decision = launch_preflight_decision(&check.availability);
+                let mut warnings = Vec::new();
+                if valorant_running {
+                    warnings.push(format!(
+                        "VALORANT is already running. Launching {} will close it, including any match in progress.",
+                        account.display_name
+                    ));
+                }
+                if decision == LaunchPreflightDecision::WarnUnavailable
+                    && let Some(reason) = check.availability.unavailable_reason()
+                {
+                    warnings.push(format!(
+                        "This account appears unavailable ({reason}). Launching may interrupt that active VALORANT session."
+                    ));
+                }
+
+                if !warnings.is_empty() {
+                    self.unavailable_launch_warning = Some(super::UnavailableLaunchWarning {
+                        account_id: account.id,
+                        display_name: account.display_name,
+                        reason: warnings.join(" "),
+                    });
+                    self.status = "Confirm launch to continue".to_string();
+                    return Task::none();
+                }
+
+                match decision {
                     LaunchPreflightDecision::WarnUnavailable => {
-                        if let Some(reason) = check.availability.unavailable_reason() {
-                            self.unavailable_launch_warning =
-                                Some(super::UnavailableLaunchWarning {
-                                    account_id: account.id,
-                                    display_name: account.display_name,
-                                    reason: reason.to_string(),
-                                });
-                        }
                         self.status =
                             "Account appears unavailable; confirm launch to continue".to_string();
                         Task::none()
