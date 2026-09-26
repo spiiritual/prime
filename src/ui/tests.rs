@@ -4027,10 +4027,41 @@ fn settings_saved(account_id: AccountId, profile: GameSettingsProfileMetadata) -
 
 fn settings_app(dir: &Path) -> (PrimeApp, AccountId) {
     let mut app = test_app(dir);
+    app.settings_cloning = true;
     let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
     let account_id = account.id;
     app.state.push_account(account);
     (app, account_id)
+}
+
+#[cfg(not(feature = "settings-cloning"))]
+#[test]
+fn settings_cloning_is_disabled_without_its_feature() {
+    let dir = tempdir().expect("temp dir");
+
+    assert!(!super::settings_cloning_enabled());
+    assert!(!test_app(dir.path()).settings_cloning);
+}
+
+#[test]
+fn settings_cloning_does_nothing_while_disabled() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    app.settings_cloning = false;
+    let profile =
+        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
+    app.settings_profiles = vec![profile.clone()];
+
+    let tasks = [
+        app.update(Message::SaveAccountSettings(account_id)),
+        app.update(Message::RequestApplySavedSettings(account_id)),
+        app.update(Message::RequestDeleteSettingsProfile(profile.id)),
+    ];
+
+    assert!(tasks.iter().all(|task| task.units() == 0));
+    assert_eq!(app.settings_saving_account, None);
+    assert_eq!(app.confirm_apply_settings, None);
+    assert_eq!(app.confirm_delete_settings_profile, None);
 }
 
 fn profile_ids(app: &PrimeApp) -> Vec<String> {

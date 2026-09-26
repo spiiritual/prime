@@ -91,6 +91,7 @@ impl PrimeApp {
                 account_availability: Default::default(),
                 account_availability_loading: false,
                 account_availability_loaded_at: None,
+                settings_cloning: super::settings_cloning_enabled(),
                 settings_profiles: Vec::new(),
                 selected_settings_profile: None,
                 settings_saving_account: None,
@@ -114,10 +115,14 @@ impl PrimeApp {
             },
             Task::batch([
                 Task::perform(async move { load_accounts(&load_repo) }, Message::Loaded),
-                Task::perform(
-                    load_game_settings_profiles(profile_dir),
-                    Message::GameSettingsProfilesLoaded,
-                ),
+                if super::settings_cloning_enabled() {
+                    Task::perform(
+                        load_game_settings_profiles(profile_dir),
+                        Message::GameSettingsProfilesLoaded,
+                    )
+                } else {
+                    Task::none()
+                },
                 fetch_client_version_task(false),
                 Task::perform(check_for_update(), |result| Message::AppUpdateChecked {
                     user_requested: false,
@@ -1215,7 +1220,8 @@ impl PrimeApp {
                 Task::none()
             }
             Message::SaveAccountSettings(account_id) => {
-                if self.settings_saving_account.is_some()
+                if !self.settings_cloning
+                    || self.settings_saving_account.is_some()
                     || self.settings_applying_account.is_some()
                     || self.update_blocks_new_work()
                 {
@@ -1293,7 +1299,8 @@ impl PrimeApp {
                 None => Task::none(),
             },
             Message::RequestDeleteSettingsProfile(profile_id) => {
-                if self.settings_saving_account.is_some()
+                if !self.settings_cloning
+                    || self.settings_saving_account.is_some()
                     || self.settings_applying_account.is_some()
                 {
                     return Task::none();
@@ -1354,7 +1361,8 @@ impl PrimeApp {
                 }
             }
             Message::RequestApplySavedSettings(account_id) => {
-                if self.settings_saving_account.is_some()
+                if !self.settings_cloning
+                    || self.settings_saving_account.is_some()
                     || self.settings_applying_account.is_some()
                     || self.update_blocks_new_work()
                 {

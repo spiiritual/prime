@@ -36,6 +36,7 @@ Notes:
 - Riot's direct username/password auth is intentionally isolated because the currently documented flow is prone to captcha and anti-bot breakage.
 - Store and loadout requests use the undocumented client endpoints described by <https://valapidocs.techchrism.me/>.
 - Launcher switching follows the same broad approach as Assist: preserve Riot Client remembered-login data per account, restore the selected account's data, then launch VALORANT through Riot Client.
+- Settings cloning (saving an account's VALORANT settings and applying them to another account) is behind the `settings-cloning` Cargo feature and off by default. Run it with `cargo run --features settings-cloning`.
 - This app should not store Riot passwords. The current token import flow stores only session tokens in the local profile JSON and redacts them from debug output.
 - Keep direct Rust dependencies current with crates.io when touching dependency metadata, then run Cargo to update the lockfile.
 

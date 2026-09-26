@@ -43,6 +43,11 @@ fn image_viewer_enabled() -> bool {
     cfg!(feature = "image-viewer-testing")
 }
 
+/// Saving VALORANT settings from one account and applying them to another.
+fn settings_cloning_enabled() -> bool {
+    cfg!(feature = "settings-cloning")
+}
+
 pub fn run() -> iced::Result {
     iced::application(PrimeApp::boot, PrimeApp::update, PrimeApp::view)
         .title(app_title)
@@ -283,6 +288,8 @@ struct PrimeApp {
     account_availability: HashMap<AccountId, AccountAvailability>,
     account_availability_loading: bool,
     account_availability_loaded_at: Option<iced::time::Instant>,
+    /// Whether settings cloning is available; set from the `settings-cloning` feature.
+    settings_cloning: bool,
     settings_profiles: Vec<GameSettingsProfileMetadata>,
     selected_settings_profile: Option<String>,
     settings_saving_account: Option<AccountId>,

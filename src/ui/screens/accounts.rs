@@ -106,11 +106,12 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         );
     }
 
-    content
-        .push(controls)
-        .push(settings_profiles_section(app))
-        .push(account_cards)
-        .into()
+    content = content.push(controls);
+    if app.settings_cloning {
+        content = content.push(settings_profiles_section(app));
+    }
+
+    content.push(account_cards).into()
 }
 
 /// A saved settings profile as the picker shows it.
@@ -618,41 +619,57 @@ fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Me
         app.settings_saving_account.is_some() || app.settings_applying_account.is_some();
     let account_has_api_access = account.has_launcher_session() || account.session.is_some();
 
+    let mut actions = column![
+        button("Re-capture login")
+            .width(Length::Fill)
+            .on_press_maybe(
+                (!app.launcher_capture_in_progress && !app.launch_in_progress())
+                    .then_some(Message::RequestLauncherSessionLogin(account_id))
+            ),
+        button("Refresh profile")
+            .width(Length::Fill)
+            .on_press_maybe(
+                (!app.profile_identity_refreshing.contains(&account_id))
+                    .then_some(Message::RefreshProfileIdentity(account_id))
+            ),
+    ]
+    .spacing(8);
+
+    if app.settings_cloning {
+        actions = actions
+            .push(
+                button("Save VALORANT settings")
+                    .width(Length::Fill)
+                    .on_press_maybe(
+                        (!settings_busy && account_has_api_access)
+                            .then_some(Message::SaveAccountSettings(account_id)),
+                    ),
+            )
+            .push(
+                button("Apply settings profile")
+                    .width(Length::Fill)
+                    .on_press_maybe(
+                        (!settings_busy
+                            && account_has_api_access
+                            && !app.settings_profiles.is_empty())
+                        .then_some(Message::RequestApplySavedSettings(account_id)),
+                    ),
+            );
+    }
+
     container(
-        column![
-            button("Re-capture login")
-                .width(Length::Fill)
-                .on_press_maybe(
-                    (!app.launcher_capture_in_progress && !app.launch_in_progress())
-                        .then_some(Message::RequestLauncherSessionLogin(account_id))
-                ),
-            button("Refresh profile")
-                .width(Length::Fill)
-                .on_press_maybe(
-                    (!app.profile_identity_refreshing.contains(&account_id))
-                        .then_some(Message::RefreshProfileIdentity(account_id))
-                ),
-            button("Save VALORANT settings")
-                .width(Length::Fill)
-                .on_press_maybe(
-                    (!settings_busy && account_has_api_access)
-                        .then_some(Message::SaveAccountSettings(account_id))
-                ),
-            button("Apply settings profile")
-                .width(Length::Fill)
-                .on_press_maybe(
-                    (!settings_busy && account_has_api_access && !app.settings_profiles.is_empty())
-                        .then_some(Message::RequestApplySavedSettings(account_id))
-                ),
-            button("Export account")
-                .width(Length::Fill)
-                .on_press(Message::RequestExportAccount(account_id)),
-            button("Delete account")
-                .width(Length::Fill)
-                .style(iced::widget::button::danger)
-                .on_press(Message::RequestDeleteAccount(account_id))
-        ]
-        .spacing(8),
+        actions
+            .push(
+                button("Export account")
+                    .width(Length::Fill)
+                    .on_press(Message::RequestExportAccount(account_id)),
+            )
+            .push(
+                button("Delete account")
+                    .width(Length::Fill)
+                    .style(iced::widget::button::danger)
+                    .on_press(Message::RequestDeleteAccount(account_id)),
+            ),
     )
     .padding(8)
     .width(ACCOUNT_MENU_WIDTH)
