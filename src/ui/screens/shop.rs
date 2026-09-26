@@ -12,9 +12,7 @@ use crate::ui::data::shop::{
 use crate::ui::{Message, PrimeApp};
 
 const SHOP_ITEM_NAME_HEIGHT: f32 = 20.0;
-const SHOP_ITEM_NAME_WIDTH: f32 = 212.0;
 const SHOP_BUNDLE_NAME_HEIGHT: f32 = 24.0;
-const SHOP_BUNDLE_NAME_WIDTH: f32 = 260.0;
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     let mut content = column![].spacing(12).width(Length::Fill);
@@ -121,12 +119,7 @@ fn store_bundle_card(bundle: &StoreBundleDisplay, remaining_seconds: i64) -> Ele
         .unwrap_or_else(|| "Price unavailable".to_string());
     let rarity_for_style = bundle.rarity.clone();
     let details = column![
-        compact_item_name(
-            &bundle.bundle.display_name,
-            20,
-            SHOP_BUNDLE_NAME_HEIGHT,
-            SHOP_BUNDLE_NAME_WIDTH
-        ),
+        compact_item_name(&bundle.bundle.display_name, 20, SHOP_BUNDLE_NAME_HEIGHT),
         text(price).size(16),
         text(format!(
             "{} | Expires in {}",
@@ -191,12 +184,7 @@ fn store_accessory_card(offer: &StoreAccessoryDisplay) -> Element<'_, Message> {
                 offer.accessory.viewer_icon.as_deref(),
             )
         ),
-        compact_item_name(
-            &offer.accessory.display_name,
-            16,
-            SHOP_ITEM_NAME_HEIGHT,
-            SHOP_ITEM_NAME_WIDTH
-        ),
+        compact_item_name(&offer.accessory.display_name, 16, SHOP_ITEM_NAME_HEIGHT),
         text(price).size(14),
     ]
     .spacing(6)
@@ -229,7 +217,6 @@ fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {
             &offer.skin.display_name,
             16,
             SHOP_ITEM_NAME_HEIGHT,
-            SHOP_ITEM_NAME_WIDTH,
         ))
         .push(offer_price_line(offer));
 

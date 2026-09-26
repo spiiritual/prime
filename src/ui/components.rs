@@ -1,10 +1,11 @@
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget::Tree,
 };
 use iced::widget::image::Handle;
-use iced::widget::{Column, Row, button, column, container, image, row, space, text};
+use iced::widget::{Column, Row, button, column, container, image, responsive, row, space, text};
 use iced::{
     Color, ContentFit, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector,
     alignment,
@@ -471,20 +472,29 @@ pub(super) fn loading_line(label: &'static str, frame: usize) -> Element<'static
         .into()
 }
 
+/// A one-line item name that shrinks to fit the width its card really has, and is clipped to the
+/// card if it still doesn't fit at the smallest size.
 pub(super) fn compact_item_name<'a>(
-    name: &'a str,
+    name: impl Into<Cow<'a, str>>,
     base_size: u32,
     height: f32,
-    available_width: f32,
 ) -> Element<'a, Message> {
-    text(name)
-        .size(compact_item_name_size(name, base_size, available_width))
-        .width(Length::Fill)
-        .height(height)
-        .align_x(alignment::Horizontal::Left)
-        .align_y(alignment::Vertical::Center)
-        .wrapping(iced::widget::text::Wrapping::None)
-        .into()
+    let name: Cow<'a, str> = name.into();
+
+    container(responsive(move |size| {
+        text(name.clone())
+            .size(compact_item_name_size(&name, base_size, size.width))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Left)
+            .align_y(alignment::Vertical::Center)
+            .wrapping(iced::widget::text::Wrapping::None)
+            .into()
+    }))
+    .width(Length::Fill)
+    .height(height)
+    .clip(true)
+    .into()
 }
 
 fn compact_item_name_size(name: &str, base_size: u32, available_width: f32) -> u32 {

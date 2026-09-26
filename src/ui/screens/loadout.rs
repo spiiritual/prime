@@ -23,11 +23,12 @@ const LOADOUT_CATEGORIES: [&str; 8] = [
 const LOADOUT_CARD_WIDTH: u32 = 220;
 const LOADOUT_CARD_HEIGHT: u32 = 264;
 const LOADOUT_IMAGE_HEIGHT: f32 = 148.0;
+const LOADOUT_WEAPON_NAME_HEIGHT: f32 = 20.0;
+const LOADOUT_SKIN_LABEL_HEIGHT: f32 = 16.0;
 const BATTLE_PASS_REWARD_CARD_WIDTH: u32 = 174;
 const BATTLE_PASS_REWARD_CARD_HEIGHT: u32 = 214;
 const BATTLE_PASS_REWARD_IMAGE_HEIGHT: f32 = 92.0;
 const BATTLE_PASS_REWARD_NAME_HEIGHT: f32 = 17.0;
-const BATTLE_PASS_REWARD_NAME_WIDTH: f32 = BATTLE_PASS_REWARD_CARD_WIDTH as f32 - 30.0;
 const BATTLE_PASS_PROGRESS_BAR_HEIGHT: f32 = 30.0;
 const BATTLE_PASS_SECTION_DIVIDER_HEIGHT: f32 = 1.0;
 
@@ -220,8 +221,8 @@ fn loadout_card(gun: &LoadoutGunDisplay) -> Element<'_, Message> {
                     gun.skin.viewer_icon.as_deref(),
                 )
             ),
-            text(&gun.weapon.display_name).size(15).width(Length::Fill),
-            text(skin_label).size(12).width(Length::Fill)
+            compact_item_name(&gun.weapon.display_name, 15, LOADOUT_WEAPON_NAME_HEIGHT),
+            compact_item_name(skin_label, 12, LOADOUT_SKIN_LABEL_HEIGHT)
         ]
         .spacing(6),
     )
@@ -421,12 +422,7 @@ fn battle_pass_reward_card(reward: &BattlePassRewardDisplay) -> Element<'_, Mess
                     reward.viewer_icon.as_deref(),
                 )
             ),
-            compact_item_name(
-                &reward.name,
-                14,
-                BATTLE_PASS_REWARD_NAME_HEIGHT,
-                BATTLE_PASS_REWARD_NAME_WIDTH
-            ),
+            compact_item_name(&reward.name, 14, BATTLE_PASS_REWARD_NAME_HEIGHT),
             text(&reward.kind).size(12).width(Length::Fill),
             text(meta).size(12).width(Length::Fill)
         ]
