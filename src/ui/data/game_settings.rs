@@ -1,12 +1,12 @@
 use time::OffsetDateTime;
 
-use super::*;
 use super::launch_flow::resolve_session_region;
 use super::session::{ApiIdentity, active_api_session};
+use super::*;
 use crate::game_settings::{
-    GameSettingsSnapshot, GameSettingsSnapshotMetadata, GameSettingsSnapshotPurpose,
-    GameSettingsSnapshotRepository, SettingsCategories, VALORANT_PLAYER_SETTINGS_TYPE,
-    ValorantSettingsDocument, merge_settings_payload, new_snapshot_id,
+    GameSettingsProfile, GameSettingsProfileMetadata, GameSettingsProfilePurpose,
+    GameSettingsProfileRepository, SettingsCategories, VALORANT_PLAYER_SETTINGS_TYPE,
+    ValorantSettingsDocument, merge_settings_payload, new_profile_id,
 };
 use crate::riot::endpoints::player_preferences_base_url_for_region;
 
@@ -16,7 +16,7 @@ pub(in crate::ui) struct SavedGameSettingsResult {
     pub(in crate::ui) session: AuthSession,
     pub(in crate::ui) launcher_session: Option<LauncherSessionBackup>,
     pub(in crate::ui) identity: ApiIdentity,
-    pub(in crate::ui) snapshot: GameSettingsSnapshotMetadata,
+    pub(in crate::ui) profile: GameSettingsProfileMetadata,
 }
 
 #[derive(Clone, Debug)]
@@ -25,21 +25,21 @@ pub(in crate::ui) struct AppliedGameSettingsResult {
     pub(in crate::ui) session: AuthSession,
     pub(in crate::ui) launcher_session: Option<LauncherSessionBackup>,
     pub(in crate::ui) identity: ApiIdentity,
-    pub(in crate::ui) source_snapshot: GameSettingsSnapshotMetadata,
-    pub(in crate::ui) backup_snapshot: GameSettingsSnapshotMetadata,
+    pub(in crate::ui) source_profile: GameSettingsProfileMetadata,
+    pub(in crate::ui) backup_profile: GameSettingsProfileMetadata,
 }
 
-pub(in crate::ui) async fn load_saved_game_settings_snapshots(
-    snapshot_dir: PathBuf,
-) -> Result<Vec<GameSettingsSnapshotMetadata>, String> {
-    GameSettingsSnapshotRepository::new(snapshot_dir)
-        .saved_metadata()
+pub(in crate::ui) async fn load_game_settings_profiles(
+    profile_dir: PathBuf,
+) -> Result<Vec<GameSettingsProfileMetadata>, String> {
+    GameSettingsProfileRepository::new(profile_dir)
+        .profile_metadata()
         .map_err(|error| error.to_string())
 }
 
-pub(in crate::ui) async fn save_game_settings_snapshot(
+pub(in crate::ui) async fn save_game_settings_profile(
     account: AccountProfile,
-    snapshot_dir: PathBuf,
+    profile_dir: PathBuf,
 ) -> Result<SavedGameSettingsResult, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
     let context = resolve_settings_context(&api, &account).await?;
@@ -48,9 +48,10 @@ pub(in crate::ui) async fn save_game_settings_snapshot(
         .settings_payload()
         .map_err(|error| error.to_string())?
         .roaming_settings_version;
-    let snapshot = GameSettingsSnapshot {
-        id: new_snapshot_id(account.id, GameSettingsSnapshotPurpose::Saved),
-        purpose: GameSettingsSnapshotPurpose::Saved,
+    let profile = GameSettingsProfile {
+        id: new_profile_id(account.id, GameSettingsProfilePurpose::Profile),
+        name: format!("{} settings", account.display_name),
+        purpose: GameSettingsProfilePurpose::Profile,
         source_account_id: account.id,
         source_display_name: account.display_name.clone(),
         source_puuid: context.identity.puuid.clone(),
@@ -59,34 +60,35 @@ pub(in crate::ui) async fn save_game_settings_snapshot(
         settings_version,
         preference: document,
     };
-    let repository = GameSettingsSnapshotRepository::new(snapshot_dir);
+    let repository = GameSettingsProfileRepository::new(profile_dir);
     repository
-        .save(&snapshot)
+        .save(&profile)
         .map_err(|error| error.to_string())?;
+    let metadata = profile.metadata().map_err(|error| error.to_string())?;
 
     Ok(SavedGameSettingsResult {
         account_id: account.id,
         session: context.session,
         launcher_session: context.launcher_session,
         identity: context.identity,
-        snapshot: snapshot.metadata(),
+        profile: metadata,
     })
 }
 
-pub(in crate::ui) async fn apply_game_settings_snapshot(
+pub(in crate::ui) async fn apply_game_settings_profile(
     account: AccountProfile,
-    snapshot_dir: PathBuf,
-    snapshot_id: Option<String>,
+    profile_dir: PathBuf,
+    profile_id: Option<String>,
 ) -> Result<AppliedGameSettingsResult, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
-    let repository = GameSettingsSnapshotRepository::new(snapshot_dir);
-    let source_snapshot = match snapshot_id {
+    let repository = GameSettingsProfileRepository::new(profile_dir);
+    let source_profile = match profile_id {
         Some(id) => repository.load(&id).map_err(|error| error.to_string())?,
         None => repository
-            .latest_saved()
+            .latest_profile()
             .map_err(|error| error.to_string())?,
     };
-    let source_payload = source_snapshot
+    let source_payload = source_profile
         .preference
         .settings_payload()
         .map_err(|error| error.to_string())?;
@@ -96,9 +98,10 @@ pub(in crate::ui) async fn apply_game_settings_snapshot(
         .settings_payload()
         .map_err(|error| error.to_string())?;
 
-    let backup_snapshot = GameSettingsSnapshot {
-        id: new_snapshot_id(account.id, GameSettingsSnapshotPurpose::Backup),
-        purpose: GameSettingsSnapshotPurpose::Backup,
+    let backup_profile = GameSettingsProfile {
+        id: new_profile_id(account.id, GameSettingsProfilePurpose::Backup),
+        name: format!("{} backup", account.display_name),
+        purpose: GameSettingsProfilePurpose::Backup,
         source_account_id: account.id,
         source_display_name: account.display_name.clone(),
         source_puuid: context.identity.puuid.clone(),
@@ -108,7 +111,10 @@ pub(in crate::ui) async fn apply_game_settings_snapshot(
         preference: target_document.clone(),
     };
     repository
-        .save(&backup_snapshot)
+        .save(&backup_profile)
+        .map_err(|error| error.to_string())?;
+    let backup_metadata = backup_profile
+        .metadata()
         .map_err(|error| error.to_string())?;
 
     merge_settings_payload(
@@ -119,10 +125,13 @@ pub(in crate::ui) async fn apply_game_settings_snapshot(
     target_document
         .replace_settings_payload(&target_payload)
         .map_err(|error| error.to_string())?;
+    let body = target_document
+        .save_body(VALORANT_PLAYER_SETTINGS_TYPE)
+        .map_err(|error| error.to_string())?;
     api.save_player_preference(
         &context.preference_base_url,
         &context.session.access_token,
-        &target_document.save_body(VALORANT_PLAYER_SETTINGS_TYPE),
+        &body,
     )
     .await
     .map_err(|error| format!("Riot rejected the settings save: {error}"))?;
@@ -132,8 +141,10 @@ pub(in crate::ui) async fn apply_game_settings_snapshot(
         session: context.session,
         launcher_session: context.launcher_session,
         identity: context.identity,
-        source_snapshot: source_snapshot.metadata(),
-        backup_snapshot: backup_snapshot.metadata(),
+        source_profile: source_profile
+            .metadata()
+            .map_err(|error| error.to_string())?,
+        backup_profile: backup_metadata,
     })
 }
 

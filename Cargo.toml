@@ -10,6 +10,7 @@ image-viewer-testing = []
 [dependencies]
 base64 = "0.22.1"
 directories = "6.0.0"
+flate2 = "1.1.5"
 iced = { version = "0.14.0", features = ["advanced", "image", "tokio"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["cookies", "json", "rustls"] }
 serde = { version = "1.0.228", features = ["derive"] }

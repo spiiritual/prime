@@ -3,6 +3,7 @@ use iced::{Color, Element, Length, Padding, Theme, alignment};
 use time::{OffsetDateTime, UtcOffset};
 
 use crate::account::{AccountId, AccountProfile, CompetitiveRank, Shard};
+use crate::game_settings::GameSettingsProfileMetadata;
 
 use crate::ui::components::{anchored_popover, compact_loading_indicator};
 use crate::ui::data::account_details::AccountAvailability;
@@ -45,45 +46,9 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     ]
     .spacing(10);
 
-    let mut content = column![controls].spacing(12).width(Length::Fill);
-
-    if !app.settings_snapshots.is_empty() {
-        let selected_snapshot = app
-            .selected_settings_snapshot
-            .as_ref()
-            .and_then(|selected| {
-                app.settings_snapshots
-                    .iter()
-                    .find(|snapshot| &snapshot.id == selected)
-                    .cloned()
-            })
-            .or_else(|| app.settings_snapshots.first().cloned());
-        let snapshot_label = selected_snapshot
-            .as_ref()
-            .map(|snapshot| {
-                format!(
-                    "Saved settings: {} from {}",
-                    last_refreshed_label(Some(snapshot.captured_at_unix)),
-                    snapshot.source_display_name
-                )
-            })
-            .unwrap_or_else(|| "Saved settings".to_string());
-
-        content = content.push(
-            row![
-                text(snapshot_label).size(13).width(Length::Fill),
-                pick_list(
-                    app.settings_snapshots.clone(),
-                    selected_snapshot,
-                    Message::GameSettingsSnapshotSelected
-                )
-                .width(260)
-            ]
-            .spacing(10)
-            .align_y(alignment::Vertical::Center),
-        );
-    }
-
+    let mut content = column![controls, settings_profiles_section(app)]
+        .spacing(12)
+        .width(Length::Fill);
     content = content.push(account_cards);
 
     if let Some(draft) = &app.pending_account {
@@ -122,6 +87,87 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     content.into()
 }
 
+fn settings_profiles_section(app: &PrimeApp) -> Element<'_, Message> {
+    let mut profiles = column![
+        text("Settings profiles").size(18),
+        text("Saved VALORANT settings profiles can be applied to any account with API access.")
+            .size(13)
+    ]
+    .spacing(8)
+    .width(Length::Fill);
+
+    if app.settings_profiles.is_empty() {
+        profiles = profiles.push(text("No saved settings profiles yet").size(13));
+    } else {
+        let selected_profile = app
+            .selected_settings_profile
+            .as_ref()
+            .and_then(|selected| {
+                app.settings_profiles
+                    .iter()
+                    .find(|profile| &profile.id == selected)
+                    .cloned()
+            })
+            .or_else(|| app.settings_profiles.first().cloned());
+
+        profiles = profiles.push(
+            row![
+                text("Profile to apply").size(13).width(Length::Fill),
+                pick_list(
+                    app.settings_profiles.clone(),
+                    selected_profile,
+                    Message::GameSettingsProfileSelected
+                )
+                .width(320)
+            ]
+            .spacing(10)
+            .align_y(alignment::Vertical::Center),
+        );
+
+        for profile in &app.settings_profiles {
+            profiles = profiles.push(settings_profile_card(profile));
+        }
+    }
+
+    container(profiles)
+        .padding(14)
+        .width(Length::Fill)
+        .style(iced::widget::container::bordered_box)
+        .into()
+}
+
+fn settings_profile_card(profile: &GameSettingsProfileMetadata) -> Element<'_, Message> {
+    let version = profile
+        .settings_version
+        .map(|version| format!("Version {version}"))
+        .unwrap_or_else(|| "Version unknown".to_string());
+    let details = format!(
+        "{} | Source: {} | Saved: {}",
+        version,
+        profile.source_display_name,
+        last_refreshed_label(Some(profile.captured_at_unix))
+    );
+
+    container(
+        column![
+            row![
+                text(&profile.name).size(15).width(Length::Fill),
+                button("Select").on_press(Message::GameSettingsProfileSelected(profile.clone()))
+            ]
+            .spacing(10)
+            .align_y(alignment::Vertical::Center),
+            text(details).size(13),
+            text(profile.summary.categories_label()).size(13),
+            text(format!("Includes: {}", profile.summary.examples_label())).size(13)
+        ]
+        .spacing(6),
+    )
+    .padding(10)
+    .width(Length::Fill)
+    .style(iced::widget::container::bordered_box)
+    .into()
+}
+
 fn add_account_button(app: &PrimeApp) -> Element<'static, Message> {
     let is_capturing_new_account =
         app.launcher_capture_kind == Some(LauncherCaptureKind::NewAccount);
@@ -140,9 +186,10 @@ fn add_account_button(app: &PrimeApp) -> Element<'static, Message> {
     let button: Element<'static, Message> = button(content)
         .on_press_maybe((!app.launcher_capture_in_progress).then_some(Message::AddAccount))
         .into();
-    let tip = container(text("Adds an account by opening Riot Client for a login capture").size(13))
-        .padding([6, 8])
-        .style(iced::widget::container::bordered_box);
+    let tip =
+        container(text("Adds an account by opening Riot Client for a login capture").size(13))
+            .padding([6, 8])
+            .style(iced::widget::container::bordered_box);
 
     tooltip(button, tip, tooltip::Position::Bottom).into()
 }
@@ -485,17 +532,17 @@ fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Me
             button("Refresh profile")
                 .width(Length::Fill)
                 .on_press(Message::RefreshProfileIdentity(account_id)),
-            button("Save settings").width(Length::Fill).on_press_maybe(
-                (!settings_busy && account_has_api_access)
-                    .then_some(Message::SaveAccountSettings(account_id))
-            ),
-            button("Apply saved settings")
+            button("Save VALORANT settings")
                 .width(Length::Fill)
                 .on_press_maybe(
-                    (!settings_busy
-                        && account_has_api_access
-                        && !app.settings_snapshots.is_empty())
-                    .then_some(Message::ApplySavedSettings(account_id))
+                    (!settings_busy && account_has_api_access)
+                        .then_some(Message::SaveAccountSettings(account_id))
+                ),
+            button("Apply settings profile")
+                .width(Length::Fill)
+                .on_press_maybe(
+                    (!settings_busy && account_has_api_access && !app.settings_profiles.is_empty())
+                        .then_some(Message::ApplySavedSettings(account_id))
                 ),
             button("Export account")
                 .width(Length::Fill)

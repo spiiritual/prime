@@ -100,11 +100,11 @@ impl AccountRepository {
             .unwrap_or_else(|| PathBuf::from("launcher-backups"))
     }
 
-    pub fn settings_snapshots_dir(&self) -> PathBuf {
+    pub fn settings_profiles_dir(&self) -> PathBuf {
         self.path
             .parent()
-            .map(|parent| parent.join("settings-snapshots"))
-            .unwrap_or_else(|| PathBuf::from("settings-snapshots"))
+            .map(|parent| parent.join("settings-profiles"))
+            .unwrap_or_else(|| PathBuf::from("settings-profiles"))
     }
 
     pub fn load(&self) -> Result<StoredState, StorageError> {

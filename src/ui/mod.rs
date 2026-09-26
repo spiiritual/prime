@@ -18,7 +18,7 @@ use crate::image_cache::ImageCache;
 use crate::storage::{AccountRepository, StoredState};
 use crate::updater::AvailableUpdate;
 
-use crate::game_settings::GameSettingsSnapshotMetadata;
+use crate::game_settings::GameSettingsProfileMetadata;
 use data::account_details::{
     AccountActivityCheck, AccountAvailability, AccountAvailabilityRefresh, AccountRanksResult,
     RefreshedProfileIdentity,
@@ -200,8 +200,8 @@ struct PrimeApp {
     account_ranks_loading: bool,
     account_availability: HashMap<AccountId, AccountAvailability>,
     account_availability_loading: bool,
-    settings_snapshots: Vec<GameSettingsSnapshotMetadata>,
-    selected_settings_snapshot: Option<String>,
+    settings_profiles: Vec<GameSettingsProfileMetadata>,
+    selected_settings_profile: Option<String>,
     settings_saving_account: Option<AccountId>,
     settings_applying_account: Option<AccountId>,
     launcher_capture_in_progress: bool,
@@ -498,8 +498,8 @@ enum Message {
     AccountRanksLoaded(AccountRanksResult),
     AccountAvailabilityTimerTick(iced::time::Instant),
     AccountAvailabilitiesLoaded(AccountAvailabilityRefresh),
-    GameSettingsSnapshotsLoaded(Result<Vec<GameSettingsSnapshotMetadata>, String>),
-    GameSettingsSnapshotSelected(GameSettingsSnapshotMetadata),
+    GameSettingsProfilesLoaded(Result<Vec<GameSettingsProfileMetadata>, String>),
+    GameSettingsProfileSelected(GameSettingsProfileMetadata),
     SaveAccountSettings(AccountId),
     AccountSettingsSaved(Result<SavedGameSettingsResult, String>),
     ApplySavedSettings(AccountId),
