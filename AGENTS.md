@@ -1,53 +1,108 @@
 # prime
 
-Rust + Iced desktop account manager for VALORANT.
+Windows desktop account manager for VALORANT, written in Rust (edition 2024) with Iced 0.14. The Cargo
+package and the app are both named `prime`.
 
-Project metadata:
-
-- Cargo package and app name are `prime`.
-- Product edition metadata is `2026`.
-- Rust source uses the latest Cargo-supported Rust edition in this toolchain; do not set Cargo's `package.edition` to an unsupported value just to match the product edition.
-
-Current scope:
-
-- Manage local account profiles with region/shard metadata.
-- Launch VALORANT through `RiotClientServices.exe --launch-product=valorant --launch-patchline=live`.
-- Capture and restore per-account Riot Client launcher sessions from the local Riot Client `Data` folder after a remembered login.
-- Require a captured launcher session before launching a selected account, preventing accidental launches on Riot Client's previous session.
-- Add accounts through a guarded login-capture flow that clears stale Riot Client session data, waits for the remembered login, and then asks for the display name.
-- Refresh a profile's PUUID, Riot ID, and shard from a stored API token or captured launcher session.
-- Import Riot web redirect tokens for API access from Settings as an advanced fallback.
-- Re-authenticate API requests from a captured remembered launcher session when possible.
-- Cache refreshed Riot API sessions and entitlement tokens after successful shop/loadout checks.
-- Resolve the active shard through Riot Geo when an ID token is available, reducing storefront 404s from stale manual shard choices.
-- Query the unofficial player store and player loadout endpoints when a valid token, entitlement token, PUUID, shard, and client version are available.
-- Use the account XP endpoint for account level when loadout identity reports zero.
-- Resolve store/loadout skin UUIDs and store currency IDs to display names through the public Valorant content API.
-- Display featured bundles, daily offers, and Night Market offers with resolved art, rarity tinting, and prices where available.
-- Preserve distinct featured bundle entries by store bundle ID, even when multiple entries resolve to the same public content bundle asset.
-- Cache downloaded skin and weapon images locally, show the cache size in Settings, and allow clearing the cache.
-- Resolve and order loadout weapon IDs so equipped skins are shown by weapon category like the in-game collection, including newer weapons such as Bandit as a sidearm and Outlaw as a sniper rifle.
-- Fetch the current Riot client version automatically from the public Valorant version endpoint.
-- Load Shop and Loadout automatically when the selected tab opens; Loadout should not show a manual refresh button or account level indicator.
-- Launch VALORANT from the Accounts tab after restoring the selected account's captured launcher session; do not add a global launch button to every tab header.
-
-Notes:
-
-- Riot's direct username/password auth is intentionally isolated because the currently documented flow is prone to captcha and anti-bot breakage.
-- Store and loadout requests use the undocumented client endpoints described by <https://valapidocs.techchrism.me/>.
-- Launcher switching follows the same broad approach as Assist: preserve Riot Client remembered-login data per account, restore the selected account's data, then launch VALORANT through Riot Client.
-- Settings cloning (saving an account's VALORANT settings and applying them to another account) is behind the `settings-cloning` Cargo feature and off by default. Run it with `cargo run --features settings-cloning`.
-- This app should not store Riot passwords. The current token import flow stores only session tokens in the local profile JSON and redacts them from debug output.
-- Keep direct Rust dependencies current with crates.io when touching dependency metadata, then run Cargo to update the lockfile.
-
-Run:
+## Commands
 
 ```powershell
-cargo run
+cargo run                                  # run the app
+cargo test                                 # run the tests
+cargo clippy --all-targets                 # lint; keep it clean
+cargo run --features settings-cloning      # include settings cloning
+.\scripts\release.ps1 -UseGeneratedNotes -Publish   # bump, test, package with Velopack, tag, publish
 ```
 
-Test:
+## What the app does
 
-```powershell
-cargo test
-```
+Accounts tab:
+
+- Keeps account profiles (display name, Riot ID, PUUID, region and shard) in `accounts.json`.
+- Adds accounts by capturing Riot Client's remembered login. "Add new account" clears the live login,
+  waits for the sign-in, then asks for a display name. "Add current account" captures whoever is signed in
+  now. "Re-capture login" replaces a saved account's captured login.
+- Launches VALORANT for the selected account: closes Riot Client and VALORANT, restores that account's
+  saved Riot Client `Data`, then runs `RiotClientServices.exe --launch-product=valorant --launch-patchline=live`.
+  Launch needs a captured login, and warns first when the game is running or the account is in a match,
+  agent select or a lobby.
+- Shows each account's rank, level and penalties, and refreshes its PUUID, Riot ID and shard on request.
+- Exports and imports an account, with its captured login, as text. Exports are copied to the clipboard
+  without entering Windows clipboard history.
+
+Shop tab: featured bundles (each with its own countdown), daily offers, Night Market and accessories, with
+art, rarity colours and discounts. The wallet balance shows in the header.
+
+Loadout tab: equipped gun skins in the in-game collection order, and a Battle Pass sub-tab with tier
+progress and rewards.
+
+Settings tab: Riot Client path, client version (fetched at startup), image cache size and clearing, app
+updates, and a Riot redirect-token import as an advanced fallback for API access.
+
+Updates: Velopack checks the GitHub releases of `spiiritual/prime`. `PRIME_UPDATE_SOURCE` and
+`PRIME_UPDATE_CHANNEL` override the source and channel.
+
+## Feature flags
+
+Both are off by default, so release builds leave them out.
+
+- `settings-cloning`: save an account's VALORANT settings as a profile and apply it to another account.
+- `image-viewer-testing`: click an image to open it full size.
+
+## Code layout
+
+Dependencies run one way: `src/riot` → `src/ui/data` → `src/ui/app.rs` → views.
+
+- `src/riot/`: Riot HTTP client, endpoints, response models, the public content API (`content.rs`),
+  redirect-token parsing (`auth.rs`), and launcher session capture and restore (`launcher_session/`).
+- `src/ui/data/`: async loaders and view models for Shop, Loadout, Battle Pass, account details, the
+  launch flow, images and settings profiles.
+- `src/ui/app.rs`: how `PrimeApp` handles each `Message`. `src/ui/mod.rs` holds the state, `Message` and
+  the subscription.
+- Views: `src/ui/screens/*` (one per tab), `src/ui/shell.rs` (header, status bar, dialogs) and
+  `src/ui/components.rs` (shared widgets).
+- Outside the UI: `account.rs`, `storage.rs`, `launch.rs` (Riot Client processes), `account_transfer.rs`,
+  `game_settings.rs`, `image_cache.rs`, `updater.rs` and `secret_clipboard.rs`.
+
+Local data: `%APPDATA%\spiiritual\prime\config\` holds `accounts.json`, `launcher-backups\` and
+`settings-profiles\`. Downloaded images go in `%LOCALAPPDATA%\spiiritual\prime\cache\images\`.
+
+## Rules
+
+- Never store Riot passwords. There is no username/password sign-in, because Riot's direct auth flow
+  breaks on captcha and anti-bot checks. Only session tokens are stored, and `Debug` output redacts them.
+- Before using or saving a session for an account, check that it belongs to that account's PUUID.
+- Launch belongs on the Accounts tab only. Don't add a launch button to every tab header.
+- Shop and Loadout load when their tab opens. Loadout has no refresh button or account level indicator.
+- Keep direct dependencies current with crates.io when touching dependency metadata, then let Cargo
+  update the lockfile.
+
+## Riot API notes
+
+- Store, wallet, loadout, MMR, penalties, contracts, match, pregame and party requests use the
+  undocumented client endpoints described at <https://valapidocs.techchrism.me/>.
+- Launcher switching follows the same approach as Assist: keep Riot Client's remembered-login data per
+  account and restore it before launching.
+- Requests re-authenticate from the captured launcher session when possible. Refreshed sessions and
+  entitlement tokens are saved back to the account.
+- Resolve the shard through Riot Geo when an ID token is available. A stale shard gives storefront 404s.
+- The client version comes from the public Valorant version endpoint. Shop and Loadout need it.
+- Skin, bundle, currency and weapon names come from the public content API at valorant-api.com.
+- Featured bundles are told apart by store bundle ID, even when two resolve to the same content bundle.
+- Account level comes from the account XP endpoint when the loadout reports zero.
+- Newer weapons need explicit categories: Bandit is a sidearm and Outlaw is a sniper rifle.
+
+## Tests
+
+- UI behaviour tests live in `src/ui/tests.rs`. Other modules have their own unit tests.
+- `app.update` returns lazy `Task`s. Tests assert on state and `task.units()` and never run a task.
+- Build apps with `test_app(tempdir)`, and point `app.image_cache` at a tempdir when a test could touch
+  it, so tests never touch the real `accounts.json`, Riot Client data or image cache.
+
+## Trying the app by hand
+
+`cargo run` uses the real `accounts.json` and the real Riot Client data. Ask before doing any of these:
+
+- Launch VALORANT, Add new account, Add current account and Re-capture login close Riot Client and
+  VALORANT and replace the live login.
+- Apply settings profile writes VALORANT settings to a Riot account.
+- Delete account, Delete image cache and Download and restart can't be undone.
