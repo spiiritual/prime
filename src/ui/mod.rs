@@ -126,6 +126,14 @@ fn loading_indicator_active(app: &PrimeApp) -> bool {
         || loading_status_active(&app.status)
 }
 
+/// The status bar's spinner marks a progress message, not unrelated work in the background.
+fn status_spinner_active(app: &PrimeApp) -> bool {
+    !status_message_is_error(&app.status)
+        && (loading_status_active(&app.status)
+            || app.launching_account.is_some()
+            || app.launcher_capture_in_progress)
+}
+
 fn loading_status_active(status: &str) -> bool {
     status.starts_with("Loading ")
         || status.starts_with("Refreshing ")

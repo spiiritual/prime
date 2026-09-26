@@ -12,7 +12,7 @@ use super::{
     AccountExportOutput, ImageViewerImage, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, Tab,
     UnavailableLaunchWarning, screens,
 };
-use super::{loading_indicator_active, status_bar_visible};
+use super::{status_bar_visible, status_spinner_active};
 
 const SIDEBAR_WIDTH: f32 = 210.0;
 const SIDEBAR_PADDING: u16 = 16;
@@ -292,7 +292,7 @@ impl PrimeApp {
     }
 
     fn status_bar(&self) -> Element<'_, Message> {
-        let status: Element<_> = if loading_indicator_active(self) {
+        let status: Element<_> = if status_spinner_active(self) {
             row![
                 loading_indicator(self.loading_frame),
                 text(&self.status).width(Length::Fill)

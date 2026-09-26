@@ -31,7 +31,7 @@ use super::data::shop::{
 };
 use super::{
     Message, PendingSettingsApply, PrimeApp, loading_status_active, masked_account_export_payload,
-    status_bar_visible, status_message_is_error, status_visible_at,
+    status_bar_visible, status_message_is_error, status_spinner_active, status_visible_at,
 };
 use crate::account::{
     AccountId, AccountPenalty, AccountPenaltyDuration, AccountPenaltyStatus, AccountProfile,
@@ -1183,6 +1183,29 @@ fn loading_status_detection_still_tracks_hidden_progress_messages() {
     assert!(!loading_status_active(
         "Failed to load accounts: disk error"
     ));
+}
+
+#[test]
+fn status_spinner_shows_only_beside_progress() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.account_availability_loading = true;
+
+    app.status = "Loaded account details for 2 account(s)".to_string();
+    assert!(!status_spinner_active(&app));
+
+    app.status = "Could not load shop: offline".to_string();
+    assert!(!status_spinner_active(&app));
+
+    app.status = "Loading shop".to_string();
+    assert!(status_spinner_active(&app));
+
+    app.launcher_capture_in_progress = true;
+    app.status = "Sign in to Riot Client and tick Stay signed in".to_string();
+    assert!(status_spinner_active(&app));
+
+    app.status = "Signed in as a different Riot account".to_string();
+    assert!(!status_spinner_active(&app));
 }
 
 #[test]
