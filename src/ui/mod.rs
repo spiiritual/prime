@@ -32,6 +32,8 @@ use data::shop::{StoreSummary, StorefrontResult};
 const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
 const LAUNCH_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const ACCOUNT_AVAILABILITY_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+const STATUS_FLASH_DURATION: Duration = Duration::from_secs(4);
+const STATUS_FLASH_TICK_INTERVAL: Duration = Duration::from_millis(500);
 const MAIN_PANEL_SCROLLABLE_ID: &str = "main-panel-scrollable";
 
 fn image_viewer_enabled() -> bool {
@@ -73,6 +75,11 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
     {
         subscriptions
             .push(iced::time::every(SHOP_RESET_CHECK_INTERVAL).map(Message::ShopTimerTick));
+    }
+
+    if status_flash_active(app) {
+        subscriptions
+            .push(iced::time::every(STATUS_FLASH_TICK_INTERVAL).map(Message::StatusTimerTick));
     }
 
     if loading_indicator_active(app) {
@@ -132,8 +139,27 @@ fn loading_status_active(status: &str) -> bool {
         || status.starts_with("Preparing to restart")
 }
 
-fn status_bar_visible(status: &str) -> bool {
-    status_message_is_error(status)
+/// Errors stay on screen; other updates show briefly so actions still get feedback without
+/// cluttering the window, and launch or login capture progress stays visible while it runs.
+fn status_bar_visible(app: &PrimeApp) -> bool {
+    status_visible_at(&app.status, app.status_changed_at, app.now)
+        || (!app.status.trim().is_empty()
+            && (app.launching_account.is_some() || app.launcher_capture_in_progress))
+}
+
+fn status_visible_at(
+    status: &str,
+    changed_at: iced::time::Instant,
+    now: iced::time::Instant,
+) -> bool {
+    !status.trim().is_empty()
+        && (status_message_is_error(status)
+            || now.saturating_duration_since(changed_at) < STATUS_FLASH_DURATION)
+}
+
+fn status_flash_active(app: &PrimeApp) -> bool {
+    !status_message_is_error(&app.status)
+        && status_visible_at(&app.status, app.status_changed_at, app.now)
 }
 
 fn status_message_is_error(status: &str) -> bool {
@@ -217,6 +243,7 @@ struct PrimeApp {
     launching_account: Option<AccountId>,
     launch_progress_checking: bool,
     window_minimized: bool,
+    status_changed_at: iced::time::Instant,
     app_update_status: AppUpdateStatus,
     image_cache_size_bytes: u64,
     loading_frame: usize,
@@ -517,6 +544,7 @@ enum Message {
     AccountRanksLoaded(AccountRanksResult),
     AccountAvailabilityTimerTick(iced::time::Instant),
     WindowResized(iced::Size),
+    StatusTimerTick(iced::time::Instant),
     AccountAvailabilitiesLoaded(AccountAvailabilityRefresh),
     GameSettingsProfilesLoaded(Result<Vec<GameSettingsProfileMetadata>, String>),
     GameSettingsProfileSelected(GameSettingsProfileMetadata),

@@ -209,7 +209,7 @@ impl PrimeApp {
         ]
         .spacing(12);
 
-        if status_bar_visible(&self.status) {
+        if status_bar_visible(self) {
             panel = panel.push(self.status_bar());
         }
 

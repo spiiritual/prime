@@ -29,6 +29,7 @@ use super::data::shop::{
 };
 use super::{
     Message, PrimeApp, loading_status_active, masked_account_export_payload, status_bar_visible,
+    status_message_is_error, status_visible_at,
 };
 use crate::account::{
     AccountId, AccountPenalty, AccountPenaltyDuration, AccountPenaltyStatus, AccountProfile,
@@ -1014,22 +1015,56 @@ fn loadout_weapon_categories_come_from_the_catalog() {
 }
 
 #[test]
-fn status_bar_only_shows_error_like_messages() {
-    assert!(!status_bar_visible("Loaded 2 account profile(s)"));
-    assert!(!status_bar_visible("Loading shop"));
-    assert!(!status_bar_visible("Saved settings"));
+fn status_bar_keeps_only_error_like_messages_on_screen() {
+    let changed_at = iced::time::Instant::now();
+    let later = changed_at + Duration::from_secs(10);
+    let visible_later = |status: &str| status_visible_at(status, changed_at, later);
 
-    assert!(status_bar_visible("Failed to load accounts: disk error"));
-    assert!(status_bar_visible(
+    assert!(!visible_later("Loaded 2 account profile(s)"));
+    assert!(!visible_later("Loading shop"));
+    assert!(!visible_later("Saved settings"));
+
+    assert!(visible_later("Failed to load accounts: disk error"));
+    assert!(visible_later(
         "Could not import redirect token: invalid URL"
     ));
-    assert!(status_bar_visible(
+    assert!(visible_later(
         "Store loaded, but profile update failed: missing profile"
     ));
-    assert!(status_bar_visible(
-        "Select an account before opening the shop"
+    assert!(visible_later("Select an account before opening the shop"));
+    assert!(visible_later("display name cannot be empty"));
+}
+
+#[test]
+fn status_bar_briefly_shows_successful_actions() {
+    let changed_at = iced::time::Instant::now();
+
+    assert!(status_visible_at("Saved settings", changed_at, changed_at));
+    assert!(status_visible_at(
+        "Saved settings",
+        changed_at,
+        changed_at + Duration::from_secs(3)
     ));
-    assert!(status_bar_visible("display name cannot be empty"));
+    assert!(!status_visible_at(
+        "Saved settings",
+        changed_at,
+        changed_at + Duration::from_secs(4)
+    ));
+    assert!(!status_visible_at("", changed_at, changed_at));
+}
+
+#[test]
+fn changing_the_status_restarts_its_display_time() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.status_changed_at = iced::time::Instant::now() - Duration::from_secs(60);
+    app.now = iced::time::Instant::now();
+    assert!(!status_bar_visible(&app));
+
+    let _ = app.update(Message::SaveSettings);
+
+    assert_eq!(app.status, "Saved settings");
+    assert!(status_bar_visible(&app));
 }
 
 #[test]
@@ -2068,7 +2103,7 @@ fn duplicate_current_account_capture_updates_existing_profile_without_confirmati
             .starts_with("Duplicate account: Prime did not add a new profile because this Riot account is already in Prime; updated and selected Main")
     );
     assert!(!app.status.starts_with("Loading account details"));
-    assert!(status_bar_visible(&app.status));
+    assert!(status_message_is_error(&app.status));
 }
 
 #[test]

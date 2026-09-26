@@ -92,6 +92,7 @@ impl PrimeApp {
                 launching_account: None,
                 launch_progress_checking: false,
                 window_minimized: false,
+                status_changed_at: iced::time::Instant::now(),
                 app_update_status: AppUpdateStatus::Checking,
                 image_cache_size_bytes: 0,
                 loading_frame: 0,
@@ -121,6 +122,17 @@ impl PrimeApp {
     }
 
     pub(super) fn update(&mut self, message: Message) -> Task<Message> {
+        let previous_status = self.status.clone();
+        let task = self.handle_message(message);
+
+        if self.status != previous_status {
+            self.status_changed_at = iced::time::Instant::now();
+        }
+
+        task
+    }
+
+    fn handle_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Loaded(result) => {
                 match result {
@@ -969,6 +981,10 @@ impl PrimeApp {
                 }
 
                 self.fetch_account_availabilities_task()
+            }
+            Message::StatusTimerTick(now) => {
+                self.now = now;
+                Task::none()
             }
             Message::WindowResized(size) => {
                 // Windows reports a minimized window as resized to zero.
