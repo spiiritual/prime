@@ -260,6 +260,7 @@ struct PrimeApp {
     status_changed_at: iced::time::Instant,
     app_update_status: AppUpdateStatus,
     image_cache_size_bytes: u64,
+    image_cache_clearing: bool,
     loading_frame: usize,
     now: iced::time::Instant,
 }

@@ -21,7 +21,8 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
             "Image cache folder: {}",
             app.image_cache.path().display()
         )),
-        button("Delete image cache").on_press(Message::ClearImageCache),
+        button("Delete image cache")
+            .on_press_maybe((!app.image_cache_clearing).then_some(Message::ClearImageCache)),
         app_update_controls(app),
         token_import_controls(app)
     ]

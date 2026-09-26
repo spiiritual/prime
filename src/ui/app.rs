@@ -101,6 +101,7 @@ impl PrimeApp {
                 status_changed_at: iced::time::Instant::now(),
                 app_update_status: AppUpdateStatus::Checking,
                 image_cache_size_bytes: 0,
+                image_cache_clearing: false,
                 loading_frame: 0,
                 now: iced::time::Instant::now(),
             },
@@ -1903,7 +1904,12 @@ impl PrimeApp {
     }
 
     fn clear_image_cache(&mut self) -> Task<Message> {
+        if self.image_cache_clearing {
+            return Task::none();
+        }
+
         let cache = self.image_cache.clone();
+        self.image_cache_clearing = true;
         self.set_status("Clearing image cache");
         Task::perform(
             async move { cache.clear().map_err(|error| error.to_string()) },
@@ -1912,6 +1918,11 @@ impl PrimeApp {
     }
 
     fn handle_image_cache_cleared(&mut self, result: Result<(), String>) -> Task<Message> {
+        self.image_cache_clearing = false;
+        // Shop and Loadout art points at cached files, some of which are now gone; they reload
+        // with fresh downloads when opened.
+        self.clear_selected_account_views();
+
         match result {
             Ok(()) => {
                 self.image_cache_size_bytes = 0;

@@ -2996,6 +2996,35 @@ fn an_old_loadout_reply_does_not_end_the_newer_load_for_the_same_account() {
 }
 
 #[test]
+fn clearing_the_image_cache_drops_shop_and_loadout_that_point_into_it() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.store_summary = Some(empty_store_summary());
+    app.loadout_summary = Some(LoadoutSummary::without_loadout("old".to_string(), None));
+
+    let _ = app.update(Message::ImageCacheCleared(Ok(())));
+
+    assert_eq!(app.store_summary, None);
+    assert_eq!(app.loadout_summary, None);
+}
+
+#[test]
+fn the_image_cache_is_not_cleared_twice_at_once() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.image_cache = crate::image_cache::ImageCache::new(dir.path().join("images"));
+
+    let first = app.update(Message::ClearImageCache);
+    let second = app.update(Message::ClearImageCache);
+    let _ = app.update(Message::ImageCacheCleared(Ok(())));
+    let after = app.update(Message::ClearImageCache);
+
+    assert_eq!(first.units(), 1);
+    assert_eq!(second.units(), 0);
+    assert_eq!(after.units(), 1);
+}
+
+#[test]
 fn development_builds_do_not_report_update_checks_as_failed() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
