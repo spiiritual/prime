@@ -84,7 +84,7 @@ impl PrimeApp {
                 store_error: None,
                 loadout_error: None,
                 next_request_id: 0,
-                profile_identity_refreshing_account: None,
+                profile_identity_refreshing: Default::default(),
                 account_ranks_loading: false,
                 account_details_loaded_at: None,
                 account_availability: Default::default(),
@@ -935,15 +935,17 @@ impl PrimeApp {
 
                 let summary = account.summary();
                 self.close_account_surfaces();
-                self.profile_identity_refreshing_account = Some(account_id);
                 self.set_status(format!("Refreshing Riot profile identity for {summary}"));
-                Task::perform(
-                    fetch_profile_identity(account),
-                    Message::ProfileIdentityLoaded,
-                )
+                if !self.profile_identity_refreshing.insert(account_id) {
+                    return Task::none();
+                }
+
+                Task::perform(fetch_profile_identity(account), move |result| {
+                    Message::ProfileIdentityLoaded(account_id, result)
+                })
             }
-            Message::ProfileIdentityLoaded(result) => {
-                self.profile_identity_refreshing_account = None;
+            Message::ProfileIdentityLoaded(account_id, result) => {
+                self.profile_identity_refreshing.remove(&account_id);
 
                 match result {
                     Ok(identity) => {

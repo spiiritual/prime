@@ -6,7 +6,7 @@ mod shell;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -109,7 +109,7 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
 fn loading_indicator_active(app: &PrimeApp) -> bool {
     app.store_request.is_some()
         || app.loadout_request.is_some()
-        || app.profile_identity_refreshing_account.is_some()
+        || !app.profile_identity_refreshing.is_empty()
         || app.account_ranks_loading
         || app.account_availability_loading
         || app.launcher_capture_in_progress
@@ -239,7 +239,8 @@ struct PrimeApp {
     store_error: Option<String>,
     loadout_error: Option<String>,
     next_request_id: u64,
-    profile_identity_refreshing_account: Option<AccountId>,
+    /// Accounts whose Riot profile refresh is running.
+    profile_identity_refreshing: HashSet<AccountId>,
     account_ranks_loading: bool,
     /// When the last all-account details and availability loads started, so reopening the
     /// Accounts tab doesn't refetch everything each time.
@@ -629,7 +630,7 @@ enum Message {
         Result<crate::riot::launcher_session::CapturedLauncherSession, String>,
     ),
     RefreshProfileIdentity(AccountId),
-    ProfileIdentityLoaded(Result<RefreshedProfileIdentity, String>),
+    ProfileIdentityLoaded(AccountId, Result<RefreshedProfileIdentity, String>),
     /// Rank, level and penalty results. `announce` is false for follow-up refreshes of one
     /// account, whose results only update the cards.
     AccountRanksLoaded {

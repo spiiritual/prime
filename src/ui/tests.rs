@@ -3060,18 +3060,47 @@ fn refresh_profile_result_is_not_replaced_by_a_details_reload() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account) = accounts_tab_app(dir.path());
 
-    let _ = app.update(Message::ProfileIdentityLoaded(Ok(
-        super::data::account_details::RefreshedProfileIdentity {
+    let _ = app.update(Message::ProfileIdentityLoaded(
+        account.id,
+        Ok(super::data::account_details::RefreshedProfileIdentity {
             account_id: account.id,
             session: AuthSession::new("access", None, None, "Bearer", Some(3600), 100),
             launcher_session: None,
             puuid: "puuid-a".to_string(),
             game_name: "Player".to_string(),
             tag_line: "NA1".to_string(),
-        },
-    )));
+        }),
+    ));
 
     assert!(app.status.starts_with("Refreshed "), "{}", app.status);
+}
+
+#[test]
+fn profile_refreshes_are_tracked_per_account() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, main, alt) = two_account_app(dir.path());
+
+    let _ = app.update(Message::RefreshProfileIdentity(main.id));
+    let _ = app.update(Message::RefreshProfileIdentity(alt.id));
+    let _ = app.update(Message::ProfileIdentityLoaded(
+        main.id,
+        Err("offline".to_string()),
+    ));
+
+    assert!(!app.profile_identity_refreshing.contains(&main.id));
+    assert!(app.profile_identity_refreshing.contains(&alt.id));
+}
+
+#[test]
+fn a_profile_refresh_is_not_started_twice() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, main, _) = two_account_app(dir.path());
+    let _ = app.update(Message::RefreshProfileIdentity(main.id));
+
+    let task = app.update(Message::RefreshProfileIdentity(main.id));
+
+    assert_eq!(task.units(), 0);
+    assert!(app.profile_identity_refreshing.contains(&main.id));
 }
 
 #[test]

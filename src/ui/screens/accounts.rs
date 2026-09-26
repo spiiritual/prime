@@ -532,7 +532,7 @@ fn penalty_indicator(account: &AccountProfile) -> Option<Element<'static, Messag
 }
 
 fn last_refreshed_row<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, Message> {
-    if app.profile_identity_refreshing_account == Some(account.id) {
+    if app.profile_identity_refreshing.contains(&account.id) {
         return row![
             compact_loading_indicator(app.loading_frame),
             text("Last refreshed: Refreshing...").size(13)
@@ -619,7 +619,10 @@ fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Me
                 ),
             button("Refresh profile")
                 .width(Length::Fill)
-                .on_press(Message::RefreshProfileIdentity(account_id)),
+                .on_press_maybe(
+                    (!app.profile_identity_refreshing.contains(&account_id))
+                        .then_some(Message::RefreshProfileIdentity(account_id))
+                ),
             button("Save VALORANT settings")
                 .width(Length::Fill)
                 .on_press_maybe(
