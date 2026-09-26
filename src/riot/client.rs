@@ -89,7 +89,6 @@ impl std::fmt::Debug for RefreshTokenReauth {
 impl RiotApi {
     pub fn new() -> Result<Self, RiotApiError> {
         let client = reqwest::Client::builder()
-            .cookie_store(true)
             .timeout(HTTP_TIMEOUT)
             .user_agent(USER_AGENT_VALUE)
             .build()?;
