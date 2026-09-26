@@ -181,6 +181,7 @@ fn status_message_is_error(status: &str) -> bool {
         "Duplicate account",
         "Profile identity rejected",
         "Launcher session rejected",
+        "Signed in as a different Riot account",
         "No captured account",
         "Select an account before",
         "Account profile no longer exists",
@@ -192,6 +193,7 @@ fn status_message_is_error(status: &str) -> bool {
         .iter()
         .any(|prefix| status.starts_with(prefix))
         || status.contains(" failed")
+        || status.contains(" could not ")
         || status.contains(" rejected")
         || status.contains(" no longer exists")
 }

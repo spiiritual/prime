@@ -2164,6 +2164,48 @@ fn recapture_as_a_different_account_keeps_the_existing_backup() {
 }
 
 #[test]
+fn a_recapture_as_another_account_stays_on_screen_and_brings_prime_forward() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let backup_root = app.repo.launcher_backups_dir();
+    let account = account_with_backup(&backup_root, "Main", "original");
+    app.state.push_account(account.clone());
+    let captured = staged_recapture(&backup_root, "someone-else", "other login");
+    waiting_login_capture(
+        &mut app,
+        super::LoginCaptureTarget::Existing {
+            account_id: account.id,
+            staging_id: captured.account_id,
+        },
+    );
+
+    let task = app.update(Message::LauncherSessionLoginStarted(
+        account.id,
+        Ok(captured),
+    ));
+
+    assert!(status_message_is_error(&app.status), "{}", app.status);
+    assert!(task.units() > 0);
+}
+
+#[test]
+fn a_launch_that_could_not_save_the_previous_login_stays_on_screen() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+
+    let _ = app.update(Message::LaunchFinished(Ok(LaunchAccountResult {
+        target: crate::launch::LaunchTargetProcess::Valorant,
+        previous_account_backup: None,
+        previous_account_sync_warning: Some("file locked".to_string()),
+        synced_backup: None,
+        sync_warning: None,
+    })));
+
+    assert!(app.status.contains("could not be saved"), "{}", app.status);
+    assert!(status_message_is_error(&app.status), "{}", app.status);
+}
+
+#[test]
 fn recapture_as_the_same_account_replaces_the_backup() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());

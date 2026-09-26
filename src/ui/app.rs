@@ -876,18 +876,18 @@ impl PrimeApp {
                     return Task::none();
                 }
 
-                match result {
-                    Ok(captured) => {
-                        return self.store_captured_launcher_session(account_id, captured);
-                    }
+                // The user is signing in to Riot Client, so bring Prime back with the result.
+                let stored = match result {
+                    Ok(captured) => self.store_captured_launcher_session(account_id, captured),
                     Err(error) => {
                         self.set_status(format!(
                             "Could not complete launcher session login: {error}"
                         ));
+                        Task::none()
                     }
-                }
+                };
 
-                Task::none()
+                Task::batch([stored, alert_and_focus_latest_window()])
             }
             Message::RefreshProfileIdentity(account_id) => {
                 let Some(account) = self
