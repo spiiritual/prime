@@ -3,16 +3,16 @@ use super::*;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use iced::futures::future::{try_join4, try_join5};
+use iced::futures::future::try_join4;
 
-use crate::riot::content::ContentError;
+use crate::riot::content::{ContentError, WeaponContent};
 
 use super::loadout::{BattlePassRewardDisplay, LoadoutSummary, SkinDisplay, WeaponDisplay};
 use super::shop::{AccessoryDisplay, BundleDisplay, StoreSummary};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(in crate::ui) struct StoreMetadata {
-    pub(in crate::ui) skins: Arc<SkinCatalog>,
+    pub(in crate::ui) weapon_content: Arc<WeaponContent>,
     pub(in crate::ui) bundles: Arc<BundleCatalog>,
     pub(in crate::ui) currencies: Arc<CurrencyCatalog>,
     pub(in crate::ui) accessories: Arc<AccessoryCatalog>,
@@ -20,8 +20,8 @@ pub(in crate::ui) struct StoreMetadata {
 
 pub(in crate::ui) async fn fetch_store_metadata() -> Result<StoreMetadata, String> {
     let api = ValorantContentApi::new().map_err(|error| error.to_string())?;
-    let (skins, bundles, currencies, accessories) = try_join4(
-        SKIN_CATALOG.get_or_fetch(|| api.skin_catalog()),
+    let (weapon_content, bundles, currencies, accessories) = try_join4(
+        WEAPON_CONTENT.get_or_fetch(|| api.weapon_content()),
         BUNDLE_CATALOG.get_or_fetch(|| api.bundle_catalog()),
         CURRENCY_CATALOG.get_or_fetch(|| api.currency_catalog()),
         ACCESSORY_CATALOG.get_or_fetch(|| api.accessory_catalog()),
@@ -29,7 +29,7 @@ pub(in crate::ui) async fn fetch_store_metadata() -> Result<StoreMetadata, Strin
     .await?;
 
     Ok(StoreMetadata {
-        skins,
+        weapon_content,
         bundles,
         currencies,
         accessories,
@@ -41,8 +41,7 @@ pub(in crate::ui) async fn fetch_store_metadata() -> Result<StoreMetadata, Strin
 // Failed downloads are not cached.
 const CONTENT_CATALOG_TTL: Duration = Duration::from_secs(60 * 60);
 
-static SKIN_CATALOG: CachedCatalog<SkinCatalog> = CachedCatalog::new();
-static WEAPON_CATALOG: CachedCatalog<WeaponCatalog> = CachedCatalog::new();
+static WEAPON_CONTENT: CachedCatalog<WeaponContent> = CachedCatalog::new();
 static BUNDLE_CATALOG: CachedCatalog<BundleCatalog> = CachedCatalog::new();
 static CURRENCY_CATALOG: CachedCatalog<CurrencyCatalog> = CachedCatalog::new();
 static ACCESSORY_CATALOG: CachedCatalog<AccessoryCatalog> = CachedCatalog::new();
@@ -196,8 +195,7 @@ pub(in crate::ui) async fn cache_battle_pass_reward_icon(
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(in crate::ui) struct LoadoutMetadata {
-    pub(in crate::ui) skins: Arc<SkinCatalog>,
-    pub(in crate::ui) weapons: Arc<WeaponCatalog>,
+    pub(in crate::ui) weapon_content: Arc<WeaponContent>,
     pub(in crate::ui) contracts: Arc<ContractCatalog>,
     pub(in crate::ui) accessories: Arc<AccessoryCatalog>,
     pub(in crate::ui) currencies: Arc<CurrencyCatalog>,
@@ -205,9 +203,8 @@ pub(in crate::ui) struct LoadoutMetadata {
 
 pub(in crate::ui) async fn fetch_loadout_metadata() -> Result<LoadoutMetadata, String> {
     let api = ValorantContentApi::new().map_err(|error| error.to_string())?;
-    let (skins, weapons, contracts, accessories, currencies) = try_join5(
-        SKIN_CATALOG.get_or_fetch(|| api.skin_catalog()),
-        WEAPON_CATALOG.get_or_fetch(|| api.weapon_catalog()),
+    let (weapon_content, contracts, accessories, currencies) = try_join4(
+        WEAPON_CONTENT.get_or_fetch(|| api.weapon_content()),
         CONTRACT_CATALOG.get_or_fetch(|| api.contract_catalog()),
         ACCESSORY_CATALOG.get_or_fetch(|| api.accessory_catalog()),
         CURRENCY_CATALOG.get_or_fetch(|| api.currency_catalog()),
@@ -215,8 +212,7 @@ pub(in crate::ui) async fn fetch_loadout_metadata() -> Result<LoadoutMetadata, S
     .await?;
 
     Ok(LoadoutMetadata {
-        skins,
-        weapons,
+        weapon_content,
         contracts,
         accessories,
         currencies,

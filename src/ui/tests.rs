@@ -980,6 +980,8 @@ fn loadout_summary_resolves_skin_names() {
         uuid: "weapon".to_string(),
         display_name: "Vandal".to_string(),
         display_icon: None,
+
+        skins: vec![],
     }]);
 
     let summary = LoadoutSummary::from_response(response, &catalog, &weapons, None);
@@ -1081,6 +1083,8 @@ fn loadout_summary_prefers_current_chroma_render() {
         uuid: "weapon".to_string(),
         display_name: "Vandal".to_string(),
         display_icon: Some("weapon-icon".to_string()),
+
+        skins: vec![],
     }]);
 
     let summary = LoadoutSummary::from_response(response, &catalog, &weapons, None);

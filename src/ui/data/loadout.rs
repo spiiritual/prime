@@ -725,8 +725,8 @@ pub(in crate::ui) async fn fetch_loadout(
     let mut summary = match loadout {
         Ok(response) => LoadoutSummary::from_response(
             response,
-            &metadata.skins,
-            &metadata.weapons,
+            &metadata.weapon_content.skins,
+            &metadata.weapon_content.weapons,
             account_level,
         ),
         Err(error) if battle_pass.is_ok() => {
@@ -777,7 +777,7 @@ async fn fetch_battle_pass_progress(
         &contracts,
         &metadata.contracts,
         Some(&content),
-        &metadata.skins,
+        &metadata.weapon_content.skins,
         &metadata.accessories,
         &metadata.currencies,
     )

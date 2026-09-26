@@ -7,7 +7,6 @@ const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const USER_AGENT_VALUE: &str = concat!("prime/", env!("CARGO_PKG_VERSION"));
 
 pub const WEAPONS_URL: &str = "https://valorant-api.com/v1/weapons";
-pub const WEAPON_SKINS_URL: &str = "https://valorant-api.com/v1/weapons/skins";
 pub const BUNDLES_URL: &str = "https://valorant-api.com/v1/bundles";
 pub const CONTENT_TIERS_URL: &str = "https://valorant-api.com/v1/contenttiers";
 pub const CURRENCIES_URL: &str = "https://valorant-api.com/v1/currencies";
@@ -33,19 +32,13 @@ impl ValorantContentApi {
         Ok(Self { client })
     }
 
-    pub async fn skin_catalog(&self) -> Result<SkinCatalog, ContentError> {
-        let skins = self
-            .content_data::<Vec<WeaponSkin>>(WEAPON_SKINS_URL)
-            .await?;
+    /// Weapons and their skins. `/v1/weapons` already embeds every skin, so this avoids a second
+    /// multi-megabyte download of `/v1/weapons/skins`.
+    pub async fn weapon_content(&self) -> Result<WeaponContent, ContentError> {
+        let weapons = self.content_data::<Vec<Weapon>>(WEAPONS_URL).await?;
         let tiers = self.content_tier_catalog().await?;
 
-        Ok(SkinCatalog::from_skins_and_tiers(skins, &tiers))
-    }
-
-    pub async fn weapon_catalog(&self) -> Result<WeaponCatalog, ContentError> {
-        Ok(WeaponCatalog::from_weapons(
-            self.content_data::<Vec<Weapon>>(WEAPONS_URL).await?,
-        ))
+        Ok(WeaponContent::from_weapons_and_tiers(weapons, &tiers))
     }
 
     pub async fn currency_catalog(&self) -> Result<CurrencyCatalog, ContentError> {
@@ -247,6 +240,26 @@ impl From<ContractReward> for ResolvedContractReward {
             uuid: reward.uuid,
             amount: reward.amount,
             highlighted: reward.highlighted,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WeaponContent {
+    pub weapons: WeaponCatalog,
+    pub skins: SkinCatalog,
+}
+
+impl WeaponContent {
+    pub fn from_weapons_and_tiers(mut weapons: Vec<Weapon>, tiers: &ContentTierCatalog) -> Self {
+        let skins = weapons
+            .iter_mut()
+            .flat_map(|weapon| std::mem::take(&mut weapon.skins))
+            .collect();
+
+        Self {
+            weapons: WeaponCatalog::from_weapons(weapons),
+            skins: SkinCatalog::from_skins_and_tiers(skins, tiers),
         }
     }
 }
@@ -681,6 +694,8 @@ pub struct Weapon {
     pub display_name: String,
     #[serde(rename = "displayIcon")]
     pub display_icon: Option<String>,
+    #[serde(default)]
+    pub skins: Vec<WeaponSkin>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -1015,11 +1030,50 @@ mod tests {
     }
 
     #[test]
+    fn weapon_content_resolves_skins_embedded_in_weapons() {
+        let weapons: Vec<Weapon> = serde_json::from_value(serde_json::json!([{
+            "uuid": "weapon-uuid",
+            "displayName": "Vandal",
+            "displayIcon": "weapon-icon",
+            "skins": [{
+                "uuid": "skin-uuid",
+                "displayName": "Prime Vandal",
+                "displayIcon": null,
+                "contentTierUuid": null,
+                "levels": [{
+                    "uuid": "level-uuid",
+                    "displayName": "Prime Vandal Level 2",
+                    "displayIcon": null
+                }],
+                "chromas": []
+            }]
+        }]))
+        .expect("weapons");
+
+        let content =
+            WeaponContent::from_weapons_and_tiers(weapons, &ContentTierCatalog::default());
+
+        assert_eq!(
+            content.weapons.resolve("weapon-uuid").display_name,
+            "Vandal"
+        );
+        assert_eq!(
+            content.skins.resolve("skin-uuid").display_name,
+            "Prime Vandal"
+        );
+        assert_eq!(
+            content.skins.resolve("level-uuid").display_name,
+            "Prime Vandal Level 2"
+        );
+    }
+
+    #[test]
     fn resolves_weapon_ids_to_display_names() {
         let catalog = WeaponCatalog::from_weapons(vec![Weapon {
             uuid: "weapon-uuid".to_string(),
             display_name: "Vandal".to_string(),
             display_icon: Some("weapon-icon".to_string()),
+            skins: vec![],
         }]);
 
         assert_eq!(catalog.resolve("WEAPON-UUID").display_name, "Vandal");

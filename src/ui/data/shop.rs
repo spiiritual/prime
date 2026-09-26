@@ -785,7 +785,7 @@ pub(in crate::ui) async fn fetch_storefront(
         .map(|response| {
             StoreSummary::from_response_with_accessories(
                 response,
-                &metadata.skins,
+                &metadata.weapon_content.skins,
                 &metadata.bundles,
                 &metadata.currencies,
                 &metadata.accessories,
