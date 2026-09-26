@@ -459,6 +459,15 @@ fn resolve_battle_pass_reward(
                 viewer_icon: accessory.viewer_icon,
             }
         }
+        "Totem" | "Flex" => {
+            let accessory = accessories.resolve(&reward.uuid);
+            ResolvedBattlePassReward {
+                name: accessory.display_name,
+                kind: "Flex".to_string(),
+                display_icon: accessory.display_icon,
+                viewer_icon: accessory.viewer_icon,
+            }
+        }
         "Title" => {
             let accessory = accessories.resolve(&reward.uuid);
             ResolvedBattlePassReward {
@@ -807,4 +816,38 @@ pub(in crate::ui) fn resolve_current_skin(
     }
 
     fallback.unwrap_or_else(|| catalog.resolve(skin_id))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::riot::content::Flex;
+
+    use super::*;
+
+    #[test]
+    fn totem_rewards_resolve_to_flex_items() {
+        let accessories =
+            AccessoryCatalog::from_parts(vec![], vec![], vec![], vec![]).with_flex(vec![Flex {
+                uuid: "flex-uuid".to_string(),
+                display_name: "ORA Flex".to_string(),
+                display_icon: Some("flex-icon".to_string()),
+            }]);
+        let reward = ResolvedContractReward {
+            kind: "Totem".to_string(),
+            uuid: "FLEX-UUID".to_string(),
+            amount: 1,
+            highlighted: false,
+        };
+
+        let resolved = resolve_battle_pass_reward(
+            &reward,
+            &SkinCatalog::default(),
+            &accessories,
+            &CurrencyCatalog::default(),
+        );
+
+        assert_eq!(resolved.name, "ORA Flex");
+        assert_eq!(resolved.kind, "Flex");
+        assert_eq!(resolved.display_icon.as_deref(), Some("flex-icon"));
+    }
 }

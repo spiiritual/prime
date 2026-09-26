@@ -14,6 +14,7 @@ pub const BUDDIES_URL: &str = "https://valorant-api.com/v1/buddies";
 pub const SPRAYS_URL: &str = "https://valorant-api.com/v1/sprays";
 pub const PLAYER_CARDS_URL: &str = "https://valorant-api.com/v1/playercards";
 pub const PLAYER_TITLES_URL: &str = "https://valorant-api.com/v1/playertitles";
+pub const FLEX_URL: &str = "https://valorant-api.com/v1/flex";
 pub const CONTRACTS_URL: &str = "https://valorant-api.com/v1/contracts";
 pub const VERSION_URL: &str = "https://valorant-api.com/v1/version";
 
@@ -69,13 +70,12 @@ impl ValorantContentApi {
         let player_titles = self
             .content_data::<Vec<PlayerTitle>>(PLAYER_TITLES_URL)
             .await?;
+        let flex = self.content_data::<Vec<Flex>>(FLEX_URL).await?;
 
-        Ok(AccessoryCatalog::from_parts(
-            buddies,
-            sprays,
-            player_cards,
-            player_titles,
-        ))
+        Ok(
+            AccessoryCatalog::from_parts(buddies, sprays, player_cards, player_titles)
+                .with_flex(flex),
+        )
     }
 
     pub async fn contract_catalog(&self) -> Result<ContractCatalog, ContentError> {
@@ -655,6 +655,23 @@ impl AccessoryCatalog {
         Self { by_uuid }
     }
 
+    /// Adds flex items, which Riot's contracts and stores call "Totem" rewards.
+    pub fn with_flex(mut self, flex: Vec<Flex>) -> Self {
+        for item in flex {
+            self.by_uuid.insert(
+                normalize_uuid(&item.uuid),
+                ResolvedAccessory {
+                    uuid: item.uuid,
+                    display_name: item.display_name,
+                    display_icon: item.display_icon.clone(),
+                    viewer_icon: item.display_icon,
+                },
+            );
+        }
+
+        self
+    }
+
     pub fn resolve(&self, uuid: &str) -> ResolvedAccessory {
         self.by_uuid
             .get(&normalize_uuid(uuid))
@@ -853,6 +870,15 @@ pub struct Spray {
     pub full_icon: Option<String>,
     #[serde(rename = "fullTransparentIcon")]
     pub full_transparent_icon: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct Flex {
+    pub uuid: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    #[serde(rename = "displayIcon")]
+    pub display_icon: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
