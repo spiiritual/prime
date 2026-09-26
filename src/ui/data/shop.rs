@@ -800,7 +800,7 @@ pub(in crate::ui) async fn fetch_storefront(
             summary.currency_balance_error = Some(error.to_string());
         }
     }
-    cache_store_images(&mut summary, &image_cache).await?;
+    cache_store_images(&mut summary, &image_cache).await;
 
     Ok(StorefrontResult {
         account_id: account.id,

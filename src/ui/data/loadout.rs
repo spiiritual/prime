@@ -726,7 +726,7 @@ pub(in crate::ui) async fn fetch_loadout(
             summary.battle_pass_error = Some(error);
         }
     }
-    cache_loadout_images(&mut summary, &image_cache).await?;
+    cache_loadout_images(&mut summary, &image_cache).await;
 
     Ok(LoadoutResult {
         account_id: account.id,
