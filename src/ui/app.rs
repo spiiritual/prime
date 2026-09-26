@@ -34,7 +34,7 @@ use super::data::launch_flow::{
 };
 use super::data::loadout::fetch_loadout;
 use super::data::shop::fetch_storefront;
-use super::data::{cache_account_api_context, non_empty_path};
+use super::data::{cache_account_api_context, typed_riot_client_path};
 use super::{
     AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, LoginCapture,
     LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsApply, PrimeApp, Tab,
@@ -1651,7 +1651,23 @@ impl PrimeApp {
                 Task::none()
             }
             Message::SaveSettings => {
-                self.state.riot_client_path = non_empty_path(&self.riot_client_path_input);
+                let path = typed_riot_client_path(&self.riot_client_path_input);
+
+                if let Some(path) = &path
+                    && !path.is_file()
+                {
+                    self.set_status(format!(
+                        "Could not save settings: there is no Riot Client at {}",
+                        path.display()
+                    ));
+                    return Task::none();
+                }
+
+                self.riot_client_path_input = path
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default();
+                self.state.riot_client_path = path;
                 self.set_status("Saved settings");
                 self.save_task()
             }
@@ -2500,6 +2516,10 @@ impl PrimeApp {
             async move { cache.size_bytes().map_err(|error| error.to_string()) },
             Message::ImageCacheSizeLoaded,
         )
+    }
+
+    pub(super) fn riot_client_path_unsaved(&self) -> bool {
+        typed_riot_client_path(&self.riot_client_path_input) != self.state.riot_client_path
     }
 
     /// The profile Apply uses: the chosen one, or else the default choice.

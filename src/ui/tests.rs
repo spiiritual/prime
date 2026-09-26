@@ -4431,3 +4431,57 @@ fn rarity_colors_match_the_game() {
     assert_eq!(RarityTier::Exclusive.highlight_rgb(), [0xf5, 0x95, 0x5b]);
     assert_eq!(RarityTier::Ultra.highlight_rgb(), [0xfa, 0xd6, 0x63]);
 }
+
+#[test]
+fn a_quoted_riot_client_path_is_saved_without_quotes() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let client = dir.path().join("RiotClientServices.exe");
+    fs::write(&client, "exe").expect("client");
+    app.riot_client_path_input = format!("\"{}\"", client.display());
+
+    let _ = app.update(Message::SaveSettings);
+
+    assert_eq!(app.state.riot_client_path, Some(client));
+    assert_eq!(app.status, "Saved settings");
+}
+
+#[test]
+fn a_riot_client_path_that_does_not_exist_is_not_saved() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.riot_client_path_input = dir.path().join("missing.exe").display().to_string();
+
+    let task = app.update(Message::SaveSettings);
+
+    assert_eq!(task.units(), 0);
+    assert_eq!(app.state.riot_client_path, None);
+    assert!(status_message_is_error(&app.status), "{}", app.status);
+}
+
+#[test]
+fn an_empty_riot_client_path_means_find_it_automatically() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.state.riot_client_path = Some(dir.path().join("old.exe"));
+    app.riot_client_path_input = "  ".to_string();
+
+    let _ = app.update(Message::SaveSettings);
+
+    assert_eq!(app.state.riot_client_path, None);
+}
+
+#[test]
+fn an_edited_riot_client_path_shows_as_unsaved_until_saved() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let client = dir.path().join("RiotClientServices.exe");
+    fs::write(&client, "exe").expect("client");
+    assert!(!app.riot_client_path_unsaved());
+
+    let _ = app.update(Message::RiotClientPathChanged(client.display().to_string()));
+    assert!(app.riot_client_path_unsaved());
+
+    let _ = app.update(Message::SaveSettings);
+    assert!(!app.riot_client_path_unsaved());
+}

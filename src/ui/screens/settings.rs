@@ -1,5 +1,5 @@
 use iced::widget::{button, column, row, text, text_input};
-use iced::{Element, Length};
+use iced::{Element, Length, alignment};
 
 use crate::ui::data::format_bytes;
 use crate::ui::{Message, PrimeApp};
@@ -7,12 +7,8 @@ use crate::ui::{Message, PrimeApp};
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     column![
         text(format!("Profile storage: {}", app.repo.path().display())),
-        text_input(
-            r"C:\Riot Games\Riot Client\RiotClientServices.exe",
-            &app.riot_client_path_input
-        )
-        .on_input(Message::RiotClientPathChanged),
-        button("Save settings").on_press(Message::SaveSettings),
+        riot_client_path_controls(app),
+        client_version_controls(app),
         text(format!(
             "Image cache: {}",
             format_bytes(app.image_cache_size_bytes)
@@ -27,6 +23,49 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         token_import_controls(app)
     ]
     .spacing(12)
+    .into()
+}
+
+fn riot_client_path_controls(app: &PrimeApp) -> Element<'_, Message> {
+    let mut save = row![button("Save settings").on_press(Message::SaveSettings)]
+        .spacing(10)
+        .align_y(alignment::Vertical::Center);
+
+    if app.riot_client_path_unsaved() {
+        save = save.push(text("Unsaved changes").size(13));
+    }
+
+    column![
+        text("Riot Client path"),
+        text("Leave empty to find RiotClientServices.exe automatically.").size(13),
+        text_input(
+            r"C:\Riot Games\Riot Client\RiotClientServices.exe",
+            &app.riot_client_path_input
+        )
+        .on_input(Message::RiotClientPathChanged)
+        .on_submit(Message::SaveSettings),
+        save
+    ]
+    .spacing(8)
+    .into()
+}
+
+fn client_version_controls(app: &PrimeApp) -> Element<'_, Message> {
+    column![
+        text("Riot client version"),
+        text("Prime fetches this when it starts. Shop and Loadout need it.").size(13),
+        row![
+            text_input(
+                "For example release-10.00-shipping-...",
+                &app.client_version_input
+            )
+            .on_input(Message::ClientVersionChanged)
+            .width(Length::Fill),
+            button("Refresh version").on_press(Message::RefreshClientVersion)
+        ]
+        .spacing(10)
+    ]
+    .spacing(8)
     .into()
 }
 
@@ -64,23 +103,18 @@ fn app_update_controls(app: &PrimeApp) -> Element<'_, Message> {
 fn token_import_controls(app: &PrimeApp) -> Element<'_, Message> {
     column![
         text("Advanced API token import"),
-        text_input(
-            "Paste https://playvalorant.com/opt_in#access_token=...",
-            &app.redirect_input
-        )
-        .on_input(Message::RedirectChanged),
+        text("Riot sign-in redirect URL").size(13),
         row![
             text_input(
-                "Client version, for example release-10.00-shipping-...",
-                &app.client_version_input
+                "Paste https://playvalorant.com/opt_in#access_token=...",
+                &app.redirect_input
             )
-            .on_input(Message::ClientVersionChanged)
+            .on_input(Message::RedirectChanged)
             .width(Length::Fill),
-            button("Refresh version").on_press(Message::RefreshClientVersion),
             button("Import token").on_press(Message::ImportRedirect)
         ]
         .spacing(10)
     ]
-    .spacing(12)
+    .spacing(8)
     .into()
 }

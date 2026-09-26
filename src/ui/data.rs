@@ -65,6 +65,17 @@ pub(super) fn non_empty_path(input: &str) -> Option<PathBuf> {
     }
 }
 
+/// The Riot Client path typed in Settings, without the quotes Windows' "Copy as path" adds.
+pub(super) fn typed_riot_client_path(input: &str) -> Option<PathBuf> {
+    let trimmed = input.trim();
+    let unquoted = trimmed
+        .strip_prefix('"')
+        .and_then(|rest| rest.strip_suffix('"'))
+        .unwrap_or(trimmed);
+
+    non_empty_path(unquoted)
+}
+
 pub(super) fn format_bytes(bytes: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
