@@ -1159,7 +1159,10 @@ fn battle_pass_progress_uses_story_contract_and_active_act() {
         progress.next_tier_label(),
         "2,500 / 3,000 XP toward next tier"
     );
-    assert_eq!(progress.progress_percent_label().as_deref(), Some("50% complete"));
+    assert_eq!(
+        progress.progress_percent_label().as_deref(),
+        Some("50% complete")
+    );
     assert!(progress.remaining_seconds.is_some());
 }
 
@@ -1468,7 +1471,10 @@ fn loading_accounts_removes_unreferenced_backup_slots() {
 
     assert!(!orphaned_slot.exists());
     assert!(backup_root.join(account.id.to_string()).exists());
-    assert_eq!(loaded.state.accounts[0].launcher_session, account.launcher_session);
+    assert_eq!(
+        loaded.state.accounts[0].launcher_session,
+        account.launcher_session
+    );
 }
 
 #[test]
@@ -1500,7 +1506,10 @@ fn recapture_as_a_different_account_keeps_the_existing_backup() {
     let captured = staged_recapture(&backup_root, "someone-else", "other login");
     let staging_slot = backup_root.join(captured.account_id.to_string());
 
-    let _ = app.update(Message::LauncherSessionLoginStarted(account.id, Ok(captured)));
+    let _ = app.update(Message::LauncherSessionLoginStarted(
+        account.id,
+        Ok(captured),
+    ));
 
     let saved = &app.state.accounts[0];
     assert_eq!(saved.launcher_session, original_backup);
@@ -1515,7 +1524,11 @@ fn recapture_as_a_different_account_keeps_the_existing_backup() {
         "original"
     );
     assert!(!staging_slot.exists());
-    assert!(app.status.contains("different Riot account"), "{}", app.status);
+    assert!(
+        app.status.contains("different Riot account"),
+        "{}",
+        app.status
+    );
 }
 
 #[test]
@@ -1528,7 +1541,10 @@ fn recapture_as_the_same_account_replaces_the_backup() {
     let captured = staged_recapture(&backup_root, "Main-puuid", "fresh login");
     let staging_slot = backup_root.join(captured.account_id.to_string());
 
-    let _ = app.update(Message::LauncherSessionLoginStarted(account.id, Ok(captured)));
+    let _ = app.update(Message::LauncherSessionLoginStarted(
+        account.id,
+        Ok(captured),
+    ));
 
     let backup = app.state.accounts[0]
         .launcher_session

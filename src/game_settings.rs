@@ -747,7 +747,10 @@ mod tests {
             "data": {"floatSettings": "not a list"}
         }));
 
-        let message = document.settings_payload().expect_err("invalid").to_string();
+        let message = document
+            .settings_payload()
+            .expect_err("invalid")
+            .to_string();
 
         assert!(message.starts_with("VALORANT settings data could not be read: "));
         assert!(message.contains("invalid type"), "{message}");
@@ -917,7 +920,10 @@ mod tests {
         let profiles = repository.profile_metadata().expect("profile listing");
 
         assert_eq!(
-            profiles.iter().map(|profile| profile.id.as_str()).collect::<Vec<_>>(),
+            profiles
+                .iter()
+                .map(|profile| profile.id.as_str())
+                .collect::<Vec<_>>(),
             [profile.id.as_str()]
         );
         assert_eq!(repository.latest_profile().expect("latest").id, profile.id);

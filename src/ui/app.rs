@@ -93,10 +93,7 @@ impl PrimeApp {
                 now: iced::time::Instant::now(),
             },
             Task::batch([
-                Task::perform(
-                    async move { load_accounts(&load_repo) },
-                    Message::Loaded,
-                ),
+                Task::perform(async move { load_accounts(&load_repo) }, Message::Loaded),
                 Task::perform(
                     load_game_settings_profiles(profile_dir),
                     Message::GameSettingsProfilesLoaded,
@@ -722,7 +719,12 @@ impl PrimeApp {
             Message::RequestLauncherSessionLogin(account_id) => {
                 self.close_account_surfaces();
 
-                if self.state.accounts.iter().any(|account| account.id == account_id) {
+                if self
+                    .state
+                    .accounts
+                    .iter()
+                    .any(|account| account.id == account_id)
+                {
                     self.confirm_recapture_account = Some(account_id);
                 } else {
                     self.status = "Account profile no longer exists".to_string();
@@ -2018,7 +2020,8 @@ impl PrimeApp {
     /// Drops an unsaved captured account and its backup folder, which holds a live login.
     fn discard_pending_account(&mut self) {
         if let Some(draft) = self.pending_account.take() {
-            let _ = remove_launcher_session_backup(self.repo.launcher_backups_dir(), draft.account_id);
+            let _ =
+                remove_launcher_session_backup(self.repo.launcher_backups_dir(), draft.account_id);
         }
     }
 
@@ -2059,7 +2062,8 @@ impl PrimeApp {
                 Ok(backup) => backup,
                 Err(error) => {
                     let _ = remove_launcher_session_backup(&backup_root, captured.account_id);
-                    self.status = format!("Could not save the captured login for {summary}: {error}");
+                    self.status =
+                        format!("Could not save the captured login for {summary}: {error}");
                     return Task::none();
                 }
             };
