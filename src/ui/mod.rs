@@ -482,6 +482,7 @@ enum Message {
     RequestExportAccount(AccountId),
     AccountExportPrepared(Result<AccountExportOutput, String>),
     CopyAccountExport,
+    AccountExportCopied(String, Result<(), String>),
     CloseAccountExport,
     OpenImportAccount,
     ImportAccountInputChanged(String),

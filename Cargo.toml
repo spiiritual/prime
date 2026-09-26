@@ -21,7 +21,12 @@ tokio = { version = "1.52.3", features = ["time"] }
 url = "2.5.8"
 uuid = { version = "1.23.1", features = ["serde", "v4"] }
 velopack = "1.0.7-ga630726"
-windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

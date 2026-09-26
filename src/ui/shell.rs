@@ -472,11 +472,14 @@ fn export_account_prompt_overlay(export: &AccountExportOutput) -> Element<'_, Me
         column![
             column![
                 text(format!("Export {}", export.display_name)).size(20),
-                text("Keep this export private; it includes captured Riot Client session data.")
-                    .size(14),
                 text(
-                    "Warning: this is like sharing the account password and grants full access to the account."
+                    "Only paste this into your own Prime install. Copying keeps it out of Windows clipboard history."
                 )
+                .size(14),
+                text(format!(
+                    "Warning: anyone with this export can sign in to {} without its password.",
+                    export.display_name
+                ))
                 .size(14)
                 .width(Length::Fill)
                 .color(Color::from_rgb8(255, 112, 112))

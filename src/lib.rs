@@ -5,6 +5,7 @@ mod http_error;
 pub mod image_cache;
 pub mod launch;
 pub mod riot;
+pub mod secret_clipboard;
 pub mod storage;
 pub mod ui;
 pub mod updater;

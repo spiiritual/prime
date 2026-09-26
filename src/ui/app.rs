@@ -1,5 +1,5 @@
 use iced::widget::operation;
-use iced::{Task, clipboard, window};
+use iced::{Task, window};
 
 use crate::account::{
     AccountId, AccountPenaltyStatus, AccountProfile, CompetitiveRank, LauncherSessionBackup, Shard,
@@ -11,6 +11,7 @@ use crate::riot::auth::parse_redirect_tokens;
 use crate::riot::launcher_session::{
     CapturedLauncherSession, adopt_launcher_session_backup, remove_launcher_session_backup,
 };
+use crate::secret_clipboard::copy_secret_text;
 use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{AvailableUpdate, check_for_update, download_and_prepare_update};
 
@@ -502,8 +503,26 @@ impl PrimeApp {
                     return Task::none();
                 };
 
-                self.status = format!("Copied account export for {}", export.display_name);
-                clipboard::write(export.payload.clone())
+                let display_name = export.display_name.clone();
+                let payload = export.payload.clone();
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || copy_secret_text(&payload))
+                            .await
+                            .map_err(|error| error.to_string())?
+                            .map_err(|error| error.to_string())
+                    },
+                    move |result| Message::AccountExportCopied(display_name.clone(), result),
+                )
+            }
+            Message::AccountExportCopied(display_name, result) => {
+                self.status = match result {
+                    Ok(()) => format!(
+                        "Copied account export for {display_name}; it is kept out of clipboard history"
+                    ),
+                    Err(error) => format!("Could not copy account export: {error}"),
+                };
+                Task::none()
             }
             Message::CloseAccountExport => {
                 self.exported_account = None;
