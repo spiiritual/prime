@@ -748,21 +748,24 @@ impl PrimeApp {
                 );
                 self.launcher_capture_in_progress = true;
                 self.launcher_capture_kind = Some(super::LauncherCaptureKind::ExistingAccount);
+                // Capture into a separate slot so the account's working backup is only replaced
+                // after the login is confirmed to belong to this account.
+                let staging_id = AccountId::new();
 
                 Task::perform(
                     async move {
-                        start_verified_launcher_session_login(account_id, backup_root, config).await
+                        start_verified_launcher_session_login(staging_id, backup_root, config).await
                     },
-                    Message::LauncherSessionLoginStarted,
+                    move |result| Message::LauncherSessionLoginStarted(account_id, result),
                 )
             }
-            Message::LauncherSessionLoginStarted(result) => {
+            Message::LauncherSessionLoginStarted(account_id, result) => {
                 self.launcher_capture_in_progress = false;
                 self.launcher_capture_kind = None;
 
                 match result {
                     Ok(captured) => {
-                        return self.store_captured_launcher_session(captured);
+                        return self.store_captured_launcher_session(account_id, captured);
                     }
                     Err(error) => {
                         self.status = format!("Could not complete launcher session login: {error}");
@@ -1995,18 +1998,47 @@ impl PrimeApp {
 
     fn store_captured_launcher_session(
         &mut self,
+        account_id: AccountId,
         captured: CapturedLauncherSession,
     ) -> Task<Message> {
+        let backup_root = self.repo.launcher_backups_dir();
+
         if let Some(account) = self
             .state
             .accounts
             .iter_mut()
-            .find(|account| account.id == captured.account_id)
+            .find(|account| account.id == account_id)
         {
             let captured_puuid = captured.backup.puuid.clone();
             let summary = account.summary();
 
-            if let Err(error) = account.attach_launcher_session(captured.backup) {
+            if account
+                .puuid
+                .as_ref()
+                .is_some_and(|puuid| !puuid.eq_ignore_ascii_case(&captured_puuid))
+            {
+                let _ = remove_launcher_session_backup(&backup_root, captured.account_id);
+                self.status = format!(
+                    "Signed in as a different Riot account; {summary} was not changed. Re-capture and sign in to {summary}."
+                );
+                return Task::none();
+            }
+
+            let backup = match adopt_launcher_session_backup(
+                &backup_root,
+                captured.account_id,
+                account_id,
+                captured.backup,
+            ) {
+                Ok(backup) => backup,
+                Err(error) => {
+                    let _ = remove_launcher_session_backup(&backup_root, captured.account_id);
+                    self.status = format!("Could not save the captured login for {summary}: {error}");
+                    return Task::none();
+                }
+            };
+
+            if let Err(error) = account.attach_launcher_session(backup) {
                 self.status = format!("Launcher session rejected: {error}");
                 return Task::none();
             }

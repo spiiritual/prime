@@ -493,7 +493,9 @@ enum Message {
     ClientVersionLoaded(Result<String, String>),
     ImportRedirect,
     StartLauncherSessionLogin(AccountId),
+    /// Re-capture for the given account finished; the capture is staged in its own slot.
     LauncherSessionLoginStarted(
+        AccountId,
         Result<crate::riot::launcher_session::CapturedLauncherSession, String>,
     ),
     RefreshProfileIdentity(AccountId),

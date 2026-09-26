@@ -38,7 +38,7 @@ use crate::riot::content::{
     ContractContent, ContractLevel, ContractReward, Currency, CurrencyCatalog, SkinCatalog,
     ValorantContract, WeaponCatalog,
 };
-use crate::riot::launcher_session::LauncherSessionError;
+use crate::riot::launcher_session::{CapturedLauncherSession, LauncherSessionError};
 use crate::riot::models::{
     ContractsResponse, GameContentResponse, PlayerLoadoutResponse, PlayerMmrResponse,
     PlayerPenaltiesResponse, StorefrontResponse, WalletResponse,
@@ -1412,6 +1412,79 @@ fn require_launcher_session_accepts_ready_backup() {
     let accepted = require_launcher_session(Some(backup)).expect("ready backup");
 
     assert_eq!(accepted.puuid, "puuid");
+}
+
+fn staged_recapture(backup_root: &Path, puuid: &str, settings: &str) -> CapturedLauncherSession {
+    let staging_id = AccountId::new();
+    let data_dir = backup_root.join(staging_id.to_string()).join("Data");
+    fs::create_dir_all(&data_dir).expect("staging data dir");
+    fs::write(data_dir.join("RiotGamesPrivateSettings.yaml"), settings).expect("settings");
+    CapturedLauncherSession {
+        account_id: staging_id,
+        backup: LauncherSessionBackup {
+            data_dir,
+            captured_at_unix: 200,
+            puuid: puuid.to_string(),
+        },
+    }
+}
+
+#[test]
+fn recapture_as_a_different_account_keeps_the_existing_backup() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let backup_root = app.repo.launcher_backups_dir();
+    let account = account_with_backup(&backup_root, "Main", "original");
+    let original_backup = account.launcher_session.clone();
+    app.state.push_account(account.clone());
+    let captured = staged_recapture(&backup_root, "someone-else", "other login");
+    let staging_slot = backup_root.join(captured.account_id.to_string());
+
+    let _ = app.update(Message::LauncherSessionLoginStarted(account.id, Ok(captured)));
+
+    let saved = &app.state.accounts[0];
+    assert_eq!(saved.launcher_session, original_backup);
+    assert_eq!(
+        fs::read_to_string(
+            original_backup
+                .expect("backup")
+                .data_dir
+                .join("RiotGamesPrivateSettings.yaml")
+        )
+        .expect("original settings"),
+        "original"
+    );
+    assert!(!staging_slot.exists());
+    assert!(app.status.contains("different Riot account"), "{}", app.status);
+}
+
+#[test]
+fn recapture_as_the_same_account_replaces_the_backup() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let backup_root = app.repo.launcher_backups_dir();
+    let account = account_with_backup(&backup_root, "Main", "original");
+    app.state.push_account(account.clone());
+    let captured = staged_recapture(&backup_root, "Main-puuid", "fresh login");
+    let staging_slot = backup_root.join(captured.account_id.to_string());
+
+    let _ = app.update(Message::LauncherSessionLoginStarted(account.id, Ok(captured)));
+
+    let backup = app.state.accounts[0]
+        .launcher_session
+        .clone()
+        .expect("backup");
+    assert_eq!(
+        backup.data_dir,
+        backup_root.join(account.id.to_string()).join("Data")
+    );
+    assert_eq!(backup.captured_at_unix, 200);
+    assert_eq!(
+        fs::read_to_string(backup.data_dir.join("RiotGamesPrivateSettings.yaml"))
+            .expect("fresh settings"),
+        "fresh login"
+    );
+    assert!(!staging_slot.exists());
 }
 
 #[test]
