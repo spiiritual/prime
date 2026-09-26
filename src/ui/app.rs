@@ -26,15 +26,16 @@ use super::data::game_settings::{
 };
 use super::data::image_assets::fetch_current_client_version;
 use super::data::launch_flow::{
-    check_riot_client_window_visible, launch_account, load_accounts, start_account_capture,
-    start_current_account_capture, start_verified_launcher_session_login, valorant_is_running,
+    PreviousAccountSync, check_riot_client_window_visible, finish_account_capture,
+    finish_verified_launcher_session_login, launch_account, load_accounts, prepare_login_capture,
+    start_current_account_capture, valorant_is_running,
 };
 use super::data::loadout::fetch_loadout;
 use super::data::shop::fetch_storefront;
 use super::data::{cache_account_api_context, non_empty_path};
 use super::{
-    AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, MAIN_PANEL_SCROLLABLE_ID,
-    Message, PrimeApp, Tab, TabScrollOffsets,
+    AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, LoginCapture,
+    LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, Tab, TabScrollOffsets,
 };
 
 impl PrimeApp {
@@ -91,6 +92,7 @@ impl PrimeApp {
                 settings_applying_account: None,
                 launcher_capture_in_progress: false,
                 launcher_capture_kind: None,
+                login_capture: None,
                 launch_preflight_account: None,
                 unavailable_launch_warning: None,
                 launching_account: None,
@@ -316,25 +318,17 @@ impl PrimeApp {
                     return Task::none();
                 }
 
-                let account_id = AccountId::new();
-                let config = LaunchConfig {
-                    riot_client_path: self.state.riot_client_path.clone(),
-                    ..LaunchConfig::default()
-                };
-                let backup_root = self.repo.launcher_backups_dir();
                 self.discard_pending_account();
                 self.close_account_surfaces();
                 self.new_display_name.clear();
                 self.new_username.clear();
                 self.set_status("Opening Riot Client. When it appears, sign in normally with \"Stay signed in\" ticked.");
-                self.launcher_capture_in_progress = true;
-                self.launcher_capture_kind = Some(super::LauncherCaptureKind::New);
-
-                Task::perform(
-                    async move { start_account_capture(account_id, backup_root, config).await },
-                    Message::AccountCaptureFinished,
-                )
+                self.start_login_capture(LoginCaptureTarget::NewAccount(AccountId::new()))
             }
+            Message::LoginCapturePrepared { target, result } => {
+                self.handle_login_capture_prepared(target, result)
+            }
+            Message::CancelLoginCapture => self.cancel_login_capture(),
             Message::CapturePromptGameChecked(valorant_running) => {
                 self.capture_prompt_valorant_running = valorant_running
                     && (self.show_add_account_prompt || self.confirm_recapture_account.is_some());
@@ -347,8 +341,10 @@ impl PrimeApp {
                 Task::none()
             }
             Message::AccountCaptureFinished(result) => {
-                self.launcher_capture_in_progress = false;
-                self.launcher_capture_kind = None;
+                let slot = result.as_ref().ok().map(|draft| draft.account_id);
+                if !self.finish_login_capture(slot) {
+                    return Task::none();
+                }
 
                 match result {
                     Ok(draft) => {
@@ -862,32 +858,23 @@ impl PrimeApp {
                     return Task::none();
                 };
 
-                let config = LaunchConfig {
-                    riot_client_path: self.state.riot_client_path.clone(),
-                    ..LaunchConfig::default()
-                };
-                let backup_root = self.repo.launcher_backups_dir();
                 let summary = account.summary();
                 self.close_account_surfaces();
                 self.set_status(format!(
                     "Opening Riot Client and waiting for remembered login capture for {summary}"
                 ));
-                self.launcher_capture_in_progress = true;
-                self.launcher_capture_kind = Some(super::LauncherCaptureKind::Existing);
                 // Capture into a separate slot so the account's working backup is only replaced
                 // after the login is confirmed to belong to this account.
-                let staging_id = AccountId::new();
-
-                Task::perform(
-                    async move {
-                        start_verified_launcher_session_login(staging_id, backup_root, config).await
-                    },
-                    move |result| Message::LauncherSessionLoginStarted(account_id, result),
-                )
+                self.start_login_capture(LoginCaptureTarget::Existing {
+                    account_id,
+                    staging_id: AccountId::new(),
+                })
             }
             Message::LauncherSessionLoginStarted(account_id, result) => {
-                self.launcher_capture_in_progress = false;
-                self.launcher_capture_kind = None;
+                let slot = result.as_ref().ok().map(|captured| captured.account_id);
+                if !self.finish_login_capture(slot) {
+                    return Task::none();
+                }
 
                 match result {
                     Ok(captured) => {
@@ -2208,17 +2195,7 @@ impl PrimeApp {
             ..LaunchConfig::default()
         };
         let backup = account.launcher_session.clone();
-        let saved_sessions = self
-            .state
-            .accounts
-            .iter()
-            .filter_map(|account| {
-                account
-                    .launcher_session
-                    .clone()
-                    .map(|backup| (account.id, backup))
-            })
-            .collect();
+        let saved_sessions = self.saved_launcher_sessions();
 
         self.state.select_account(id);
         self.close_account_surfaces();
@@ -2407,6 +2384,152 @@ impl PrimeApp {
         }
 
         false
+    }
+
+    /// Every saved account's launcher backup, so the account signed in to Riot Client can be
+    /// found and its live login saved before switching away from it.
+    fn saved_launcher_sessions(&self) -> Vec<(AccountId, LauncherSessionBackup)> {
+        self.state
+            .accounts
+            .iter()
+            .filter_map(|account| {
+                account
+                    .launcher_session
+                    .clone()
+                    .map(|backup| (account.id, backup))
+            })
+            .collect()
+    }
+
+    fn start_login_capture(&mut self, target: LoginCaptureTarget) -> Task<Message> {
+        let config = LaunchConfig {
+            riot_client_path: self.state.riot_client_path.clone(),
+            ..LaunchConfig::default()
+        };
+        let saved_sessions = self.saved_launcher_sessions();
+        self.launcher_capture_in_progress = true;
+        self.launcher_capture_kind = Some(target.kind());
+        self.login_capture = Some(LoginCapture { target, wait: None });
+
+        Task::perform(
+            prepare_login_capture(config, saved_sessions),
+            move |result| Message::LoginCapturePrepared { target, result },
+        )
+    }
+
+    fn handle_login_capture_prepared(
+        &mut self,
+        target: LoginCaptureTarget,
+        result: Result<PreviousAccountSync, String>,
+    ) -> Task<Message> {
+        let save = match &result {
+            Ok(Ok(previous)) if self.store_previous_account_backup(previous.clone()) => {
+                self.save_task()
+            }
+            _ => Task::none(),
+        };
+
+        if self.login_capture.as_ref().map(|capture| capture.target) != Some(target) {
+            return save;
+        }
+
+        let previous_sync_warning = match result {
+            Ok(previous_sync) => previous_sync.err(),
+            Err(error) => {
+                self.end_login_capture();
+                self.set_status(match target {
+                    LoginCaptureTarget::NewAccount(_) => format!("Could not add account: {error}"),
+                    LoginCaptureTarget::Existing { .. } => {
+                        format!("Could not complete launcher session login: {error}")
+                    }
+                });
+                return save;
+            }
+        };
+
+        if let Some(warning) = previous_sync_warning {
+            self.set_status(format!(
+                "Could not save the previously signed-in account's login: {warning}. Sign in to Riot Client with \"Stay signed in\" ticked to continue."
+            ));
+        }
+
+        let backup_root = self.repo.launcher_backups_dir();
+        let (wait, handle) = match target {
+            LoginCaptureTarget::NewAccount(account_id) => Task::perform(
+                finish_account_capture(account_id, backup_root),
+                Message::AccountCaptureFinished,
+            ),
+            LoginCaptureTarget::Existing {
+                account_id,
+                staging_id,
+            } => Task::perform(
+                finish_verified_launcher_session_login(staging_id, backup_root),
+                move |result| Message::LauncherSessionLoginStarted(account_id, result),
+            ),
+        }
+        .abortable();
+
+        if let Some(capture) = &mut self.login_capture {
+            capture.wait = Some(handle);
+        }
+
+        Task::batch([save, wait])
+    }
+
+    fn cancel_login_capture(&mut self) -> Task<Message> {
+        // Until the wait starts, Riot Client is still being closed and reopened, and cancelling
+        // would race that work.
+        let Some(handle) = self
+            .login_capture
+            .as_ref()
+            .and_then(|capture| capture.wait.clone())
+        else {
+            return Task::none();
+        };
+        let Some(capture) = self.login_capture.take() else {
+            return Task::none();
+        };
+
+        handle.abort();
+        self.end_login_capture();
+        // The slot may already hold the new sign-in, which is a live login.
+        self.set_status(
+            match remove_launcher_session_backup(
+                self.repo.launcher_backups_dir(),
+                capture.target.slot_id(),
+            ) {
+                Ok(()) => "Canceled login capture. Riot Client was left open and signed out; launching an account from Prime signs it back in.".to_string(),
+                Err(error) => format!(
+                    "Canceled login capture, but could not remove its partial login backup: {error}"
+                ),
+            },
+        );
+        Task::none()
+    }
+
+    /// Ends the running add or re-capture when its result arrives. Returns false for a result
+    /// from a capture that was cancelled, removing any login it copied.
+    fn finish_login_capture(&mut self, slot: Option<AccountId>) -> bool {
+        let current_slot = self
+            .login_capture
+            .as_ref()
+            .map(|capture| capture.target.slot_id());
+
+        if current_slot.is_none() || slot.is_some_and(|slot| Some(slot) != current_slot) {
+            if let Some(slot) = slot {
+                let _ = remove_launcher_session_backup(self.repo.launcher_backups_dir(), slot);
+            }
+            return false;
+        }
+
+        self.end_login_capture();
+        true
+    }
+
+    fn end_login_capture(&mut self) {
+        self.launcher_capture_in_progress = false;
+        self.launcher_capture_kind = None;
+        self.login_capture = None;
     }
 
     /// Drops an unsaved captured account and its backup folder, which holds a live login.

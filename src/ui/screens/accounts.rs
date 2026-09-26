@@ -36,7 +36,7 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         account_cards = account_cards.push(account_card(app, account));
     }
 
-    let controls = row![
+    let mut controls = row![
         add_account_button(app),
         add_current_account_button(app),
         button("Import account").on_press_maybe(
@@ -45,6 +45,20 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         )
     ]
     .spacing(10);
+
+    if let Some(capture) = &app.login_capture {
+        // Enabled once Riot Client has reopened and the capture is waiting for a sign-in.
+        controls = controls.push(
+            button("Cancel login capture")
+                .style(iced::widget::button::danger)
+                .on_press_maybe(
+                    capture
+                        .wait
+                        .is_some()
+                        .then_some(Message::CancelLoginCapture),
+                ),
+        );
+    }
 
     let mut content = column![controls, settings_profiles_section(app)]
         .spacing(12)

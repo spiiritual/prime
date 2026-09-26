@@ -1647,6 +1647,158 @@ fn staged_recapture(backup_root: &Path, puuid: &str, settings: &str) -> Captured
     }
 }
 
+/// Puts the app in a login capture that has opened Riot Client and is waiting for a sign-in.
+fn waiting_login_capture(
+    app: &mut PrimeApp,
+    target: super::LoginCaptureTarget,
+) -> iced::task::Handle {
+    let (_, handle) = iced::Task::<Message>::none().abortable();
+    app.launcher_capture_in_progress = true;
+    app.launcher_capture_kind = Some(target.kind());
+    app.login_capture = Some(super::LoginCapture {
+        target,
+        wait: Some(handle.clone()),
+    });
+    handle
+}
+
+/// Puts the app in a login capture that is still closing and reopening Riot Client.
+fn preparing_login_capture(app: &mut PrimeApp, target: super::LoginCaptureTarget) {
+    app.launcher_capture_in_progress = true;
+    app.launcher_capture_kind = Some(target.kind());
+    app.login_capture = Some(super::LoginCapture { target, wait: None });
+}
+
+#[test]
+fn cancelling_a_login_capture_stops_waiting_and_removes_its_slot() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let backup_root = app.repo.launcher_backups_dir();
+    let partial = staged_recapture(&backup_root, "puuid", "partial");
+    let slot = backup_root.join(partial.account_id.to_string());
+    let handle = waiting_login_capture(
+        &mut app,
+        super::LoginCaptureTarget::NewAccount(partial.account_id),
+    );
+
+    let _ = app.update(Message::CancelLoginCapture);
+
+    assert!(handle.is_aborted());
+    assert!(!app.launcher_capture_in_progress);
+    assert_eq!(app.launcher_capture_kind, None);
+    assert!(app.login_capture.is_none());
+    assert!(!slot.exists());
+    assert!(
+        app.status.starts_with("Canceled login capture"),
+        "{}",
+        app.status
+    );
+}
+
+#[test]
+fn a_capture_cannot_be_cancelled_while_riot_client_reopens() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    preparing_login_capture(
+        &mut app,
+        super::LoginCaptureTarget::NewAccount(AccountId::new()),
+    );
+
+    let _ = app.update(Message::CancelLoginCapture);
+
+    assert!(app.launcher_capture_in_progress);
+    assert!(app.login_capture.is_some());
+}
+
+#[test]
+fn a_capture_result_after_cancelling_is_discarded() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let draft = captured_account_draft(
+        &app.repo.launcher_backups_dir(),
+        "puuid-a",
+        "Player",
+        "NA1",
+        Shard::Na,
+    );
+    let slot = app
+        .repo
+        .launcher_backups_dir()
+        .join(draft.account_id.to_string());
+
+    let _ = app.update(Message::AccountCaptureFinished(Ok(draft)));
+
+    assert_eq!(app.pending_account, None);
+    assert!(!slot.exists());
+}
+
+#[test]
+fn a_capture_saves_the_signed_in_accounts_login_before_waiting() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let backup_root = app.repo.launcher_backups_dir();
+    let previous = account_with_backup(&backup_root, "Previous", "settings");
+    let mut refreshed = previous.launcher_session.clone().expect("backup");
+    refreshed.captured_at_unix = 500;
+    app.state.push_account(previous.clone());
+    let target = super::LoginCaptureTarget::NewAccount(AccountId::new());
+    preparing_login_capture(&mut app, target);
+
+    let task = app.update(Message::LoginCapturePrepared {
+        target,
+        result: Ok(Ok(Some((previous.id, refreshed.clone())))),
+    });
+
+    assert_eq!(
+        app.state.accounts[0].launcher_session.as_ref(),
+        Some(&refreshed)
+    );
+    assert!(
+        app.login_capture
+            .as_ref()
+            .is_some_and(|capture| capture.wait.is_some())
+    );
+    assert!(task.units() > 0);
+}
+
+#[test]
+fn a_capture_warns_when_the_signed_in_login_could_not_be_saved() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let target = super::LoginCaptureTarget::NewAccount(AccountId::new());
+    preparing_login_capture(&mut app, target);
+
+    let _ = app.update(Message::LoginCapturePrepared {
+        target,
+        result: Ok(Err("disk full".to_string())),
+    });
+
+    assert!(app.launcher_capture_in_progress);
+    assert!(app.status.contains("disk full"), "{}", app.status);
+    assert!(status_message_is_error(&app.status), "{}", app.status);
+}
+
+#[test]
+fn a_capture_that_cannot_open_riot_client_ends_with_the_error() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let target = super::LoginCaptureTarget::NewAccount(AccountId::new());
+    preparing_login_capture(&mut app, target);
+
+    let _ = app.update(Message::LoginCapturePrepared {
+        target,
+        result: Err("Riot Client was not found".to_string()),
+    });
+
+    assert!(!app.launcher_capture_in_progress);
+    assert_eq!(app.launcher_capture_kind, None);
+    assert!(app.login_capture.is_none());
+    assert_eq!(
+        app.status,
+        "Could not add account: Riot Client was not found"
+    );
+}
+
 #[test]
 fn starting_another_capture_discards_the_pending_draft_backup() {
     let dir = tempdir().expect("temp dir");
@@ -1978,6 +2130,13 @@ fn recapture_as_a_different_account_keeps_the_existing_backup() {
     app.state.push_account(account.clone());
     let captured = staged_recapture(&backup_root, "someone-else", "other login");
     let staging_slot = backup_root.join(captured.account_id.to_string());
+    waiting_login_capture(
+        &mut app,
+        super::LoginCaptureTarget::Existing {
+            account_id: account.id,
+            staging_id: captured.account_id,
+        },
+    );
 
     let _ = app.update(Message::LauncherSessionLoginStarted(
         account.id,
@@ -2013,6 +2172,13 @@ fn recapture_as_the_same_account_replaces_the_backup() {
     app.state.push_account(account.clone());
     let captured = staged_recapture(&backup_root, "Main-puuid", "fresh login");
     let staging_slot = backup_root.join(captured.account_id.to_string());
+    waiting_login_capture(
+        &mut app,
+        super::LoginCaptureTarget::Existing {
+            account_id: account.id,
+            staging_id: captured.account_id,
+        },
+    );
 
     let _ = app.update(Message::LauncherSessionLoginStarted(
         account.id,

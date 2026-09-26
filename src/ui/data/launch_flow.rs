@@ -92,7 +92,10 @@ pub(in crate::ui) struct LaunchAccountResult {
     pub(in crate::ui) sync_warning: Option<String>,
 }
 
-type PreviousAccountSync = Result<Option<(AccountId, LauncherSessionBackup)>, String>;
+/// The account that was signed in before a switch, with its backup refreshed from the live login,
+/// or why that login could not be saved.
+pub(in crate::ui) type PreviousAccountSync =
+    Result<Option<(AccountId, LauncherSessionBackup)>, String>;
 
 async fn prepare_account_launch(
     config: LaunchConfig,
@@ -190,14 +193,29 @@ pub(in crate::ui) async fn check_riot_client_window_visible() -> Result<bool, St
         .map_err(|error| error.to_string())
 }
 
-pub(in crate::ui) async fn start_launcher_session_login(
+/// Closes VALORANT and Riot Client, saves the signed-in account's live login to its backup, clears
+/// the live login and reopens Riot Client for a sign-in. Riot may have rotated the signed-in
+/// account's refresh token since its last sync, so it is saved before the live login is cleared.
+pub(in crate::ui) async fn prepare_login_capture(
+    config: LaunchConfig,
+    saved_sessions: Vec<(AccountId, LauncherSessionBackup)>,
+) -> Result<PreviousAccountSync, String> {
+    tokio::task::spawn_blocking(move || {
+        close_riot_processes().map_err(|error| error.to_string())?;
+        let previous_sync =
+            sync_signed_in_launcher_session(&saved_sessions).map_err(|error| error.to_string());
+        clear_existing_launcher_data_dirs().map_err(|error| error.to_string())?;
+        launch_riot_login_capture(&config).map_err(|error| error.to_string())?;
+        Ok(previous_sync)
+    })
+    .await
+    .map_err(|error| format!("failed to join login capture preparation task: {error}"))?
+}
+
+async fn wait_for_login_capture(
     account_id: AccountId,
     backup_root: PathBuf,
-    config: LaunchConfig,
 ) -> Result<CapturedLauncherSession, String> {
-    close_riot_processes().map_err(|error| error.to_string())?;
-    clear_existing_launcher_data_dirs().map_err(|error| error.to_string())?;
-    launch_riot_login_capture(&config).map_err(|error| error.to_string())?;
     wait_for_launcher_session_capture(
         account_id,
         backup_root,
@@ -207,13 +225,12 @@ pub(in crate::ui) async fn start_launcher_session_login(
     .await
 }
 
-pub(in crate::ui) async fn start_verified_launcher_session_login(
+/// Waits for the re-capture sign-in after `prepare_login_capture` and resolves whose login it is.
+pub(in crate::ui) async fn finish_verified_launcher_session_login(
     account_id: AccountId,
     backup_root: PathBuf,
-    config: LaunchConfig,
 ) -> Result<CapturedLauncherSession, String> {
-    let mut captured =
-        start_launcher_session_login(account_id, backup_root.clone(), config).await?;
+    let mut captured = wait_for_login_capture(account_id, backup_root.clone()).await?;
     match resolve_captured_launcher_identity(&captured.backup, Shard::default()).await {
         Ok(identity) => {
             captured.backup.puuid = identity.puuid;
@@ -321,12 +338,13 @@ pub(in crate::ui) fn region_from_player_affinities(
         .find_map(|value| ValorantRegion::from_live_affinity(value))
 }
 
-pub(in crate::ui) async fn start_account_capture(
+/// Waits for the new account's sign-in after `prepare_login_capture`, then closes Riot Client and
+/// resolves the account's identity.
+pub(in crate::ui) async fn finish_account_capture(
     account_id: AccountId,
     backup_root: PathBuf,
-    config: LaunchConfig,
 ) -> Result<CapturedAccountDraft, String> {
-    let captured = start_launcher_session_login(account_id, backup_root.clone(), config).await?;
+    let captured = wait_for_login_capture(account_id, backup_root.clone()).await?;
     if let Err(error) = close_riot_client_after_capture().await {
         let _ = remove_launcher_session_backup(backup_root, account_id);
         return Err(error);

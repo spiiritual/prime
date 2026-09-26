@@ -248,6 +248,8 @@ struct PrimeApp {
     settings_applying_account: Option<AccountId>,
     launcher_capture_in_progress: bool,
     launcher_capture_kind: Option<LauncherCaptureKind>,
+    /// The running add or re-capture that reopened Riot Client for a sign-in.
+    login_capture: Option<LoginCapture>,
     launch_preflight_account: Option<AccountId>,
     unavailable_launch_warning: Option<UnavailableLaunchWarning>,
     launching_account: Option<AccountId>,
@@ -265,6 +267,43 @@ enum LauncherCaptureKind {
     New,
     Current,
     Existing,
+}
+
+/// A login capture that closes Riot Client, clears its live login and waits for a new sign-in.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LoginCaptureTarget {
+    /// Adding an account; the login is captured into the new account's slot.
+    NewAccount(AccountId),
+    /// Re-capturing an account; the login is staged in its own slot until it is verified.
+    Existing {
+        account_id: AccountId,
+        staging_id: AccountId,
+    },
+}
+
+impl LoginCaptureTarget {
+    fn kind(self) -> LauncherCaptureKind {
+        match self {
+            Self::NewAccount(_) => LauncherCaptureKind::New,
+            Self::Existing { .. } => LauncherCaptureKind::Existing,
+        }
+    }
+
+    /// The backup slot the captured login is copied into.
+    fn slot_id(self) -> AccountId {
+        match self {
+            Self::NewAccount(account_id) => account_id,
+            Self::Existing { staging_id, .. } => staging_id,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct LoginCapture {
+    target: LoginCaptureTarget,
+    /// Set once Riot Client is open and the wait for a sign-in has started; only then can the
+    /// capture be cancelled.
+    wait: Option<iced::task::Handle>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -520,6 +559,14 @@ enum Message {
     AddCurrentAccount,
     ConfirmAddAccountCapture,
     CancelAddAccountCapture,
+    /// Riot Client was closed, the signed-in account's login saved, and Riot Client reopened for a
+    /// sign-in. The outer error means Riot Client could not be reopened; the inner one that the
+    /// previous login could not be saved.
+    LoginCapturePrepared {
+        target: LoginCaptureTarget,
+        result: Result<data::launch_flow::PreviousAccountSync, String>,
+    },
+    CancelLoginCapture,
     /// Whether VALORANT was running when the add or re-capture prompt opened.
     CapturePromptGameChecked(bool),
     AccountCaptureFinished(Result<CapturedAccountDraft, String>),
