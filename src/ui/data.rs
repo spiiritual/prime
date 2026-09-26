@@ -14,7 +14,6 @@ use crate::launch::{
     launch_riot_login_capture, launch_target_window_is_visible, launch_valorant,
     riot_client_window_is_visible,
 };
-use crate::riot::client::LauncherReauth;
 use crate::riot::client::{ApiCredentials, PlayerActivityEndpointPresence, RiotApi};
 use crate::riot::content::{
     AccessoryCatalog, BundleCatalog, ContractCatalog, CurrencyCatalog, ResolvedAccessory,
@@ -23,9 +22,9 @@ use crate::riot::content::{
 };
 use crate::riot::launcher_session::{
     CapturedLauncherSession, LauncherSessionError, apply_launcher_session_backup,
-    capture_current_launcher_session, clear_existing_launcher_data_dirs, launcher_cookie_header,
-    persist_refreshed_launcher_cookies, read_backup_cookies, remove_launcher_session_backup,
-    sync_current_launcher_session_backup,
+    capture_current_launcher_session, clear_existing_launcher_data_dirs,
+    persist_refreshed_refresh_token, read_backup_refresh_token, remove_launcher_session_backup,
+    remove_legacy_launcher_backups, sync_current_launcher_session_backup,
 };
 use crate::riot::models::{
     AccessoryStoreOffer, BonusStoreOffer, ContractsResponse, GameContentResponse,
@@ -33,7 +32,7 @@ use crate::riot::models::{
     PlayerMmrResponse, PlayerPenaltiesResponse, StoreBundle, StoreOffer, StorefrontResponse,
     WalletResponse,
 };
-use crate::storage::StoredState;
+use crate::storage::{AccountRepository, StoredState};
 
 use self::session::ApiIdentity;
 

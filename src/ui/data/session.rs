@@ -142,24 +142,30 @@ async fn launcher_api_session(
         );
     }
 
-    let cookies = read_backup_cookies(backup).map_err(|error| error.to_string())?;
-    let cookie_header = launcher_cookie_header(&cookies).map_err(|error| error.to_string())?;
-    let reauth = api.launcher_reauth(&cookie_header).await.map_err(|error| {
+    reauth_launcher_backup(api, backup).await
+}
+
+/// Exchanges a captured backup's remembered Riot Client refresh token for an API session.
+pub(in crate::ui::data) async fn reauth_launcher_backup(
+    api: &RiotApi,
+    backup: &LauncherSessionBackup,
+) -> Result<ApiSession, String> {
+    let refresh_token = read_backup_refresh_token(backup).map_err(|error| error.to_string())?;
+    let reauth = api.refresh_token_reauth(&refresh_token).await.map_err(|error| {
             format!(
                 "launcher session reauth failed: {error}. Recapture the Riot Client session or import a fresh redirect token."
             )
         })?;
 
-    persist_launcher_reauth_session(backup, reauth)
-}
-
-pub(in crate::ui::data) fn persist_launcher_reauth_session(
-    backup: &LauncherSessionBackup,
-    reauth: LauncherReauth,
-) -> Result<ApiSession, String> {
-    persist_refreshed_launcher_cookies(backup, &reauth.refreshed_cookies).map_err(|error| {
-        format!("launcher session reauth succeeded, but Prime could not save refreshed launcher cookies: {error}")
-    })?;
+    if let Some(rotated) = reauth
+        .refresh_token
+        .as_deref()
+        .filter(|rotated| *rotated != refresh_token)
+    {
+        persist_refreshed_refresh_token(backup, rotated).map_err(|error| {
+            format!("launcher session reauth succeeded, but Prime could not save the refreshed Riot Client login: {error}")
+        })?;
+    }
 
     Ok(ApiSession {
         session: reauth.tokens.into_session(),

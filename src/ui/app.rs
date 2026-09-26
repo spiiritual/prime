@@ -21,7 +21,7 @@ use super::data::game_settings::{
 };
 use super::data::image_assets::fetch_current_client_version;
 use super::data::launch_flow::{
-    check_riot_client_window_visible, launch_account, start_account_capture,
+    check_riot_client_window_visible, launch_account, load_accounts, start_account_capture,
     start_current_account_capture, start_verified_launcher_session_login,
 };
 use super::data::loadout::fetch_loadout;
@@ -92,7 +92,7 @@ impl PrimeApp {
             },
             Task::batch([
                 Task::perform(
-                    async move { load_repo.load().map_err(|error| error.to_string()) },
+                    async move { load_accounts(&load_repo) },
                     Message::Loaded,
                 ),
                 Task::perform(
@@ -120,18 +120,28 @@ impl PrimeApp {
         match message {
             Message::Loaded(result) => {
                 match result {
-                    Ok(state) => {
-                        self.riot_client_path_input = state
+                    Ok(loaded) => {
+                        self.riot_client_path_input = loaded
+                            .state
                             .riot_client_path
                             .as_ref()
                             .map(|path| path.display().to_string())
                             .unwrap_or_default();
-                        self.state = state;
-                        self.status = format!(
-                            "Loaded {} account profile(s) from {}",
-                            self.state.accounts.len(),
-                            self.repo.path().display()
-                        );
+                        self.state = loaded.state;
+                        self.status = if let Some(error) = loaded.legacy_cleanup_error {
+                            format!("Could not remove old Riot Client sessions: {error}")
+                        } else if !loaded.removed_legacy_sessions.is_empty() {
+                            format!(
+                                "Removed outdated Riot Client sessions for {}; re-capture their login",
+                                loaded.removed_legacy_sessions.join(", ")
+                            )
+                        } else {
+                            format!(
+                                "Loaded {} account profile(s) from {}",
+                                self.state.accounts.len(),
+                                self.repo.path().display()
+                            )
+                        };
                     }
                     Err(error) => {
                         self.status = format!("Failed to load accounts: {error}");

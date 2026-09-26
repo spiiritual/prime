@@ -25,7 +25,7 @@ use data::account_details::{
 };
 use data::game_settings::{AppliedGameSettingsResult, SavedGameSettingsResult};
 use data::launch_flow::CapturedAccountDraft;
-use data::launch_flow::{LaunchAccountResult, SHOP_RESET_CHECK_INTERVAL};
+use data::launch_flow::{LaunchAccountResult, LoadedAccounts, SHOP_RESET_CHECK_INTERVAL};
 use data::loadout::{LoadoutResult, LoadoutSummary};
 use data::shop::{StoreSummary, StorefrontResult};
 
@@ -450,7 +450,7 @@ impl std::fmt::Display for LoadoutTab {
 
 #[derive(Clone, Debug)]
 enum Message {
-    Loaded(Result<StoredState, String>),
+    Loaded(Result<LoadedAccounts, String>),
     Saved(Result<(), String>),
     TabSelected(Tab),
     LoadoutTabSelected(LoadoutTab),

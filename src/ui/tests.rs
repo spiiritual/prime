@@ -15,7 +15,9 @@ use super::data::account_details::{
 };
 use super::data::cache_account_api_context;
 use super::data::launch_flow::CapturedAccountDraft;
-use super::data::launch_flow::{is_pending_launcher_capture_error, require_launcher_session};
+use super::data::launch_flow::{
+    is_pending_launcher_capture_error, load_accounts, require_launcher_session,
+};
 use super::data::loadout::{
     LoadoutSummary, battle_pass_progress_from_responses, weapon_category, weapon_order,
 };
@@ -1411,13 +1413,93 @@ fn require_launcher_session_accepts_ready_backup() {
     assert_eq!(accepted.puuid, "puuid");
 }
 
+fn account_with_backup(backup_root: &Path, name: &str, settings: &str) -> AccountProfile {
+    let mut account = AccountProfile::new(name, None, Shard::Na).expect("account");
+    let data_dir = backup_root.join(account.id.to_string()).join("Data");
+    fs::create_dir_all(&data_dir).expect("backup data dir");
+    fs::write(data_dir.join("RiotGamesPrivateSettings.yaml"), settings).expect("settings");
+    account
+        .attach_launcher_session(LauncherSessionBackup {
+            data_dir,
+            captured_at_unix: 100,
+            puuid: format!("{name}-puuid"),
+        })
+        .expect("attach backup");
+    account
+}
+
+#[test]
+fn loading_accounts_removes_legacy_launcher_sessions() {
+    let dir = tempdir().expect("temp dir");
+    let repo = AccountRepository::new(dir.path().join("accounts.json"));
+    let backup_root = repo.launcher_backups_dir();
+    let legacy = account_with_backup(
+        &backup_root,
+        "Legacy",
+        "riot-login:
+  persist:
+    session:
+      cookies:
+        - name: \"ssid\"
+          value: \"ssid-value\"
+",
+    );
+    let current = account_with_backup(
+        &backup_root,
+        "Current",
+        "psl:
+    authorization:
+        riot-client:
+            refresh_token: \"refresh-value\"
+",
+    );
+    let legacy_slot = backup_root.join(legacy.id.to_string());
+    let orphaned_legacy_slot = backup_root.join(AccountId::new().to_string());
+    fs::create_dir_all(orphaned_legacy_slot.join("Data")).expect("orphaned slot");
+    fs::write(
+        orphaned_legacy_slot
+            .join("Data")
+            .join("RiotGamesPrivateSettings.yaml"),
+        "riot-login:
+  persist: null
+",
+    )
+    .expect("orphaned settings");
+    let mut state = StoredState::default();
+    state.push_account(legacy.clone());
+    state.push_account(current.clone());
+    repo.save(&state).expect("save state");
+
+    let loaded = load_accounts(&repo).expect("load accounts");
+
+    assert_eq!(loaded.removed_legacy_sessions, vec![legacy.summary()]);
+    assert_eq!(loaded.legacy_cleanup_error, None);
+    assert!(!legacy_slot.exists());
+    assert!(!orphaned_legacy_slot.exists());
+    let find = |state: &StoredState, id| {
+        state
+            .accounts
+            .iter()
+            .find(|account| account.id == id)
+            .cloned()
+            .expect("account")
+    };
+    assert_eq!(find(&loaded.state, legacy.id).launcher_session, None);
+    assert_eq!(
+        find(&loaded.state, current.id).launcher_session,
+        current.launcher_session
+    );
+    let saved = repo.load().expect("reload saved state");
+    assert_eq!(find(&saved, legacy.id).launcher_session, None);
+}
+
 #[test]
 fn only_missing_private_settings_is_pending_login_capture() {
     assert!(is_pending_launcher_capture_error(
         &LauncherSessionError::PrivateSettingsNotFound
     ));
     assert!(!is_pending_launcher_capture_error(
-        &LauncherSessionError::MissingSsid
+        &LauncherSessionError::MissingRefreshToken
     ));
 }
 

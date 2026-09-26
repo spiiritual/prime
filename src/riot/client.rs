@@ -1,20 +1,17 @@
 use reqwest::StatusCode;
-use reqwest::header::{
-    ACCEPT, AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, COOKIE, SET_COOKIE, USER_AGENT,
-};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
 use serde::{Deserialize, de::DeserializeOwned};
 use thiserror::Error;
 
 use crate::account::{Shard, ValorantRegion};
-use crate::riot::launcher_session::{LauncherCookie, parse_set_cookie_headers};
 
 const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 const USER_AGENT_VALUE: &str = concat!("prime/", env!("CARGO_PKG_VERSION"));
-const RIOT_CLIENT_AUTHORIZATION_URL: &str = "https://auth.riotgames.com/api/v1/authorization";
-const RIOT_CLIENT_REAUTH_USER_AGENT: &str =
-    "RiotGamesApi/24.3.0.3124 rso-auth (Windows;10;;Home, x64) riot_client/0";
+const RIOT_TOKEN_URL: &str = "https://auth.riotgames.com/token";
+const RIOT_CLIENT_USER_AGENT: &str =
+    "RiotClient/139.0.8.4969 rso-auth (Windows;10;;Professional, x64)";
 
-use super::auth::{AuthParseError, RedirectTokens, parse_redirect_tokens};
+use super::auth::RedirectTokens;
 use super::endpoints::{
     CLIENT_PLATFORM, ENTITLEMENTS_URL, HEADER_CLIENT_PLATFORM, HEADER_CLIENT_VERSION,
     HEADER_ENTITLEMENTS, PLAYER_INFO_URL, RIOT_GEO_URL, account_xp_url, content_url, contracts_url,
@@ -70,10 +67,23 @@ pub struct RiotApi {
     client: reqwest::Client,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LauncherReauth {
+#[derive(Clone, Eq, PartialEq)]
+pub struct RefreshTokenReauth {
     pub tokens: RedirectTokens,
-    pub refreshed_cookies: Vec<LauncherCookie>,
+    /// A replacement refresh token, when Riot rotates it during the exchange.
+    pub refresh_token: Option<String>,
+}
+
+impl std::fmt::Debug for RefreshTokenReauth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RefreshTokenReauth")
+            .field("tokens", &"<redacted>")
+            .field(
+                "refresh_token",
+                &self.refresh_token.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 impl RiotApi {
@@ -87,46 +97,30 @@ impl RiotApi {
         Ok(Self { client })
     }
 
-    pub async fn launcher_reauth(
+    /// Exchanges the remembered Riot Client refresh token for fresh access and ID tokens.
+    pub async fn refresh_token_reauth(
         &self,
-        cookie_header: &str,
-    ) -> Result<LauncherReauth, RiotApiError> {
+        refresh_token: &str,
+    ) -> Result<RefreshTokenReauth, RiotApiError> {
         let response = self
             .client
-            .post(RIOT_CLIENT_AUTHORIZATION_URL)
+            .post(RIOT_TOKEN_URL)
             .header(ACCEPT, "application/json")
-            .header(CACHE_CONTROL, "no-cache")
-            .header(CONTENT_TYPE, "application/json")
-            .header(COOKIE, cookie_header)
-            .header(USER_AGENT, RIOT_CLIENT_REAUTH_USER_AGENT)
-            .json(&serde_json::json!({
-                "acr_values": "",
-                "claims": "",
-                "client_id": "riot-client",
-                "code_challenge": "",
-                "code_challenge_method": "",
-                "nonce": "1",
-                "redirect_uri": "http://localhost/redirect",
-                "response_type": "token id_token",
-                "scope": "openid lol lol_region link ban account offline_access",
-            }))
+            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(USER_AGENT, RIOT_CLIENT_USER_AGENT)
+            .body(refresh_token_request_body(refresh_token))
             .send()
-            .await?
-            .error_for_status()?;
-        let refreshed_cookies = parse_set_cookie_headers(
-            response
-                .headers()
-                .get_all(SET_COOKIE)
-                .iter()
-                .filter_map(|value| value.to_str().ok()),
-        );
-        let body = response.text().await?;
-        let tokens = parse_riot_client_authorization_tokens(&body)?;
+            .await?;
 
-        Ok(LauncherReauth {
-            tokens,
-            refreshed_cookies,
-        })
+        if matches!(
+            response.status(),
+            StatusCode::BAD_REQUEST | StatusCode::UNAUTHORIZED
+        ) {
+            return Err(RiotApiError::RefreshTokenRejected);
+        }
+
+        let body = response.error_for_status()?.text().await?;
+        parse_refresh_token_response(&body)
     }
 
     pub async fn entitlement(
@@ -406,31 +400,42 @@ impl RiotApi {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct RiotClientAuthorizationResponse {
-    response: Option<RiotClientAuthorizationResult>,
+fn refresh_token_request_body(refresh_token: &str) -> String {
+    url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("grant_type", "refresh_token")
+        .append_pair("refresh_token", refresh_token)
+        .append_pair("client_id", "riot-client")
+        .finish()
 }
 
-#[derive(Debug, Deserialize)]
-struct RiotClientAuthorizationResult {
-    parameters: Option<RiotClientAuthorizationParameters>,
+#[derive(Deserialize)]
+struct RiotTokenResponse {
+    access_token: Option<String>,
+    id_token: Option<String>,
+    token_type: Option<String>,
+    expires_in: Option<i64>,
+    scope: Option<String>,
+    refresh_token: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct RiotClientAuthorizationParameters {
-    uri: Option<String>,
-}
+fn parse_refresh_token_response(body: &str) -> Result<RefreshTokenReauth, RiotApiError> {
+    let response: RiotTokenResponse = serde_json::from_str(body)?;
+    let access_token = response
+        .access_token
+        .filter(|token| !token.trim().is_empty())
+        .ok_or(RiotApiError::RefreshTokenRejected)?;
+    let non_empty = |value: Option<String>| value.filter(|value| !value.trim().is_empty());
 
-fn parse_riot_client_authorization_tokens(body: &str) -> Result<RedirectTokens, RiotApiError> {
-    let response: RiotClientAuthorizationResponse = serde_json::from_str(body)?;
-    let redirect_uri = response
-        .response
-        .and_then(|response| response.parameters)
-        .and_then(|parameters| parameters.uri)
-        .filter(|uri| !uri.trim().is_empty())
-        .ok_or(RiotApiError::RiotClientReauthRejected)?;
-
-    parse_redirect_tokens(&redirect_uri).map_err(RiotApiError::AuthParse)
+    Ok(RefreshTokenReauth {
+        tokens: RedirectTokens {
+            access_token,
+            id_token: non_empty(response.id_token),
+            token_type: non_empty(response.token_type).unwrap_or_else(|| "Bearer".to_string()),
+            expires_in_seconds: response.expires_in,
+            scope: non_empty(response.scope),
+        },
+        refresh_token: non_empty(response.refresh_token),
+    })
 }
 
 pub fn valorant_headers(
@@ -456,12 +461,10 @@ pub enum RiotApiError {
     MissingField(&'static str),
     #[error("invalid header value: {0}")]
     Header(#[from] reqwest::header::InvalidHeaderValue),
-    #[error("captured Riot Client cookies were not accepted; recapture the Riot Client session")]
-    RiotClientReauthRejected,
-    #[error("Riot Client authorization response was not valid JSON: {0}")]
+    #[error("Riot did not accept the saved Riot Client login; re-capture this account's login")]
+    RefreshTokenRejected,
+    #[error("Riot token response was not valid JSON: {0}")]
     AuthResponseJson(#[from] serde_json::Error),
-    #[error("Riot authorization redirect did not contain Riot tokens: {0}")]
-    AuthParse(#[from] AuthParseError),
     #[error(
         "Riot API HTTP error: {}",
         crate::http_error::format_reqwest_error(.0)
@@ -507,31 +510,41 @@ mod tests {
     }
 
     #[test]
-    fn parses_riot_client_authorization_response_uri() {
-        let tokens = parse_riot_client_authorization_tokens(
+    fn parses_refresh_token_response() {
+        let reauth = parse_refresh_token_response(
             r#"{
-                "type": "response",
-                "response": {
-                    "mode": "fragment",
-                    "parameters": {
-                        "uri": "http://localhost/redirect#access_token=access&id_token=id&expires_in=3600&token_type=Bearer&scope=openid%20account"
-                    }
-                }
+                "access_token": "access",
+                "expires_in": 3600,
+                "id_token": "id",
+                "prm_hints": {},
+                "refresh_token": "rotated-refresh",
+                "scope": "openid account",
+                "token_type": "Bearer"
             }"#,
         )
         .expect("tokens");
 
-        assert_eq!(tokens.access_token, "access");
-        assert_eq!(tokens.id_token.as_deref(), Some("id"));
-        assert_eq!(tokens.expires_in_seconds, Some(3600));
-        assert_eq!(tokens.scope.as_deref(), Some("openid account"));
+        assert_eq!(reauth.tokens.access_token, "access");
+        assert_eq!(reauth.tokens.id_token.as_deref(), Some("id"));
+        assert_eq!(reauth.tokens.token_type, "Bearer");
+        assert_eq!(reauth.tokens.expires_in_seconds, Some(3600));
+        assert_eq!(reauth.tokens.scope.as_deref(), Some("openid account"));
+        assert_eq!(reauth.refresh_token.as_deref(), Some("rotated-refresh"));
     }
 
     #[test]
-    fn rejects_riot_client_authorization_response_without_uri() {
-        let err =
-            parse_riot_client_authorization_tokens(r#"{"type":"auth"}"#).expect_err("missing uri");
+    fn rejects_refresh_token_response_without_access_token() {
+        let err = parse_refresh_token_response(r#"{"error":"invalid_grant"}"#)
+            .expect_err("missing access token");
 
-        assert!(matches!(err, RiotApiError::RiotClientReauthRejected));
+        assert!(matches!(err, RiotApiError::RefreshTokenRejected));
+    }
+
+    #[test]
+    fn refresh_token_request_body_is_form_encoded() {
+        assert_eq!(
+            refresh_token_request_body("a+b/c="),
+            "grant_type=refresh_token&refresh_token=a%2Bb%2Fc%3D&client_id=riot-client"
+        );
     }
 }

@@ -1,5 +1,53 @@
 use super::*;
-use super::session::persist_launcher_reauth_session;
+use super::session::reauth_launcher_backup;
+
+#[derive(Clone, Debug)]
+pub(in crate::ui) struct LoadedAccounts {
+    pub(in crate::ui) state: StoredState,
+    /// Accounts whose launcher session was captured by an older Riot Client and was removed.
+    pub(in crate::ui) removed_legacy_sessions: Vec<String>,
+    pub(in crate::ui) legacy_cleanup_error: Option<String>,
+}
+
+/// Loads saved accounts and removes launcher sessions captured by older Riot Client versions,
+/// which can no longer be restored or reauthenticated.
+pub(in crate::ui) fn load_accounts(repo: &AccountRepository) -> Result<LoadedAccounts, String> {
+    let mut state = repo.load().map_err(|error| error.to_string())?;
+    let removed_slots = match remove_legacy_launcher_backups(repo.launcher_backups_dir()) {
+        Ok(removed_slots) => removed_slots,
+        Err(error) => {
+            return Ok(LoadedAccounts {
+                state,
+                removed_legacy_sessions: Vec::new(),
+                legacy_cleanup_error: Some(error.to_string()),
+            });
+        }
+    };
+
+    let mut removed_legacy_sessions = Vec::new();
+    for account in &mut state.accounts {
+        if account.launcher_session.as_ref().is_some_and(|backup| {
+            removed_slots
+                .iter()
+                .any(|slot| backup.data_dir.starts_with(slot))
+        }) {
+            account.launcher_session = None;
+            removed_legacy_sessions.push(account.summary());
+        }
+    }
+
+    let legacy_cleanup_error = if removed_legacy_sessions.is_empty() {
+        None
+    } else {
+        repo.save(&state).err().map(|error| error.to_string())
+    };
+
+    Ok(LoadedAccounts {
+        state,
+        removed_legacy_sessions,
+        legacy_cleanup_error,
+    })
+}
 
 pub(in crate::ui) async fn launch_account(
     config: LaunchConfig,
@@ -282,7 +330,8 @@ pub(in crate::ui) async fn start_current_account_capture(
 
 fn current_account_capture_error(error: LauncherSessionError) -> String {
     match error {
-        LauncherSessionError::PrivateSettingsNotFound | LauncherSessionError::MissingSsid => {
+        LauncherSessionError::PrivateSettingsNotFound
+        | LauncherSessionError::MissingRefreshToken => {
             "Riot Client is not signed in with Stay signed in enabled".to_string()
         }
         error => error.to_string(),
@@ -329,14 +378,7 @@ async fn resolve_captured_launcher_identity(
     fallback_shard: Shard,
 ) -> Result<CapturedLauncherIdentity, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
-    let cookies = read_backup_cookies(backup).map_err(|error| error.to_string())?;
-    let cookie_header = launcher_cookie_header(&cookies).map_err(|error| error.to_string())?;
-    let mut session = api
-        .launcher_reauth(&cookie_header)
-        .await
-        .map_err(|error| error.to_string())
-        .and_then(|reauth| persist_launcher_reauth_session(backup, reauth))?
-        .session;
+    let mut session = reauth_launcher_backup(&api, backup).await?.session;
     let player_info = api
         .player_info(&session.access_token)
         .await
