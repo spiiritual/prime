@@ -1347,8 +1347,8 @@ impl PrimeApp {
                 }
 
                 if self.launcher_capture_in_progress {
-                    self.status =
-                        "Wait for the login capture to finish before launching VALORANT".to_string();
+                    self.status = "Wait for the login capture to finish before launching VALORANT"
+                        .to_string();
                     return Task::none();
                 }
 
@@ -1451,8 +1451,8 @@ impl PrimeApp {
                 }
 
                 if self.launcher_capture_in_progress {
-                    self.status =
-                        "Wait for the login capture to finish before launching VALORANT".to_string();
+                    self.status = "Wait for the login capture to finish before launching VALORANT"
+                        .to_string();
                     return Task::none();
                 }
 
