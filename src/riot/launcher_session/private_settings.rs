@@ -10,6 +10,23 @@ pub fn private_settings_refresh_token(contents: &str) -> Option<String> {
     (!token.is_empty() && token != "null" && token != "~").then_some(token)
 }
 
+/// True when the file holds a login saved by older Riot Client versions: an `ssid` cookie in the
+/// `riot-login` block and no refresh token. Those sessions can no longer be restored.
+pub(super) fn private_settings_is_legacy_ssid_login(contents: &str) -> bool {
+    let has_ssid_cookie = contents.lines().any(|line| {
+        let entry = line.trim().trim_start_matches("- ").trim();
+        entry
+            .strip_prefix("name:")
+            .is_some_and(|name| unquote_yaml_scalar(name) == "ssid")
+    });
+
+    has_ssid_cookie
+        && contents
+            .lines()
+            .any(|line| line.trim_end() == "riot-login:")
+        && private_settings_refresh_token(contents).is_none()
+}
+
 /// Replaces the remembered refresh token without rewriting unrelated YAML.
 pub(super) fn update_private_settings_refresh_token(
     contents: &str,

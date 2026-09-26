@@ -14,7 +14,9 @@ mod private_settings;
 
 use backup_files::{clear_dir, replace_dir_contents};
 pub use private_settings::private_settings_refresh_token;
-use private_settings::update_private_settings_refresh_token;
+use private_settings::{
+    private_settings_is_legacy_ssid_login, update_private_settings_refresh_token,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CapturedLauncherSession {
@@ -175,7 +177,8 @@ fn read_data_dir_refresh_token(data_dir: &Path) -> Result<String, LauncherSessio
 
 /// Removes captured backup slots saved by older Riot Client versions, which stored the remembered
 /// login as an `ssid` cookie instead of a refresh token. Those sessions can no longer be restored
-/// or reauthenticated. Returns the removed slot directories.
+/// or reauthenticated. Slots in any other unrecognized format are kept, so a future Riot Client
+/// format change cannot silently delete every backup. Returns the removed slot directories.
 pub fn remove_legacy_launcher_backups(
     backup_root: impl AsRef<Path>,
 ) -> Result<Vec<PathBuf>, LauncherSessionError> {
@@ -192,7 +195,7 @@ pub fn remove_legacy_launcher_backups(
             continue;
         };
 
-        if private_settings_refresh_token(&settings).is_none() {
+        if private_settings_is_legacy_ssid_login(&settings) {
             fs::remove_dir_all(&slot_dir)?;
             removed.push(slot_dir);
         }
@@ -616,6 +619,15 @@ rso-authenticator:
         let legacy_slot = backup_root.path().join(AccountId::new().to_string());
         let current_slot = backup_root.path().join(AccountId::new().to_string());
         let unrelated_slot = backup_root.path().join("unrelated");
+        let unknown_format_slot = backup_root.path().join(AccountId::new().to_string());
+        fs::create_dir_all(unknown_format_slot.join("Data")).expect("unknown format slot");
+        fs::write(
+            unknown_format_slot.join("Data").join(PRIVATE_SETTINGS_FILE),
+            "future-login:
+    session: \"opaque\"
+",
+        )
+        .expect("unknown format settings");
         fs::create_dir_all(legacy_slot.join("Data")).expect("legacy slot");
         fs::create_dir_all(current_slot.join("Data")).expect("current slot");
         fs::create_dir_all(&unrelated_slot).expect("unrelated slot");
@@ -636,6 +648,7 @@ rso-authenticator:
         assert!(!legacy_slot.exists());
         assert!(current_slot.exists());
         assert!(unrelated_slot.exists());
+        assert!(unknown_format_slot.exists());
     }
 
     #[test]

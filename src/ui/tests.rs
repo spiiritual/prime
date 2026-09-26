@@ -1489,7 +1489,11 @@ fn loading_accounts_removes_legacy_launcher_sessions() {
             .join("Data")
             .join("RiotGamesPrivateSettings.yaml"),
         "riot-login:
-  persist: null
+  persist:
+    session:
+      cookies:
+        - name: \"ssid\"
+          value: \"old\"
 ",
     )
     .expect("orphaned settings");
