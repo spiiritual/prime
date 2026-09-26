@@ -683,7 +683,7 @@ pub enum GameSettingsError {
     InvalidSettingsPayload,
     #[error("settings payload data is not valid base64")]
     Base64(#[from] base64::DecodeError),
-    #[error("settings payload version is unsupported")]
+    #[error("VALORANT settings data could not be read: {0}")]
     SettingsJson(serde_json::Error),
     #[error("settings profile JSON is invalid: {0}")]
     Json(#[from] serde_json::Error),
@@ -733,6 +733,19 @@ mod tests {
 
         assert_eq!(decoded.roaming_settings_version, Some(15));
         assert_eq!(decoded.float_settings.expect("float").len(), 1);
+    }
+
+    #[test]
+    fn settings_json_error_explains_the_parse_failure() {
+        let document = ValorantSettingsDocument::new(serde_json::json!({
+            "type": VALORANT_PLAYER_SETTINGS_TYPE,
+            "data": {"floatSettings": "not a list"}
+        }));
+
+        let message = document.settings_payload().expect_err("invalid").to_string();
+
+        assert!(message.starts_with("VALORANT settings data could not be read: "));
+        assert!(message.contains("invalid type"), "{message}");
     }
 
     #[test]
