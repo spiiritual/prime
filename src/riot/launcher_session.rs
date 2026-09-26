@@ -124,6 +124,39 @@ pub fn sync_launcher_session_backup_from_data_dir(
     })
 }
 
+/// Saves the live Riot Client login back to whichever saved account it belongs to, so switching away
+/// from it does not lose a refresh token Riot rotated since the last capture. Returns the account
+/// whose backup was updated, or `None` when the live login does not belong to a saved account.
+pub fn sync_signed_in_launcher_session(
+    saved_sessions: &[(AccountId, LauncherSessionBackup)],
+) -> Result<Option<(AccountId, LauncherSessionBackup)>, LauncherSessionError> {
+    let Some(source_data_dir) = ready_launcher_data_dir(default_data_dirs()) else {
+        return Ok(None);
+    };
+
+    sync_signed_in_launcher_session_from_data_dir(saved_sessions, source_data_dir)
+}
+
+pub fn sync_signed_in_launcher_session_from_data_dir(
+    saved_sessions: &[(AccountId, LauncherSessionBackup)],
+    source_data_dir: impl AsRef<Path>,
+) -> Result<Option<(AccountId, LauncherSessionBackup)>, LauncherSessionError> {
+    let source_data_dir = source_data_dir.as_ref();
+    let settings = read_data_dir_private_settings(source_data_dir)?;
+    let Some(puuid) = private_settings_signed_in_puuid(&settings) else {
+        return Ok(None);
+    };
+    let Some((account_id, backup)) = saved_sessions
+        .iter()
+        .find(|(_, backup)| backup.puuid.eq_ignore_ascii_case(&puuid))
+    else {
+        return Ok(None);
+    };
+
+    let synced = sync_launcher_session_backup_from_data_dir(backup, source_data_dir)?;
+    Ok(Some((*account_id, synced)))
+}
+
 pub fn read_backup_refresh_token(
     backup: &LauncherSessionBackup,
 ) -> Result<String, LauncherSessionError> {
@@ -747,6 +780,88 @@ rso-authenticator:
         assert_eq!(
             private_settings_signed_in_puuid(legacy_ssid_settings()),
             None
+        );
+    }
+
+    #[test]
+    fn syncs_the_signed_in_account_before_switching() {
+        let source = tempdir().expect("source");
+        let backups = tempdir().expect("backups");
+        fs::write(
+            source.path().join(PRIVATE_SETTINGS_FILE),
+            remembered_login_settings_for("second-puuid", "rotated-refresh"),
+        )
+        .expect("settings");
+        let first_dir = backups.path().join("first");
+        let second_dir = backups.path().join("second");
+        for (dir, puuid) in [(&first_dir, "first-puuid"), (&second_dir, "second-puuid")] {
+            fs::create_dir(dir).expect("backup dir");
+            fs::write(
+                dir.join(PRIVATE_SETTINGS_FILE),
+                remembered_login_settings_for(puuid, "old-refresh"),
+            )
+            .expect("backup settings");
+        }
+        let first_id = AccountId::new();
+        let second_id = AccountId::new();
+        let saved = [
+            (
+                first_id,
+                LauncherSessionBackup {
+                    data_dir: first_dir.clone(),
+                    captured_at_unix: 100,
+                    puuid: "first-puuid".to_string(),
+                },
+            ),
+            (
+                second_id,
+                LauncherSessionBackup {
+                    data_dir: second_dir.clone(),
+                    captured_at_unix: 100,
+                    puuid: "SECOND-PUUID".to_string(),
+                },
+            ),
+        ];
+
+        let (synced_id, synced) =
+            sync_signed_in_launcher_session_from_data_dir(&saved, source.path())
+                .expect("sync")
+                .expect("signed-in account is saved");
+
+        assert_eq!(synced_id, second_id);
+        assert_eq!(synced.data_dir, second_dir);
+        assert!(
+            fs::read_to_string(second_dir.join(PRIVATE_SETTINGS_FILE))
+                .expect("second settings")
+                .contains("rotated-refresh")
+        );
+        assert!(
+            fs::read_to_string(first_dir.join(PRIVATE_SETTINGS_FILE))
+                .expect("first settings")
+                .contains("old-refresh")
+        );
+    }
+
+    #[test]
+    fn switching_leaves_backups_alone_when_the_live_login_is_not_saved() {
+        let source = tempdir().expect("source");
+        let backup_dir = tempdir().expect("backup");
+        fs::write(
+            source.path().join(PRIVATE_SETTINGS_FILE),
+            remembered_login_settings_for("stranger-puuid", "live-refresh"),
+        )
+        .expect("settings");
+        fs::write(backup_dir.path().join(PRIVATE_SETTINGS_FILE), "old").expect("old settings");
+        let saved = [(AccountId::new(), backup_at(backup_dir.path()))];
+
+        let synced =
+            sync_signed_in_launcher_session_from_data_dir(&saved, source.path()).expect("sync");
+
+        assert_eq!(synced, None);
+        assert_eq!(
+            fs::read_to_string(backup_dir.path().join(PRIVATE_SETTINGS_FILE))
+                .expect("backup settings"),
+            "old"
         );
     }
 
