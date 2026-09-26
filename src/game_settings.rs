@@ -339,10 +339,15 @@ impl GameSettingsProfileRepository {
                 continue;
             }
 
-            let contents = fs::read_to_string(path)?;
-            let profile: GameSettingsProfile =
-                serde_json::from_str(&contents).map_err(GameSettingsError::Json)?;
-            profiles.push(profile.metadata()?);
+            // A single unreadable or outdated profile file should not hide every other profile.
+            let Some(metadata) = fs::read_to_string(&path)
+                .ok()
+                .and_then(|contents| serde_json::from_str::<GameSettingsProfile>(&contents).ok())
+                .and_then(|profile| profile.metadata().ok())
+            else {
+                continue;
+            };
+            profiles.push(metadata);
         }
 
         Ok(profiles)
@@ -885,5 +890,36 @@ mod tests {
             serde_json::json!("Space")
         );
         assert_eq!(target.extra["unknownTargetField"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn profile_listing_skips_unreadable_profile_files() {
+        let dir = tempfile::tempdir().expect("profile dir");
+        let repository = GameSettingsProfileRepository::new(dir.path());
+        let profile = GameSettingsProfile {
+            id: new_profile_id(AccountId::new(), GameSettingsProfilePurpose::Profile),
+            name: "Main".to_string(),
+            purpose: GameSettingsProfilePurpose::Profile,
+            source_account_id: AccountId::new(),
+            source_display_name: "Main".to_string(),
+            source_puuid: "puuid".to_string(),
+            captured_at_unix: 100,
+            preference_base_url: "https://player-preferences-usw2.pp.sgp.pvp.net".to_string(),
+            settings_version: Some(15),
+            preference: ValorantSettingsDocument::new(serde_json::json!({
+                "type": VALORANT_PLAYER_SETTINGS_TYPE,
+                "data": {"roamingSetttingsVersion": 15}
+            })),
+        };
+        repository.save(&profile).expect("save profile");
+        fs::write(dir.path().join("corrupt.json"), "{ not json").expect("corrupt file");
+
+        let profiles = repository.profile_metadata().expect("profile listing");
+
+        assert_eq!(
+            profiles.iter().map(|profile| profile.id.as_str()).collect::<Vec<_>>(),
+            [profile.id.as_str()]
+        );
+        assert_eq!(repository.latest_profile().expect("latest").id, profile.id);
     }
 }
