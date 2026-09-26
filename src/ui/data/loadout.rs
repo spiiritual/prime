@@ -734,26 +734,63 @@ pub(in crate::ui) async fn fetch_loadout(
 ) -> Result<LoadoutResult, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
     let resolved = resolve_credentials(&api, &account, client_version).await?;
-    let metadata = fetch_loadout_metadata().await?;
+    let metadata = fetch_loadout_metadata().await;
     let (account_xp, battle_pass, loadout) = iced::futures::join!(
         api.account_xp(&resolved.credentials),
-        fetch_battle_pass_progress(&api, &resolved.credentials, &metadata),
-        api.player_loadout(&resolved.credentials),
+        async {
+            match &metadata.battle_pass {
+                Ok(catalogs) => {
+                    fetch_battle_pass_progress(&api, &resolved.credentials, catalogs).await
+                }
+                Err(error) => Err(error.clone()),
+            }
+        },
+        async {
+            match &metadata.weapon_content {
+                Ok(_) => api
+                    .player_loadout(&resolved.credentials)
+                    .await
+                    .map_err(|error| error.to_string()),
+                Err(error) => Err(error.clone()),
+            }
+        },
     );
     let account_level = account_xp.ok().map(|xp| xp.progress.level);
-
-    // The loadout and battle pass are separate tabs, so one failing should not hide the other.
-    let mut summary = match loadout {
-        Ok(response) => LoadoutSummary::from_response(
+    let loadout = loadout.and_then(|response| {
+        let weapon_content = metadata.weapon_content.as_ref().map_err(Clone::clone)?;
+        Ok(LoadoutSummary::from_response(
             response,
-            &metadata.weapon_content.skins,
-            &metadata.weapon_content.weapons,
+            &weapon_content.skins,
+            &weapon_content.weapons,
             account_level,
-        ),
-        Err(error) if battle_pass.is_ok() => {
-            LoadoutSummary::without_loadout(error.to_string(), account_level)
+        ))
+    });
+
+    let mut summary = combine_loadout_sections(loadout, battle_pass, account_level)?;
+    cache_loadout_images(&mut summary, &image_cache).await;
+
+    Ok(LoadoutResult {
+        account_id: account.id,
+        summary,
+        session: resolved.session,
+        launcher_session: resolved.launcher_session,
+        identity: resolved.identity,
+    })
+}
+
+/// The loadout and battle pass are separate sub-tabs, so one failing doesn't hide the other.
+/// Only when both fail is the load an error, and it names both failures.
+pub(in crate::ui) fn combine_loadout_sections(
+    loadout: Result<LoadoutSummary, String>,
+    battle_pass: Result<BattlePassProgressDisplay, String>,
+    account_level: Option<i64>,
+) -> Result<LoadoutSummary, String> {
+    let mut summary = match (loadout, &battle_pass) {
+        (Ok(summary), _) => summary,
+        (Err(error), Ok(_)) => LoadoutSummary::without_loadout(error, account_level),
+        (Err(loadout_error), Err(battle_pass_error)) => {
+            return Err(format!("{loadout_error}; battle pass: {battle_pass_error}"));
         }
-        Err(error) => return Err(error.to_string()),
     };
     match battle_pass {
         Ok(progress) => {
@@ -765,15 +802,8 @@ pub(in crate::ui) async fn fetch_loadout(
             summary.battle_pass_error = Some(error);
         }
     }
-    cache_loadout_images(&mut summary, &image_cache).await;
 
-    Ok(LoadoutResult {
-        account_id: account.id,
-        summary,
-        session: resolved.session,
-        launcher_session: resolved.launcher_session,
-        identity: resolved.identity,
-    })
+    Ok(summary)
 }
 
 fn known_account_level(level: Option<i64>) -> Option<i64> {

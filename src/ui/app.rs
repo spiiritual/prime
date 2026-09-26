@@ -1427,14 +1427,22 @@ impl PrimeApp {
                             ""
                         };
 
-                        self.set_status(if result.summary.loadout_error.is_some() {
-                            "Loaded battle pass progress; loadout unavailable".to_string()
-                        } else {
-                            format!(
-                                "Loaded loadout with {} gun skin(s){}",
-                                gun_count, battle_pass_status
-                            )
-                        });
+                        self.set_status(
+                            match (
+                                &result.summary.loadout_error,
+                                &result.summary.battle_pass_error,
+                            ) {
+                                (Some(error), _) => {
+                                    format!("Loaded battle pass progress; loadout failed: {error}")
+                                }
+                                (None, Some(error)) => format!(
+                                    "Loaded loadout with {gun_count} gun skin(s); battle pass failed: {error}"
+                                ),
+                                (None, None) => format!(
+                                    "Loaded loadout with {gun_count} gun skin(s){battle_pass_status}"
+                                ),
+                            },
+                        );
                         if let Some(level) = result.summary.account_level
                             && let Some(account) = self
                                 .state

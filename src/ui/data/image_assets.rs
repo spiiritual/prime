@@ -3,7 +3,7 @@ use super::*;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use iced::futures::future::try_join4;
+use iced::futures::future::{join4, try_join4};
 
 use crate::riot::content::{ContentError, WeaponContent};
 
@@ -201,22 +201,44 @@ pub(in crate::ui) struct LoadoutMetadata {
     pub(in crate::ui) currencies: Arc<CurrencyCatalog>,
 }
 
-pub(in crate::ui) async fn fetch_loadout_metadata() -> Result<LoadoutMetadata, String> {
-    let api = ValorantContentApi::new().map_err(|error| error.to_string())?;
-    let (weapon_content, contracts, accessories, currencies) = try_join4(
+/// The catalogs each Loadout section needs. The loadout uses only the weapon content and the
+/// battle pass uses all four, so a failed download only affects the section that needs it.
+pub(in crate::ui) struct LoadoutCatalogs {
+    pub(in crate::ui) weapon_content: Result<Arc<WeaponContent>, String>,
+    pub(in crate::ui) battle_pass: Result<LoadoutMetadata, String>,
+}
+
+pub(in crate::ui) async fn fetch_loadout_metadata() -> LoadoutCatalogs {
+    let api = match ValorantContentApi::new() {
+        Ok(api) => api,
+        Err(error) => {
+            let error = error.to_string();
+            return LoadoutCatalogs {
+                weapon_content: Err(error.clone()),
+                battle_pass: Err(error),
+            };
+        }
+    };
+    let (weapon_content, contracts, accessories, currencies) = join4(
         WEAPON_CONTENT.get_or_fetch(|| api.weapon_content()),
         CONTRACT_CATALOG.get_or_fetch(|| api.contract_catalog()),
         ACCESSORY_CATALOG.get_or_fetch(|| api.accessory_catalog()),
         CURRENCY_CATALOG.get_or_fetch(|| api.currency_catalog()),
     )
-    .await?;
+    .await;
+    let battle_pass = weapon_content.clone().and_then(|weapon_content| {
+        Ok(LoadoutMetadata {
+            weapon_content,
+            contracts: contracts?,
+            accessories: accessories?,
+            currencies: currencies?,
+        })
+    });
 
-    Ok(LoadoutMetadata {
+    LoadoutCatalogs {
         weapon_content,
-        contracts,
-        accessories,
-        currencies,
-    })
+        battle_pass,
+    }
 }
 
 pub(in crate::ui) async fn fetch_current_client_version() -> Result<String, String> {

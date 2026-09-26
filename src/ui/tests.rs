@@ -20,7 +20,8 @@ use super::data::launch_flow::{
     LaunchAccountResult, is_pending_launcher_capture_error, load_accounts, require_launcher_session,
 };
 use super::data::loadout::{
-    LoadoutSummary, battle_pass_progress_from_responses, weapon_category, weapon_order,
+    BattlePassProgressDisplay, LoadoutResult, LoadoutSummary, battle_pass_progress_from_responses,
+    combine_loadout_sections, weapon_category, weapon_order,
 };
 use super::data::non_empty_path;
 use super::data::session::{ApiIdentity, api_identity};
@@ -3084,6 +3085,108 @@ fn an_import_does_not_start_while_an_update_downloads() {
 
     assert!(!app.import_account_in_progress);
     assert!(app.status.contains("update"), "{}", app.status);
+}
+
+fn loaded_loadout() -> LoadoutSummary {
+    LoadoutSummary {
+        account_level: None,
+        gun_skins: Vec::new(),
+        loadout_error: None,
+        battle_pass: None,
+        battle_pass_error: None,
+    }
+}
+
+fn battle_pass_display() -> BattlePassProgressDisplay {
+    BattlePassProgressDisplay {
+        name: "Pass".to_string(),
+        season_name: None,
+        level_reached: 1,
+        total_levels: Some(50),
+        progression_towards_next_level: 0,
+        next_level_progress_required: None,
+        total_progression_earned: 0,
+        total_progression_required: None,
+        completed: false,
+        remaining_seconds: None,
+        earned_rewards: Vec::new(),
+        unearned_rewards: Vec::new(),
+        locked_paid_rewards: Vec::new(),
+        loaded_at: iced::time::Instant::now(),
+    }
+}
+
+#[test]
+fn a_failed_battle_pass_does_not_hide_the_loadout() {
+    let summary = combine_loadout_sections(Ok(loaded_loadout()), Err("500".to_string()), None)
+        .expect("loadout");
+
+    assert_eq!(summary.loadout_error, None);
+    assert_eq!(summary.battle_pass_error.as_deref(), Some("500"));
+}
+
+#[test]
+fn a_failed_loadout_does_not_hide_the_battle_pass() {
+    let summary = combine_loadout_sections(
+        Err("weapon content unavailable".to_string()),
+        Ok(battle_pass_display()),
+        Some(12),
+    )
+    .expect("battle pass");
+
+    assert_eq!(
+        summary.loadout_error.as_deref(),
+        Some("weapon content unavailable")
+    );
+    assert!(summary.battle_pass.is_some());
+    assert_eq!(summary.account_level, Some(12));
+}
+
+#[test]
+fn when_loadout_and_battle_pass_both_fail_both_errors_are_reported() {
+    let error = combine_loadout_sections(
+        Err("loadout 404".to_string()),
+        Err("contracts 500".to_string()),
+        None,
+    )
+    .expect_err("both failed");
+
+    assert!(error.contains("loadout 404"), "{error}");
+    assert!(error.contains("contracts 500"), "{error}");
+}
+
+#[test]
+fn a_loadout_whose_battle_pass_failed_says_so() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account) = accounts_tab_app(dir.path());
+    app.loadout_request = Some(super::ViewRequest {
+        id: 1,
+        account_id: account.id,
+    });
+    let summary = LoadoutSummary {
+        battle_pass_error: Some("Riot returned 500".to_string()),
+        ..loaded_loadout()
+    };
+
+    let _ = app.update(Message::LoadoutLoaded(
+        1,
+        Ok(LoadoutResult {
+            account_id: account.id,
+            summary,
+            session: AuthSession::new("access", None, None, "Bearer", Some(3600), 100),
+            launcher_session: None,
+            identity: ApiIdentity {
+                puuid: "puuid-a".to_string(),
+                game_name: None,
+                tag_line: None,
+                shard: Shard::Na,
+            },
+        }),
+    ));
+
+    assert!(app.status.contains("battle pass failed"), "{}", app.status);
+    assert!(app.status.contains("Riot returned 500"), "{}", app.status);
+    assert!(status_message_is_error(&app.status), "{}", app.status);
 }
 
 #[test]
