@@ -37,6 +37,17 @@ pub(in crate::ui) struct AccountRankFailure {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(in crate::ui) struct AccountAvailabilityRefresh {
     pub(in crate::ui) accounts: Vec<AccountActivityCheck>,
+    /// API sessions obtained during the checks that the accounts did not have stored yet, so the
+    /// next check can reuse them instead of re-authenticating.
+    pub(in crate::ui) refreshed_sessions: Vec<RefreshedApiContext>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::ui) struct RefreshedApiContext {
+    pub(in crate::ui) account_id: AccountId,
+    pub(in crate::ui) session: AuthSession,
+    pub(in crate::ui) launcher_session: Option<LauncherSessionBackup>,
+    pub(in crate::ui) identity: ApiIdentity,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -396,6 +407,7 @@ pub(in crate::ui) async fn fetch_account_availabilities(
                         availability: AccountAvailability::activity_check_failed(),
                     })
                     .collect(),
+                refreshed_sessions: Vec::new(),
             };
         }
     };
@@ -403,9 +415,10 @@ pub(in crate::ui) async fn fetch_account_availabilities(
     let mut result = AccountAvailabilityRefresh::default();
 
     for account in accounts {
-        result
-            .accounts
-            .push(fetch_account_availability(&api, account, client_version.clone()).await);
+        let (check, refreshed) =
+            check_account_availability(&api, account, client_version.clone()).await;
+        result.accounts.push(check);
+        result.refreshed_sessions.extend(refreshed);
     }
 
     result
@@ -416,21 +429,46 @@ pub(in crate::ui) async fn fetch_account_availability(
     account: AccountProfile,
     client_version: String,
 ) -> AccountActivityCheck {
+    check_account_availability(api, account, client_version)
+        .await
+        .0
+}
+
+async fn check_account_availability(
+    api: &RiotApi,
+    account: AccountProfile,
+    client_version: String,
+) -> (AccountActivityCheck, Option<RefreshedApiContext>) {
     let account_id = account.id;
+    let mut refreshed = None;
     let availability = match resolve_credentials(api, &account, client_version).await {
-        Ok(resolved) => match resolved.region {
-            Some(region) => fetch_resolved_account_activity(api, &resolved.credentials, region)
-                .await
-                .into(),
-            None => AccountAvailability::activity_check_failed(),
-        },
+        Ok(resolved) => {
+            let availability = match resolved.region {
+                Some(region) => fetch_resolved_account_activity(api, &resolved.credentials, region)
+                    .await
+                    .into(),
+                None => AccountAvailability::activity_check_failed(),
+            };
+            if account.session.as_ref() != Some(&resolved.session) {
+                refreshed = Some(RefreshedApiContext {
+                    account_id,
+                    session: resolved.session,
+                    launcher_session: resolved.launcher_session,
+                    identity: resolved.identity,
+                });
+            }
+            availability
+        }
         Err(_) => AccountAvailability::activity_check_failed(),
     };
 
-    AccountActivityCheck {
-        account_id,
-        availability,
-    }
+    (
+        AccountActivityCheck {
+            account_id,
+            availability,
+        },
+        refreshed,
+    )
 }
 
 async fn fetch_resolved_account_activity(

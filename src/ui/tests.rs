@@ -10,8 +10,9 @@ use super::app::{
     launch_preflight_decision,
 };
 use super::data::account_details::{
-    AccountActivity, AccountActivityProbe, AccountAvailability, classify_account_activity,
-    competitive_rank_from_mmr, penalty_status_from_response, rank_name_for_competitive_tier,
+    AccountActivity, AccountActivityProbe, AccountAvailability, AccountAvailabilityRefresh,
+    RefreshedApiContext, classify_account_activity, competitive_rank_from_mmr,
+    penalty_status_from_response, rank_name_for_competitive_tier,
 };
 use super::data::cache_account_api_context;
 use super::data::launch_flow::CapturedAccountDraft;
@@ -2163,6 +2164,59 @@ fn cache_account_api_context_updates_refreshed_launcher_session() {
     .expect("cache api context");
 
     assert_eq!(state.accounts[0].launcher_session, Some(launcher_session));
+}
+
+fn availability_refresh(
+    account_id: AccountId,
+    launcher_session: Option<LauncherSessionBackup>,
+) -> Message {
+    Message::AccountAvailabilitiesLoaded(AccountAvailabilityRefresh {
+        accounts: vec![],
+        refreshed_sessions: vec![RefreshedApiContext {
+            account_id,
+            session: AuthSession::new("fresh", None, None, "Bearer", Some(3600), 100),
+            launcher_session,
+            identity: ApiIdentity {
+                puuid: "Main-puuid".to_string(),
+                game_name: None,
+                tag_line: None,
+                shard: Shard::Na,
+            },
+        }],
+    })
+}
+
+#[test]
+fn availability_checks_keep_the_sessions_they_refresh() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = account_with_backup(&app.repo.launcher_backups_dir(), "Main", "settings");
+    let backup = account.launcher_session.clone();
+    app.state.push_account(account.clone());
+
+    let _ = app.update(availability_refresh(account.id, backup));
+
+    let session = app.state.accounts[0].session.as_ref().expect("session");
+    assert_eq!(session.access_token, "fresh");
+}
+
+#[test]
+fn availability_checks_drop_sessions_for_a_replaced_login() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = account_with_backup(&app.repo.launcher_backups_dir(), "Main", "settings");
+    let current = account.launcher_session.clone();
+    app.state.push_account(account.clone());
+    let stale = LauncherSessionBackup {
+        data_dir: dir.path().join("old-slot"),
+        captured_at_unix: 50,
+        puuid: "Main-puuid".to_string(),
+    };
+
+    let _ = app.update(availability_refresh(account.id, Some(stale)));
+
+    assert!(app.state.accounts[0].session.is_none());
+    assert_eq!(app.state.accounts[0].launcher_session, current);
 }
 
 #[test]

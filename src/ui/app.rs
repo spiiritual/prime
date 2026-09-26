@@ -15,8 +15,9 @@ use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{AvailableUpdate, check_for_update, download_and_prepare_update};
 
 use super::data::account_details::{
-    AccountActivityCheck, AccountAvailability, AccountRankResult, fetch_account_availabilities,
-    fetch_account_availability, fetch_account_ranks, fetch_profile_identity,
+    AccountActivityCheck, AccountAvailability, AccountRankResult, RefreshedApiContext,
+    fetch_account_availabilities, fetch_account_availability, fetch_account_ranks,
+    fetch_profile_identity,
 };
 use super::data::game_settings::{
     apply_game_settings_profile, load_game_settings_profiles, save_game_settings_profile,
@@ -969,7 +970,16 @@ impl PrimeApp {
                     }
                 }
 
-                Task::none()
+                let mut cached_session = false;
+                for refreshed in result.refreshed_sessions {
+                    cached_session |= self.cache_refreshed_api_context(refreshed);
+                }
+
+                if cached_session {
+                    self.save_task()
+                } else {
+                    Task::none()
+                }
             }
             Message::GameSettingsProfilesLoaded(result) => {
                 match result {
@@ -1902,6 +1912,33 @@ impl PrimeApp {
             fetch_loadout(account, self.client_version_input.clone(), image_cache),
             move |result| Message::LoadoutLoaded(account_id, result),
         )
+    }
+
+    /// Keeps an API session obtained in the background, unless the account's launcher login was
+    /// replaced or removed while the request ran. Returns whether anything changed.
+    fn cache_refreshed_api_context(&mut self, refreshed: RefreshedApiContext) -> bool {
+        let still_current = self
+            .state
+            .accounts
+            .iter()
+            .find(|account| account.id == refreshed.account_id)
+            .is_some_and(|account| match &refreshed.launcher_session {
+                Some(backup) => account
+                    .launcher_session
+                    .as_ref()
+                    .is_some_and(|current| current.data_dir == backup.data_dir),
+                None => true,
+            });
+
+        still_current
+            && cache_account_api_context(
+                &mut self.state,
+                refreshed.account_id,
+                refreshed.session,
+                refreshed.launcher_session,
+                refreshed.identity,
+            )
+            .is_ok()
     }
 
     /// Records the refreshed backup of the account that was signed in before a switch. Returns
