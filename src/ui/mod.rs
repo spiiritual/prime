@@ -107,8 +107,8 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
 }
 
 fn loading_indicator_active(app: &PrimeApp) -> bool {
-    app.store_loading
-        || app.loadout_loading
+    app.store_request.is_some()
+        || app.loadout_request.is_some()
         || app.profile_identity_refreshing_account.is_some()
         || app.account_ranks_loading
         || app.account_availability_loading
@@ -232,10 +232,10 @@ struct PrimeApp {
     pending_account: Option<CapturedAccountDraft>,
     store_summary: Option<StoreSummary>,
     loadout_summary: Option<LoadoutSummary>,
-    store_loading: bool,
-    loadout_loading: bool,
-    store_loading_account: Option<AccountId>,
-    loadout_loading_account: Option<AccountId>,
+    /// The Shop load whose reply is shown; replies to other requests only cache their session.
+    store_request: Option<ViewRequest>,
+    loadout_request: Option<ViewRequest>,
+    next_request_id: u64,
     profile_identity_refreshing_account: Option<AccountId>,
     account_ranks_loading: bool,
     /// When the last all-account details and availability loads started, so reopening the
@@ -262,6 +262,14 @@ struct PrimeApp {
     image_cache_size_bytes: u64,
     loading_frame: usize,
     now: iced::time::Instant,
+}
+
+/// A Shop or Loadout load for one account. Each load gets a new ID, so a reply to an earlier
+/// load for the same account is not mistaken for the latest one.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ViewRequest {
+    id: u64,
+    account_id: AccountId,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -625,10 +633,12 @@ enum Message {
     AccountSettingsSaved(Result<SavedGameSettingsResult, String>),
     ApplySavedSettings(AccountId),
     SavedSettingsApplied(Result<AppliedGameSettingsResult, String>),
-    StorefrontLoaded(AccountId, Result<StorefrontResult, String>),
+    /// The reply to the Shop load with this request ID.
+    StorefrontLoaded(u64, Result<StorefrontResult, String>),
     ShopTimerTick(iced::time::Instant),
     LoadingTick,
-    LoadoutLoaded(AccountId, Result<LoadoutResult, String>),
+    /// The reply to the Loadout load with this request ID.
+    LoadoutLoaded(u64, Result<LoadoutResult, String>),
     OpenImageViewer(ImageViewerRequest),
     ImageViewerImageLoaded(ImageViewerSource, Result<PathBuf, String>),
     CloseImageViewer,

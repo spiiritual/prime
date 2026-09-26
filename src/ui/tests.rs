@@ -2933,6 +2933,68 @@ fn reopening_accounts_soon_after_a_load_does_not_refetch() {
     assert!(!app.account_availability_loading);
 }
 
+fn two_account_app(dir: &Path) -> (PrimeApp, AccountProfile, AccountProfile) {
+    let mut app = test_app(dir);
+    let main = AccountProfile::new("Main", None, Shard::Na).expect("main");
+    let alt = AccountProfile::new("Alt", None, Shard::Na).expect("alt");
+    app.state.push_account(main.clone());
+    app.state.push_account(alt.clone());
+    app.state.select_account(main.id);
+    app.client_version_input = "release-1".to_string();
+    (app, main, alt)
+}
+
+#[test]
+fn a_shop_reply_for_an_account_switched_away_from_is_not_reported() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, alt) = two_account_app(dir.path());
+    let _ = app.update(Message::TabSelected(super::Tab::Shop));
+    let request = app.store_request.expect("shop request").id;
+    let _ = app.update(Message::TabSelected(super::Tab::Settings));
+    let _ = app.update(Message::SelectAccount(alt.id));
+
+    let _ = app.update(Message::StorefrontLoaded(request, Err("boom".to_string())));
+
+    assert!(!app.status.contains("Store check failed"), "{}", app.status);
+    assert_eq!(app.store_request, None);
+}
+
+#[test]
+fn an_old_shop_reply_does_not_end_the_newer_load_for_the_same_account() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, main, alt) = two_account_app(dir.path());
+    let _ = app.update(Message::TabSelected(super::Tab::Shop));
+    let first = app.store_request.expect("first request").id;
+    let _ = app.update(Message::SelectAccount(alt.id));
+    let _ = app.update(Message::SelectAccount(main.id));
+    let latest = app.store_request.expect("latest request");
+
+    let _ = app.update(Message::StorefrontLoaded(first, Err("boom".to_string())));
+
+    assert_eq!(app.store_request, Some(latest));
+    assert!(!app.status.contains("Store check failed"), "{}", app.status);
+}
+
+#[test]
+fn an_old_loadout_reply_does_not_end_the_newer_load_for_the_same_account() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, main, alt) = two_account_app(dir.path());
+    let _ = app.update(Message::TabSelected(super::Tab::Loadout));
+    let first = app.loadout_request.expect("first request").id;
+    let _ = app.update(Message::SelectAccount(alt.id));
+    let _ = app.update(Message::SelectAccount(main.id));
+    let latest = app.loadout_request.expect("latest request");
+
+    let _ = app.update(Message::LoadoutLoaded(first, Err("boom".to_string())));
+
+    assert_eq!(app.loadout_request, Some(latest));
+    assert!(
+        !app.status.contains("Loadout check failed"),
+        "{}",
+        app.status
+    );
+}
+
 #[test]
 fn development_builds_do_not_report_update_checks_as_failed() {
     let dir = tempdir().expect("temp dir");

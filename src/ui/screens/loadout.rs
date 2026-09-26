@@ -79,7 +79,7 @@ fn active_loadout_tab(app: &PrimeApp) -> Element<'_, Message> {
 fn skins_tab(app: &PrimeApp) -> Element<'_, Message> {
     let mut content = column![].spacing(12).width(Length::Fill);
 
-    if app.loadout_loading {
+    if app.loadout_request.is_some() {
         content = content.push(loading_line("Loading loadout...", app.loading_frame));
     }
 
@@ -110,7 +110,7 @@ fn skins_tab(app: &PrimeApp) -> Element<'_, Message> {
 fn battle_pass_tab(app: &PrimeApp) -> Element<'_, Message> {
     let mut content = column![].spacing(12).width(Length::Fill);
 
-    if app.loadout_loading {
+    if app.loadout_request.is_some() {
         content = content.push(loading_line("Loading battle pass...", app.loading_frame));
     }
 
@@ -119,7 +119,7 @@ fn battle_pass_tab(app: &PrimeApp) -> Element<'_, Message> {
             content = content.push(battle_pass_panel(battle_pass, app.now));
         } else if let Some(error) = &summary.battle_pass_error {
             content = content.push(text(format!("Battle pass progress unavailable: {error}")));
-        } else if !app.loadout_loading {
+        } else if app.loadout_request.is_none() {
             content = content.push(text("No battle pass progress loaded"));
         }
     }

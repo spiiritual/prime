@@ -18,7 +18,7 @@ const SHOP_BUNDLE_NAME_WIDTH: f32 = 260.0;
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     let mut content = column![].spacing(12).width(Length::Fill);
 
-    if app.store_loading {
+    if app.store_request.is_some() {
         content = content.push(loading_line("Loading shop...", app.loading_frame));
     }
 

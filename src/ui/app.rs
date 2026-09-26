@@ -36,6 +36,7 @@ use super::data::{cache_account_api_context, non_empty_path};
 use super::{
     AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, LoginCapture,
     LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, Tab, TabScrollOffsets,
+    ViewRequest,
 };
 
 impl PrimeApp {
@@ -76,10 +77,9 @@ impl PrimeApp {
                 pending_account: None,
                 store_summary: None,
                 loadout_summary: None,
-                store_loading: false,
-                loadout_loading: false,
-                store_loading_account: None,
-                loadout_loading_account: None,
+                store_request: None,
+                loadout_request: None,
+                next_request_id: 0,
                 profile_identity_refreshing_account: None,
                 account_ranks_loading: false,
                 account_details_loaded_at: None,
@@ -1281,22 +1281,19 @@ impl PrimeApp {
                     }
                 }
             }
-            Message::StorefrontLoaded(account_id, result) => {
-                let is_current_request = self.store_loading_account == Some(account_id);
+            Message::StorefrontLoaded(request_id, result) => {
+                let is_current_request = self
+                    .store_request
+                    .is_some_and(|request| request.id == request_id);
 
                 if is_current_request {
-                    self.store_loading = false;
-                    self.store_loading_account = None;
+                    self.store_request = None;
                 }
                 self.now = iced::time::Instant::now();
 
                 match result {
                     Ok(result) => {
                         if !is_current_request {
-                            if result.account_id != account_id {
-                                return Task::none();
-                            }
-
                             if cache_account_api_context(
                                 &mut self.state,
                                 result.account_id,
@@ -1356,7 +1353,7 @@ impl PrimeApp {
             Message::ShopTimerTick(now) => {
                 self.now = now;
 
-                if self.store_loading {
+                if self.store_request.is_some() {
                     return Task::none();
                 }
 
@@ -1379,22 +1376,19 @@ impl PrimeApp {
 
                 Task::none()
             }
-            Message::LoadoutLoaded(account_id, result) => {
-                let is_current_request = self.loadout_loading_account == Some(account_id);
+            Message::LoadoutLoaded(request_id, result) => {
+                let is_current_request = self
+                    .loadout_request
+                    .is_some_and(|request| request.id == request_id);
 
                 if is_current_request {
-                    self.loadout_loading = false;
-                    self.loadout_loading_account = None;
+                    self.loadout_request = None;
                 }
                 self.now = iced::time::Instant::now();
 
                 match result {
                     Ok(result) => {
                         if !is_current_request {
-                            if result.account_id != account_id {
-                                return Task::none();
-                            }
-
                             if cache_account_api_context(
                                 &mut self.state,
                                 result.account_id,
@@ -1946,9 +1940,13 @@ impl PrimeApp {
         self.close_account_action_surfaces();
     }
 
+    /// Clears Shop and Loadout, and stops treating loads already in flight as current; their
+    /// replies only cache the session they obtained.
     fn clear_selected_account_views(&mut self) {
         self.store_summary = None;
         self.loadout_summary = None;
+        self.store_request = None;
+        self.loadout_request = None;
     }
 
     /// Loads the active tab after one account changed (selected, added, imported, re-captured or
@@ -2101,14 +2099,13 @@ impl PrimeApp {
             return Task::none();
         };
 
-        self.store_loading = true;
-        self.store_loading_account = Some(account.id);
+        let request = self.next_view_request(account.id);
+        self.store_request = Some(request);
         self.set_status("Loading shop");
         let image_cache = self.image_cache.clone();
-        let account_id = account.id;
         Task::perform(
             fetch_storefront(account, self.client_version_input.clone(), image_cache),
-            move |result| Message::StorefrontLoaded(account_id, result),
+            move |result| Message::StorefrontLoaded(request.id, result),
         )
     }
 
@@ -2118,15 +2115,22 @@ impl PrimeApp {
             return Task::none();
         };
 
-        self.loadout_loading = true;
-        self.loadout_loading_account = Some(account.id);
+        let request = self.next_view_request(account.id);
+        self.loadout_request = Some(request);
         self.set_status("Loading loadout");
         let image_cache = self.image_cache.clone();
-        let account_id = account.id;
         Task::perform(
             fetch_loadout(account, self.client_version_input.clone(), image_cache),
-            move |result| Message::LoadoutLoaded(account_id, result),
+            move |result| Message::LoadoutLoaded(request.id, result),
         )
+    }
+
+    fn next_view_request(&mut self, account_id: AccountId) -> ViewRequest {
+        self.next_request_id += 1;
+        ViewRequest {
+            id: self.next_request_id,
+            account_id,
+        }
     }
 
     /// Keeps an API session obtained in the background, unless the account's launcher login was
@@ -2215,13 +2219,13 @@ impl PrimeApp {
     }
 
     fn selected_account_is_store_loading(&self) -> bool {
-        self.store_loading_account
-            .is_some_and(|account_id| Some(account_id) == self.state.selected_account)
+        self.store_request
+            .is_some_and(|request| Some(request.account_id) == self.state.selected_account)
     }
 
     fn selected_account_is_loadout_loading(&self) -> bool {
-        self.loadout_loading_account
-            .is_some_and(|account_id| Some(account_id) == self.state.selected_account)
+        self.loadout_request
+            .is_some_and(|request| Some(request.account_id) == self.state.selected_account)
     }
 
     pub(super) fn state_to_save(&self) -> Result<StoredState, String> {
