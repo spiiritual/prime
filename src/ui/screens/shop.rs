@@ -7,7 +7,7 @@ use crate::ui::components::{
 };
 use crate::ui::data::shop::{
     OfferPrice, RarityTier, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
-    format_duration,
+    StoreSummary, format_duration,
 };
 use crate::ui::{Message, PrimeApp};
 
@@ -35,11 +35,8 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
 
     if let Some(summary) = &app.store_summary {
         content = content
-            .push(text(format!(
-                "Featured bundles expire in {}",
-                format_duration(summary.bundle_remaining_seconds_at(app.now))
-            )))
-            .push(bundle_row(&summary.featured_bundles))
+            .push(text("Featured bundles"))
+            .push(bundle_row(summary, app.now))
             .push(text(format!(
                 "Daily offers reset in {}",
                 format_duration(summary.daily_remaining_seconds_at(app.now))
@@ -99,21 +96,24 @@ fn accessory_row<'a>(offers: &'a [StoreAccessoryDisplay]) -> Element<'a, Message
     cards.into()
 }
 
-fn bundle_row<'a>(bundles: &'a [StoreBundleDisplay]) -> Element<'a, Message> {
-    if bundles.is_empty() {
+fn bundle_row(summary: &StoreSummary, now: iced::time::Instant) -> Element<'_, Message> {
+    if summary.featured_bundles.is_empty() {
         return text("No featured bundles available").into();
     }
 
     let mut cards = iced::widget::Row::new().spacing(12).width(Length::Fill);
 
-    for bundle in bundles {
-        cards = cards.push(store_bundle_card(bundle));
+    for bundle in &summary.featured_bundles {
+        cards = cards.push(store_bundle_card(
+            bundle,
+            summary.featured_bundle_remaining_seconds_at(bundle, now),
+        ));
     }
 
     cards.into()
 }
 
-fn store_bundle_card(bundle: &StoreBundleDisplay) -> Element<'_, Message> {
+fn store_bundle_card(bundle: &StoreBundleDisplay, remaining_seconds: i64) -> Element<'_, Message> {
     let price = bundle
         .price
         .as_ref()
@@ -128,7 +128,12 @@ fn store_bundle_card(bundle: &StoreBundleDisplay) -> Element<'_, Message> {
             SHOP_BUNDLE_NAME_WIDTH
         ),
         text(price).size(16),
-        text(bundle.item_count_label()).size(14),
+        text(format!(
+            "{} | Expires in {}",
+            bundle.item_count_label(),
+            format_duration(remaining_seconds)
+        ))
+        .size(14),
     ]
     .spacing(5)
     .width(Length::Fill);

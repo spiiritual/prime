@@ -451,6 +451,95 @@ fn store_summary_includes_accessory_store_offers() {
     );
 }
 
+fn featured_bundle_json(id: &str, remaining_seconds: i64) -> serde_json::Value {
+    serde_json::json!({
+        "ID": id,
+        "DataAssetID": id,
+        "CurrencyID": "vp",
+        "Items": [],
+        "DurationRemainingInSeconds": remaining_seconds
+    })
+}
+
+fn summary_with_bundles(
+    bundles: Vec<serde_json::Value>,
+    top_level_seconds: i64,
+    loaded_at: iced::time::Instant,
+) -> StoreSummary {
+    let response: StorefrontResponse = serde_json::from_value(serde_json::json!({
+        "FeaturedBundle": {
+            "Bundle": bundles[0].clone(),
+            "Bundles": bundles,
+            "BundleRemainingDurationInSeconds": top_level_seconds
+        },
+        "SkinsPanelLayout": {
+            "SingleItemOffers": [],
+            "SingleItemStoreOffers": [],
+            "SingleItemOffersRemainingDurationInSeconds": 86_400
+        }
+    }))
+    .expect("response");
+
+    StoreSummary::from_response_at(
+        response,
+        None,
+        &SkinCatalog::default(),
+        &BundleCatalog::default(),
+        &CurrencyCatalog::default(),
+        &AccessoryCatalog::default(),
+        loaded_at,
+    )
+}
+
+#[test]
+fn each_featured_bundle_counts_down_on_its_own() {
+    let loaded_at = iced::time::Instant::now();
+    let summary = summary_with_bundles(
+        vec![
+            featured_bundle_json("short", 3_600),
+            featured_bundle_json("long", 86_400),
+        ],
+        86_400,
+        loaded_at,
+    );
+    let later = loaded_at + Duration::from_secs(600);
+
+    let remaining = summary
+        .featured_bundles
+        .iter()
+        .map(|bundle| summary.featured_bundle_remaining_seconds_at(bundle, later))
+        .collect::<Vec<_>>();
+
+    assert_eq!(remaining, vec![3_000, 85_800]);
+}
+
+#[test]
+fn a_featured_bundle_without_its_own_time_uses_the_shared_one() {
+    let loaded_at = iced::time::Instant::now();
+    let summary = summary_with_bundles(vec![featured_bundle_json("only", 0)], 7_200, loaded_at);
+
+    assert_eq!(
+        summary.featured_bundle_remaining_seconds_at(&summary.featured_bundles[0], loaded_at),
+        7_200
+    );
+}
+
+#[test]
+fn the_shop_expires_when_any_featured_bundle_does() {
+    let loaded_at = iced::time::Instant::now();
+    let summary = summary_with_bundles(
+        vec![
+            featured_bundle_json("short", 60),
+            featured_bundle_json("long", 86_400),
+        ],
+        86_400,
+        loaded_at,
+    );
+
+    assert!(!summary.is_expired_at(loaded_at + Duration::from_secs(30)));
+    assert!(summary.is_expired_at(loaded_at + Duration::from_secs(61)));
+}
+
 #[test]
 fn store_summary_keeps_distinct_featured_bundle_entries_with_shared_asset() {
     let response: StorefrontResponse = serde_json::from_value(serde_json::json!({

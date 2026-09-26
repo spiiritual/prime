@@ -191,8 +191,25 @@ impl StoreSummary {
         remaining_seconds_at(self.daily_remaining_seconds, self.loaded_at, now)
     }
 
+    #[cfg(test)]
     pub(in crate::ui) fn bundle_remaining_seconds_at(&self, now: iced::time::Instant) -> i64 {
         remaining_seconds_at(self.bundle_remaining_seconds, self.loaded_at, now)
+    }
+
+    /// Each featured bundle has its own end time; the shared one is the fallback when Riot
+    /// doesn't report one for the bundle.
+    pub(in crate::ui) fn featured_bundle_remaining_seconds_at(
+        &self,
+        bundle: &StoreBundleDisplay,
+        now: iced::time::Instant,
+    ) -> i64 {
+        remaining_seconds_at(
+            bundle
+                .remaining_seconds
+                .unwrap_or(self.bundle_remaining_seconds),
+            self.loaded_at,
+            now,
+        )
     }
 
     pub(in crate::ui) fn night_market_remaining_seconds_at(&self, now: iced::time::Instant) -> i64 {
@@ -216,6 +233,11 @@ impl StoreSummary {
 
         reached_reset(self.daily_remaining_seconds)
             || reached_reset(self.bundle_remaining_seconds)
+            || self
+                .featured_bundles
+                .iter()
+                .filter_map(|bundle| bundle.remaining_seconds)
+                .any(reached_reset)
             || self
                 .night_market_remaining_seconds
                 .is_some_and(reached_reset)
@@ -294,6 +316,8 @@ pub(in crate::ui) struct StoreBundleDisplay {
     pub(in crate::ui) price: Option<OfferPrice>,
     pub(in crate::ui) item_count: i64,
     pub(in crate::ui) rarity: Option<String>,
+    /// Seconds left when the shop loaded, if Riot reported this bundle's own end time.
+    pub(in crate::ui) remaining_seconds: Option<i64>,
 }
 
 impl StoreBundleDisplay {
@@ -504,6 +528,8 @@ pub(in crate::ui) fn store_bundle_display(
         price: bundle_price(bundle, currencies),
         item_count,
         rarity,
+        remaining_seconds: Some(bundle.duration_remaining_in_seconds)
+            .filter(|seconds| *seconds > 0),
     }
 }
 
