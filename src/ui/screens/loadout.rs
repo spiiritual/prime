@@ -84,6 +84,10 @@ fn skins_tab(app: &PrimeApp) -> Element<'_, Message> {
     }
 
     if let Some(summary) = &app.loadout_summary {
+        if let Some(error) = &summary.loadout_error {
+            content = content.push(text(format!("Loadout unavailable: {error}")));
+        }
+
         for category in LOADOUT_CATEGORIES {
             if let Some(section) = loadout_section(
                 category,

@@ -1298,17 +1298,22 @@ impl PrimeApp {
                             ""
                         };
 
-                        self.status = format!(
-                            "Loaded loadout with {} gun skin(s){}",
-                            gun_count, battle_pass_status
-                        );
-                        if let Some(account) = self
-                            .state
-                            .accounts
-                            .iter_mut()
-                            .find(|account| account.id == result.account_id)
+                        self.status = if result.summary.loadout_error.is_some() {
+                            "Loaded battle pass progress; loadout unavailable".to_string()
+                        } else {
+                            format!(
+                                "Loaded loadout with {} gun skin(s){}",
+                                gun_count, battle_pass_status
+                            )
+                        };
+                        if let Some(level) = result.summary.account_level
+                            && let Some(account) = self
+                                .state
+                                .accounts
+                                .iter_mut()
+                                .find(|account| account.id == result.account_id)
                         {
-                            account.account_level = Some(result.summary.account_level);
+                            account.account_level = Some(level);
                         }
 
                         if self.state.selected_account == Some(result.account_id) {

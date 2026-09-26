@@ -1121,7 +1121,38 @@ fn loadout_summary_prefers_account_xp_level() {
         Some(88),
     );
 
-    assert_eq!(summary.account_level, 88);
+    assert_eq!(summary.account_level, Some(88));
+}
+
+#[test]
+fn loadout_summary_reports_no_level_instead_of_zero() {
+    let response: PlayerLoadoutResponse = serde_json::from_value(serde_json::json!({
+        "Subject": "puuid",
+        "Version": 1,
+        "Guns": [],
+        "Identity": {
+            "PlayerCardID": "card",
+            "PlayerTitleID": "title",
+            "AccountLevel": 0,
+            "PreferredLevelBorderID": "border",
+            "HideAccountLevel": true
+        },
+        "Incognito": false
+    }))
+    .expect("loadout");
+
+    let summary = LoadoutSummary::from_response(
+        response,
+        &SkinCatalog::default(),
+        &WeaponCatalog::default(),
+        Some(0),
+    );
+
+    assert_eq!(summary.account_level, None);
+    assert_eq!(
+        LoadoutSummary::without_loadout("down".to_string(), Some(0)).account_level,
+        None
+    );
 }
 
 #[test]
