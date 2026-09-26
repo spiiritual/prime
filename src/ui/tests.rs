@@ -1066,11 +1066,18 @@ fn loadout_summary_resolves_skin_names() {
         display_name: "Prime Vandal".to_string(),
         display_icon: None,
         content_tier_uuid: None,
-        levels: vec![crate::riot::content::WeaponSkinLevel {
-            uuid: "level-a".to_string(),
-            display_name: "Prime Vandal Level 3".to_string(),
-            display_icon: None,
-        }],
+        levels: vec![
+            crate::riot::content::WeaponSkinLevel {
+                uuid: "base-level".to_string(),
+                display_name: "Prime Vandal".to_string(),
+                display_icon: None,
+            },
+            crate::riot::content::WeaponSkinLevel {
+                uuid: "level-a".to_string(),
+                display_name: "Prime Vandal Level 3".to_string(),
+                display_icon: None,
+            },
+        ],
         chromas: vec![],
     }]);
     let weapons = WeaponCatalog::from_weapons(vec![crate::riot::content::Weapon {
@@ -1088,6 +1095,128 @@ fn loadout_summary_resolves_skin_names() {
         "Vandal: Prime Vandal - Level 3"
     );
     assert_eq!(summary.gun_skins[0].weapon.category, "Rifles");
+}
+
+fn single_gun_loadout(skin_id: &str, level_id: &str, chroma_id: &str) -> PlayerLoadoutResponse {
+    serde_json::from_value(serde_json::json!({
+        "Subject": "puuid",
+        "Version": 1,
+        "Guns": [{
+            "ID": "weapon",
+            "SkinID": skin_id,
+            "SkinLevelID": level_id,
+            "ChromaID": chroma_id,
+            "Attachments": []
+        }],
+        "Sprays": [],
+        "Identity": {
+            "PlayerCardID": "card",
+            "PlayerTitleID": "title",
+            "AccountLevel": 42,
+            "PreferredLevelBorderID": "border",
+            "HideAccountLevel": false
+        },
+        "Incognito": false
+    }))
+    .expect("loadout")
+}
+
+fn weapon_catalog(name: &str) -> WeaponCatalog {
+    WeaponCatalog::from_weapons(vec![crate::riot::content::Weapon {
+        uuid: "weapon".to_string(),
+        display_name: name.to_string(),
+        display_icon: None,
+        category: Some("EEquippableCategory::Rifle".to_string()),
+        skins: vec![],
+    }])
+}
+
+fn skin_level(uuid: &str, name: &str) -> crate::riot::content::WeaponSkinLevel {
+    crate::riot::content::WeaponSkinLevel {
+        uuid: uuid.to_string(),
+        display_name: name.to_string(),
+        display_icon: None,
+    }
+}
+
+fn skin_chroma(uuid: &str, name: &str) -> crate::riot::content::WeaponSkinChroma {
+    crate::riot::content::WeaponSkinChroma {
+        uuid: uuid.to_string(),
+        display_name: name.to_string(),
+        display_icon: None,
+        full_render: None,
+    }
+}
+
+#[test]
+fn loadout_label_names_the_equipped_variant() {
+    let catalog = SkinCatalog::from_skins(vec![crate::riot::content::WeaponSkin {
+        uuid: "skin".to_string(),
+        display_name: "Prime Vandal".to_string(),
+        display_icon: None,
+        content_tier_uuid: None,
+        levels: vec![
+            skin_level("level-1", "Prime Vandal"),
+            skin_level("level-4", "Prime Vandal Level 4"),
+        ],
+        chromas: vec![
+            skin_chroma("chroma-base", "Prime Vandal"),
+            skin_chroma(
+                "chroma-orange",
+                "Prime Vandal Level 4\r\n(Variant 1 Orange)",
+            ),
+        ],
+    }]);
+
+    let summary = LoadoutSummary::from_response(
+        single_gun_loadout("skin", "level-4", "chroma-orange"),
+        &catalog,
+        &weapon_catalog("Vandal"),
+        None,
+    );
+
+    assert_eq!(
+        summary.gun_skins[0].label(),
+        "Vandal: Prime Vandal - Level 4 - Orange"
+    );
+}
+
+#[test]
+fn loadout_labels_of_single_level_skins_have_no_level() {
+    let catalog = SkinCatalog::from_skins(vec![
+        crate::riot::content::WeaponSkin {
+            uuid: "velocity".to_string(),
+            display_name: "Velocity Shorty".to_string(),
+            display_icon: None,
+            content_tier_uuid: None,
+            levels: vec![skin_level("velocity-level", "Velocity Shorty")],
+            chromas: vec![skin_chroma("velocity-chroma", "Velocity Shorty")],
+        },
+        crate::riot::content::WeaponSkin {
+            uuid: "standard".to_string(),
+            display_name: "Standard Bandit".to_string(),
+            display_icon: None,
+            content_tier_uuid: None,
+            levels: vec![skin_level("standard-level", "Bandit")],
+            chromas: vec![skin_chroma("standard-chroma", "Bandit")],
+        },
+    ]);
+
+    let velocity = LoadoutSummary::from_response(
+        single_gun_loadout("velocity", "velocity-level", "velocity-chroma"),
+        &catalog,
+        &weapon_catalog("Shorty"),
+        None,
+    );
+    let standard = LoadoutSummary::from_response(
+        single_gun_loadout("standard", "standard-level", "standard-chroma"),
+        &catalog,
+        &weapon_catalog("Bandit"),
+        None,
+    );
+
+    assert_eq!(velocity.gun_skins[0].label(), "Shorty: Velocity Shorty");
+    assert_eq!(standard.gun_skins[0].label(), "Bandit: Standard Bandit");
 }
 
 #[test]
@@ -1248,11 +1377,18 @@ fn loadout_summary_prefers_current_chroma_render() {
         display_name: "Prime Vandal".to_string(),
         display_icon: Some("skin-icon".to_string()),
         content_tier_uuid: None,
-        levels: vec![crate::riot::content::WeaponSkinLevel {
-            uuid: "level-a".to_string(),
-            display_name: "Prime Vandal Level 4".to_string(),
-            display_icon: None,
-        }],
+        levels: vec![
+            crate::riot::content::WeaponSkinLevel {
+                uuid: "base-level".to_string(),
+                display_name: "Prime Vandal".to_string(),
+                display_icon: None,
+            },
+            crate::riot::content::WeaponSkinLevel {
+                uuid: "level-a".to_string(),
+                display_name: "Prime Vandal Level 4".to_string(),
+                display_icon: None,
+            },
+        ],
         chromas: vec![crate::riot::content::WeaponSkinChroma {
             uuid: "chroma-a".to_string(),
             display_name: "Prime Vandal Blue".to_string(),

@@ -38,11 +38,8 @@ impl LoadoutSummary {
             .map(|gun| {
                 let weapon = WeaponDisplay::from(weapons.resolve(&gun.id));
                 let base_skin = skins.resolve(&gun.skin_id);
-                let skin_level = loadout_skin_level_label(
-                    &skins.resolve(&gun.skin_level_id),
-                    &base_skin.display_name,
-                    &gun.skin_level_id,
-                );
+                let skin_level = skins.resolve(&gun.skin_level_id).level_label;
+                let chroma = skins.resolve(&gun.chroma_id).chroma_label;
                 let skin = SkinDisplay::from(resolve_current_skin(
                     skins,
                     &gun.skin_id,
@@ -55,6 +52,7 @@ impl LoadoutSummary {
                     skin,
                     skin_name: base_skin.display_name,
                     skin_level,
+                    chroma,
                 }
             })
             .collect::<Vec<_>>();
@@ -623,40 +621,26 @@ pub(in crate::ui) struct LoadoutGunDisplay {
     pub(in crate::ui) skin: SkinDisplay,
     pub(in crate::ui) skin_name: String,
     pub(in crate::ui) skin_level: Option<String>,
+    /// The equipped variant, when it isn't the skin's base look.
+    pub(in crate::ui) chroma: Option<String>,
 }
 
 impl LoadoutGunDisplay {
     pub(in crate::ui) fn skin_detail_label(&self) -> String {
-        match self
-            .skin_level
-            .as_ref()
-            .map(|level| level.trim())
-            .filter(|level| !level.is_empty())
-        {
-            Some(level) => format!("{} - {}", self.skin_name, level),
-            None => self.skin_name.clone(),
-        }
+        [self.skin_level.as_deref(), self.chroma.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .fold(self.skin_name.clone(), |label, part| {
+                format!("{label} - {part}")
+            })
     }
 
     #[cfg(test)]
     pub(in crate::ui) fn label(&self) -> String {
         format!("{}: {}", self.weapon.display_name, self.skin_detail_label())
     }
-}
-
-fn loadout_skin_level_label(
-    level: &ResolvedSkin,
-    skin_name: &str,
-    level_id: &str,
-) -> Option<String> {
-    level.level_label.clone().or_else(|| {
-        let display_name = level.display_name.trim();
-
-        (!display_name.is_empty()
-            && !display_name.eq_ignore_ascii_case(level_id)
-            && !display_name.eq_ignore_ascii_case(skin_name))
-        .then(|| display_name.to_string())
-    })
 }
 
 pub(in crate::ui) fn weapon_order(name: &str) -> (usize, String) {

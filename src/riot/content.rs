@@ -350,8 +350,11 @@ impl SkinCatalog {
                 viewer_icon: viewer_icon.clone(),
                 rarity: rarity.clone(),
                 level_label: None,
+                chroma_label: None,
             };
             by_uuid.insert(normalize_uuid(&skin.uuid), skin_info.clone());
+            // A skin without upgrades has nothing to call "Level 1".
+            let has_upgrades = skin.levels.len() > 1;
 
             for (level_index, level) in skin.levels.into_iter().enumerate() {
                 let display_name =
@@ -361,21 +364,24 @@ impl SkinCatalog {
                     normalize_uuid(&level.uuid),
                     ResolvedSkin {
                         uuid: level.uuid,
-                        level_label: Some(skin_level_label(
-                            &display_name,
-                            &skin.display_name,
-                            level_index + 1,
-                        )),
+                        level_label: has_upgrades.then(|| {
+                            skin_level_label(&display_name, &skin.display_name, level_index + 1)
+                        }),
                         display_name,
                         display_icon: level.display_icon.or_else(|| skin.display_icon.clone()),
                         viewer_icon: viewer_icon.clone(),
                         rarity: rarity.clone(),
+                        chroma_label: None,
                     },
                 );
             }
 
-            for chroma in skin.chromas {
+            for (chroma_index, chroma) in skin.chromas.into_iter().enumerate() {
                 let chroma_viewer_icon = chroma.full_render.clone().or_else(|| viewer_icon.clone());
+                // The first chroma is the skin's base look.
+                let chroma_label = (chroma_index > 0)
+                    .then(|| skin_chroma_label(&chroma.display_name, &skin.display_name))
+                    .flatten();
 
                 by_uuid.insert(
                     normalize_uuid(&chroma.uuid),
@@ -392,6 +398,7 @@ impl SkinCatalog {
                         viewer_icon: chroma_viewer_icon,
                         rarity: rarity.clone(),
                         level_label: None,
+                        chroma_label,
                     },
                 );
             }
@@ -416,6 +423,8 @@ pub struct ResolvedSkin {
     pub viewer_icon: Option<String>,
     pub rarity: Option<String>,
     pub level_label: Option<String>,
+    /// The variant's name, for any chroma but the skin's base look.
+    pub chroma_label: Option<String>,
 }
 
 impl ResolvedSkin {
@@ -427,6 +436,7 @@ impl ResolvedSkin {
             viewer_icon: None,
             rarity: None,
             level_label: None,
+            chroma_label: None,
         }
     }
 }
@@ -942,6 +952,34 @@ fn skin_level_label(level_name: &str, skin_name: &str, level_number: usize) -> S
     format!("Level {level_number}")
 }
 
+/// Names a variant chroma by its color, from names like "Prime Vandal Level 4\r\n(Variant 1
+/// Orange)".
+fn skin_chroma_label(chroma_name: &str, skin_name: &str) -> Option<String> {
+    let chroma_name = chroma_name.trim();
+
+    if let (Some(open), Some(close)) = (chroma_name.rfind('('), chroma_name.rfind(')'))
+        && open < close
+    {
+        let variant = chroma_name[open + 1..close].trim();
+        let color = strip_prefix_ignore_ascii_case(variant, "Variant")
+            .map(|rest| {
+                rest.trim_start()
+                    .trim_start_matches(|ch: char| ch.is_ascii_digit())
+                    .trim()
+            })
+            .filter(|color| !color.is_empty())
+            .unwrap_or(variant);
+
+        return (!color.is_empty()).then(|| color.to_string());
+    }
+
+    let rest = strip_prefix_ignore_ascii_case(chroma_name, skin_name.trim())?
+        .trim_start_matches(|ch: char| ch.is_whitespace() || ch == '-' || ch == ':')
+        .trim();
+
+    (!rest.is_empty()).then(|| rest.to_string())
+}
+
 fn strip_prefix_ignore_ascii_case<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
     let value_prefix = value.get(..prefix.len())?;
 
@@ -970,11 +1008,18 @@ mod tests {
             display_name: "Prime Vandal".to_string(),
             display_icon: Some("skin-icon".to_string()),
             content_tier_uuid: Some("premium".to_string()),
-            levels: vec![WeaponSkinLevel {
-                uuid: "level-uuid".to_string(),
-                display_name: "Prime Vandal Level 4".to_string(),
-                display_icon: None,
-            }],
+            levels: vec![
+                WeaponSkinLevel {
+                    uuid: "base-level-uuid".to_string(),
+                    display_name: "Prime Vandal".to_string(),
+                    display_icon: None,
+                },
+                WeaponSkinLevel {
+                    uuid: "level-uuid".to_string(),
+                    display_name: "Prime Vandal Level 4".to_string(),
+                    display_icon: None,
+                },
+            ],
             chromas: vec![WeaponSkinChroma {
                 uuid: "chroma-uuid".to_string(),
                 display_name: "Prime Vandal Orange".to_string(),
@@ -1009,6 +1054,78 @@ mod tests {
             Some("render")
         );
         assert_eq!(catalog.resolve("skin-uuid").rarity.as_deref(), None);
+    }
+
+    fn skin_with(name: &str, levels: &[&str], chromas: &[&str]) -> WeaponSkin {
+        WeaponSkin {
+            uuid: format!("{name}-skin"),
+            display_name: name.to_string(),
+            display_icon: None,
+            content_tier_uuid: None,
+            levels: levels
+                .iter()
+                .enumerate()
+                .map(|(index, level)| WeaponSkinLevel {
+                    uuid: format!("{name}-level-{index}"),
+                    display_name: level.to_string(),
+                    display_icon: None,
+                })
+                .collect(),
+            chromas: chromas
+                .iter()
+                .enumerate()
+                .map(|(index, chroma)| WeaponSkinChroma {
+                    uuid: format!("{name}-chroma-{index}"),
+                    display_name: chroma.to_string(),
+                    display_icon: None,
+                    full_render: None,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn single_level_skins_have_no_level_label() {
+        let catalog = SkinCatalog::from_skins(vec![
+            skin_with(
+                "Velocity Shorty",
+                &["Velocity Shorty"],
+                &["Velocity Shorty"],
+            ),
+            skin_with("Standard Bandit", &["Bandit"], &["Bandit"]),
+        ]);
+
+        assert_eq!(catalog.resolve("Velocity Shorty-level-0").level_label, None);
+        assert_eq!(catalog.resolve("Standard Bandit-level-0").level_label, None);
+    }
+
+    #[test]
+    fn variant_chromas_are_named_and_the_base_chroma_is_not() {
+        let catalog = SkinCatalog::from_skins(vec![skin_with(
+            "Prime Vandal",
+            &["Prime Vandal", "Prime Vandal Level 4"],
+            &[
+                "Prime Vandal",
+                "Prime Vandal Level 4\r\n(Variant 1 Orange)",
+                "Prime Vandal Level 4\n(Variant 2 Blue)",
+            ],
+        )]);
+
+        assert_eq!(catalog.resolve("Prime Vandal-chroma-0").chroma_label, None);
+        assert_eq!(
+            catalog
+                .resolve("Prime Vandal-chroma-1")
+                .chroma_label
+                .as_deref(),
+            Some("Orange")
+        );
+        assert_eq!(
+            catalog
+                .resolve("Prime Vandal-chroma-2")
+                .chroma_label
+                .as_deref(),
+            Some("Blue")
+        );
     }
 
     #[test]
