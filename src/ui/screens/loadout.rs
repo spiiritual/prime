@@ -5,7 +5,7 @@ use crate::ui::components::{
     asset_image, compact_item_name, high_res_image_source, loading_line,
 };
 use crate::ui::data::loadout::{
-    BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutGunDisplay, weapon_category,
+    BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutGunDisplay,
 };
 use crate::ui::data::shop::format_duration;
 use crate::ui::{LoadoutTab, Message, PrimeApp};
@@ -94,7 +94,7 @@ fn skins_tab(app: &PrimeApp) -> Element<'_, Message> {
                 summary
                     .gun_skins
                     .iter()
-                    .filter(|gun| weapon_category(&gun.weapon.display_name) == category),
+                    .filter(|gun| gun.weapon.category == category),
             ) {
                 content = content.push(section);
             }

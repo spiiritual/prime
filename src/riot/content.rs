@@ -281,6 +281,7 @@ impl WeaponCatalog {
                         display_name: weapon.display_name,
                         display_icon: weapon.display_icon,
                         viewer_icon: None,
+                        category: weapon.category,
                     },
                 )
             })
@@ -303,6 +304,8 @@ pub struct ResolvedWeapon {
     pub display_name: String,
     pub display_icon: Option<String>,
     pub viewer_icon: Option<String>,
+    /// Riot's equippable category, such as `EEquippableCategory::Sidearm`.
+    pub category: Option<String>,
 }
 
 impl ResolvedWeapon {
@@ -312,6 +315,7 @@ impl ResolvedWeapon {
             display_name: uuid.to_string(),
             display_icon: None,
             viewer_icon: None,
+            category: None,
         }
     }
 }
@@ -712,6 +716,8 @@ pub struct Weapon {
     #[serde(rename = "displayIcon")]
     pub display_icon: Option<String>,
     #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
     pub skins: Vec<WeaponSkin>,
 }
 
@@ -1099,6 +1105,7 @@ mod tests {
             uuid: "weapon-uuid".to_string(),
             display_name: "Vandal".to_string(),
             display_icon: Some("weapon-icon".to_string()),
+            category: None,
             skins: vec![],
         }]);
 

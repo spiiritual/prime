@@ -658,14 +658,21 @@ pub(in crate::ui) fn weapon_order(name: &str) -> (usize, String) {
     (index, name.to_string())
 }
 
-pub(in crate::ui) fn weapon_category(name: &str) -> &'static str {
-    match name {
-        "Classic" | "Shorty" | "Frenzy" | "Ghost" | "Sheriff" | "Bandit" => "Sidearms",
-        "Stinger" | "Spectre" => "SMGs",
-        "Bucky" | "Judge" => "Shotguns",
-        "Bulldog" | "Guardian" | "Phantom" | "Vandal" => "Rifles",
-        "Marshal" | "Outlaw" | "Operator" => "Sniper Rifles",
-        "Ares" | "Odin" => "Heavy",
+/// Maps Riot's equippable category to a collection section, so new weapons land in the right
+/// section without a code change.
+pub(in crate::ui) fn weapon_category(category: Option<&str>) -> &'static str {
+    let category = category.unwrap_or_default();
+    let category = category
+        .strip_prefix("EEquippableCategory::")
+        .unwrap_or(category);
+
+    match category {
+        "Sidearm" => "Sidearms",
+        "SMG" => "SMGs",
+        "Shotgun" => "Shotguns",
+        "Rifle" => "Rifles",
+        "Sniper" => "Sniper Rifles",
+        "Heavy" => "Heavy",
         "Melee" => "Melee",
         _ => "Other",
     }
@@ -675,6 +682,7 @@ pub(in crate::ui) fn weapon_category(name: &str) -> &'static str {
 pub(in crate::ui) struct WeaponDisplay {
     pub(in crate::ui) uuid: String,
     pub(in crate::ui) display_name: String,
+    pub(in crate::ui) category: &'static str,
     pub(in crate::ui) display_icon: Option<String>,
     pub(in crate::ui) viewer_icon: Option<String>,
     pub(in crate::ui) cached_icon: Option<PathBuf>,
@@ -685,6 +693,7 @@ impl From<ResolvedWeapon> for WeaponDisplay {
         Self {
             uuid: weapon.uuid,
             display_name: weapon.display_name,
+            category: weapon_category(weapon.category.as_deref()),
             display_icon: weapon.display_icon,
             viewer_icon: weapon.viewer_icon,
             cached_icon: None,

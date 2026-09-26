@@ -980,7 +980,7 @@ fn loadout_summary_resolves_skin_names() {
         uuid: "weapon".to_string(),
         display_name: "Vandal".to_string(),
         display_icon: None,
-
+        category: Some("EEquippableCategory::Rifle".to_string()),
         skins: vec![],
     }]);
 
@@ -990,12 +990,24 @@ fn loadout_summary_resolves_skin_names() {
         summary.gun_skins[0].label(),
         "Vandal: Prime Vandal - Level 3"
     );
+    assert_eq!(summary.gun_skins[0].weapon.category, "Rifles");
 }
 
 #[test]
-fn loadout_weapon_categories_include_newer_weapons() {
-    assert_eq!(weapon_category("Bandit"), "Sidearms");
-    assert_eq!(weapon_category("Outlaw"), "Sniper Rifles");
+fn loadout_weapon_categories_come_from_the_catalog() {
+    assert_eq!(
+        weapon_category(Some("EEquippableCategory::Sidearm")),
+        "Sidearms"
+    );
+    assert_eq!(
+        weapon_category(Some("EEquippableCategory::Sniper")),
+        "Sniper Rifles"
+    );
+    assert_eq!(
+        weapon_category(Some("EEquippableCategory::Unknown")),
+        "Other"
+    );
+    assert_eq!(weapon_category(None), "Other");
     assert!(weapon_order("Bandit") < weapon_order("Stinger"));
     assert!(weapon_order("Outlaw") < weapon_order("Operator"));
 }
@@ -1083,7 +1095,7 @@ fn loadout_summary_prefers_current_chroma_render() {
         uuid: "weapon".to_string(),
         display_name: "Vandal".to_string(),
         display_icon: Some("weapon-icon".to_string()),
-
+        category: Some("EEquippableCategory::Rifle".to_string()),
         skins: vec![],
     }]);
 
