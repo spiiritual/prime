@@ -649,7 +649,9 @@ rso-authenticator:
         );
         assert!(!target.join("a.txt").exists());
         assert_eq!(
-            fs::read_dir(target_root.path()).expect("target root").count(),
+            fs::read_dir(target_root.path())
+                .expect("target root")
+                .count(),
             1,
             "no leftover staging folders"
         );
@@ -673,7 +675,9 @@ rso-authenticator:
             "new"
         );
         assert_eq!(
-            fs::read_dir(target_root.path()).expect("target root").count(),
+            fs::read_dir(target_root.path())
+                .expect("target root")
+                .count(),
             1
         );
     }
