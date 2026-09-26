@@ -31,7 +31,7 @@ use data::shop::{StoreSummary, StorefrontResult};
 
 const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
 const LAUNCH_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
-const ACCOUNT_AVAILABILITY_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const ACCOUNT_AVAILABILITY_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 const MAIN_PANEL_SCROLLABLE_ID: &str = "main-panel-scrollable";
 
 fn image_viewer_enabled() -> bool {
@@ -62,7 +62,8 @@ fn app_theme(_: &PrimeApp) -> Theme {
 }
 
 fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
-    let mut subscriptions = Vec::new();
+    let mut subscriptions =
+        vec![iced::window::resize_events().map(|(_, size)| Message::WindowResized(size))];
 
     if app.store_summary.is_some()
         || app
@@ -84,7 +85,8 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
         );
     }
 
-    if app.active_tab == Tab::Accounts && !app.state.accounts.is_empty() {
+    // Availability polling makes requests for every account, so it pauses while nobody can see it.
+    if app.active_tab == Tab::Accounts && !app.state.accounts.is_empty() && !app.window_minimized {
         subscriptions.push(
             iced::time::every(ACCOUNT_AVAILABILITY_REFRESH_INTERVAL)
                 .map(Message::AccountAvailabilityTimerTick),
@@ -214,6 +216,7 @@ struct PrimeApp {
     unavailable_launch_warning: Option<UnavailableLaunchWarning>,
     launching_account: Option<AccountId>,
     launch_progress_checking: bool,
+    window_minimized: bool,
     app_update_status: AppUpdateStatus,
     image_cache_size_bytes: u64,
     loading_frame: usize,
@@ -505,6 +508,7 @@ enum Message {
     ProfileIdentityLoaded(Result<RefreshedProfileIdentity, String>),
     AccountRanksLoaded(AccountRanksResult),
     AccountAvailabilityTimerTick(iced::time::Instant),
+    WindowResized(iced::Size),
     AccountAvailabilitiesLoaded(AccountAvailabilityRefresh),
     GameSettingsProfilesLoaded(Result<Vec<GameSettingsProfileMetadata>, String>),
     GameSettingsProfileSelected(GameSettingsProfileMetadata),

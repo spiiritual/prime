@@ -2187,6 +2187,23 @@ fn availability_refresh(
 }
 
 #[test]
+fn availability_polling_resumes_when_the_window_is_restored() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.state
+        .push_account(AccountProfile::new("Main", None, Shard::Na).expect("account"));
+    app.client_version_input = "release-1".to_string();
+
+    let _ = app.update(Message::WindowResized(iced::Size::new(0.0, 0.0)));
+    assert!(app.window_minimized);
+    assert!(!app.account_availability_loading);
+
+    let _ = app.update(Message::WindowResized(iced::Size::new(900.0, 600.0)));
+    assert!(!app.window_minimized);
+    assert!(app.account_availability_loading);
+}
+
+#[test]
 fn availability_checks_keep_the_sessions_they_refresh() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());

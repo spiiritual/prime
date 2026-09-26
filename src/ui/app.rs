@@ -90,6 +90,7 @@ impl PrimeApp {
                 unavailable_launch_warning: None,
                 launching_account: None,
                 launch_progress_checking: false,
+                window_minimized: false,
                 app_update_status: AppUpdateStatus::Checking,
                 image_cache_size_bytes: 0,
                 loading_frame: 0,
@@ -954,6 +955,22 @@ impl PrimeApp {
                 }
 
                 self.fetch_account_availabilities_task()
+            }
+            Message::WindowResized(size) => {
+                // Windows reports a minimized window as resized to zero.
+                let minimized = size.width <= 0.0 || size.height <= 0.0;
+                let restored = self.window_minimized && !minimized;
+                self.window_minimized = minimized;
+
+                if restored
+                    && self.active_tab == Tab::Accounts
+                    && !self.account_availability_loading
+                    && self.launch_preflight_account.is_none()
+                {
+                    return self.fetch_account_availabilities_task();
+                }
+
+                Task::none()
             }
             Message::AccountAvailabilitiesLoaded(result) => {
                 self.account_availability_loading = false;
