@@ -2,9 +2,17 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Deserializer};
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq)]
 pub struct EntitlementResponse {
     pub entitlements_token: String,
+}
+
+impl std::fmt::Debug for EntitlementResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EntitlementResponse")
+            .field("entitlements_token", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]

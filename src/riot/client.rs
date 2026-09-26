@@ -25,13 +25,25 @@ use super::models::{
     RiotGeoResponse, StorefrontResponse, WalletResponse,
 };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct ApiCredentials {
     pub access_token: String,
     pub entitlements_token: String,
     pub client_version: String,
     pub shard: Shard,
     pub puuid: String,
+}
+
+impl std::fmt::Debug for ApiCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiCredentials")
+            .field("access_token", &"<redacted>")
+            .field("entitlements_token", &"<redacted>")
+            .field("client_version", &self.client_version)
+            .field("shard", &self.shard)
+            .field("puuid", &self.puuid)
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

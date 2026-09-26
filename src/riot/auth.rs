@@ -6,13 +6,25 @@ use url::Url;
 
 use crate::account::AuthSession;
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct RedirectTokens {
     pub access_token: String,
     pub id_token: Option<String>,
     pub token_type: String,
     pub expires_in_seconds: Option<i64>,
     pub scope: Option<String>,
+}
+
+impl std::fmt::Debug for RedirectTokens {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RedirectTokens")
+            .field("access_token", &"<redacted>")
+            .field("id_token", &self.id_token.as_ref().map(|_| "<redacted>"))
+            .field("token_type", &self.token_type)
+            .field("expires_in_seconds", &self.expires_in_seconds)
+            .field("scope", &self.scope)
+            .finish()
+    }
 }
 
 impl RedirectTokens {
