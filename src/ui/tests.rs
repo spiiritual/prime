@@ -1565,6 +1565,87 @@ fn battle_pass_progress_uses_story_contract_and_active_act() {
 }
 
 #[test]
+fn battle_pass_percent_is_not_rounded_up_to_complete() {
+    let progress = BattlePassProgressDisplay {
+        total_progression_earned: 995,
+        total_progression_required: Some(1_000),
+        ..battle_pass_display()
+    };
+
+    assert_eq!(
+        progress.progress_percent_label().as_deref(),
+        Some("99% complete")
+    );
+}
+
+#[test]
+fn epilogue_tiers_are_counted_apart_from_the_main_pass() {
+    let contracts: ContractsResponse = serde_json::from_value(serde_json::json!({
+        "Version": 1,
+        "Subject": "puuid",
+        "Contracts": [{
+            "ContractDefinitionID": "battle-pass",
+            "ContractProgression": {
+                "TotalProgressionEarned": 15_000,
+                "TotalProgressionEarnedVersion": 1,
+                "HighestRewardedLevel": {}
+            },
+            "ProgressionLevelReached": 5,
+            "ProgressionTowardsNextLevel": 1_000,
+            "ProgressionCompleted": false
+        }],
+        "ActiveSpecialContract": ""
+    }))
+    .expect("contracts");
+    let level = |xp| ContractLevel {
+        reward: None,
+        xp: Some(xp),
+    };
+    let catalog = ContractCatalog::from_contracts(vec![ValorantContract {
+        uuid: Some("battle-pass".to_string()),
+        display_name: Some("Battle Pass".to_string()),
+        free_reward_schedule_uuid: None,
+        content: Some(ContractContent {
+            relation_type: Some("Season".to_string()),
+            relation_uuid: Some("act".to_string()),
+            premium_reward_schedule_uuid: None,
+            chapters: vec![
+                ContractChapter {
+                    is_epilogue: false,
+                    levels: vec![level(0), level(2_000), level(3_000), level(4_000)],
+                    free_rewards: None,
+                },
+                ContractChapter {
+                    is_epilogue: true,
+                    levels: vec![level(5_000), level(5_000)],
+                    free_rewards: None,
+                },
+            ],
+        }),
+    }]);
+
+    let progress = battle_pass_progress_from_responses(
+        &contracts,
+        &catalog,
+        None,
+        &SkinCatalog::default(),
+        &AccessoryCatalog::default(),
+        &CurrencyCatalog::default(),
+    )
+    .expect("battle pass progress");
+
+    assert_eq!(progress.tier_label(), "Tier 4 of 4 + Epilogue 1 of 2");
+    assert_eq!(
+        progress.progress_percent_label().as_deref(),
+        Some("100% complete")
+    );
+    assert_eq!(
+        progress.next_tier_label(),
+        "1,000 / 5,000 XP toward next tier"
+    );
+}
+
+#[test]
 fn an_older_battle_pass_does_not_borrow_the_current_acts_name_or_countdown() {
     let contracts: ContractsResponse = serde_json::from_value(serde_json::json!({
         "Version": 1,
@@ -3621,6 +3702,7 @@ fn battle_pass_display() -> BattlePassProgressDisplay {
         season_name: None,
         level_reached: 1,
         total_levels: Some(50),
+        epilogue_levels: 0,
         progression_towards_next_level: 0,
         next_level_progress_required: None,
         total_progression_earned: 0,

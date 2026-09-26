@@ -105,6 +105,7 @@ pub(in crate::ui) struct BattlePassProgressDisplay {
     pub(in crate::ui) season_name: Option<String>,
     pub(in crate::ui) level_reached: i64,
     pub(in crate::ui) total_levels: Option<i64>,
+    pub(in crate::ui) epilogue_levels: i64,
     pub(in crate::ui) progression_towards_next_level: i64,
     pub(in crate::ui) next_level_progress_required: Option<i64>,
     pub(in crate::ui) total_progression_earned: i64,
@@ -129,11 +130,22 @@ impl BattlePassProgressDisplay {
     pub(in crate::ui) fn tier_label(&self) -> String {
         match self.total_levels {
             Some(total_levels) if total_levels > 0 => {
-                format!(
+                let main = format!(
                     "Tier {} of {}",
                     self.level_reached.clamp(0, total_levels),
                     total_levels
-                )
+                );
+                let epilogue_reached = self.level_reached - total_levels;
+
+                if self.epilogue_levels > 0 && epilogue_reached > 0 {
+                    format!(
+                        "{main} + Epilogue {} of {}",
+                        epilogue_reached.min(self.epilogue_levels),
+                        self.epilogue_levels
+                    )
+                } else {
+                    main
+                }
             }
             _ => format!("Tier {}", self.level_reached.max(0)),
         }
@@ -161,9 +173,11 @@ impl BattlePassProgressDisplay {
         self.total_progression_required
             .filter(|required| *required > 0)
             .map(|required| {
-                let percent =
-                    (self.total_progression_earned.max(0) as f64 / required as f64) * 100.0;
-                format!("{:.0}% complete", percent.clamp(0.0, 100.0))
+                // Rounded down, so the pass never reads complete before it is.
+                let percent = (i128::from(self.total_progression_earned.max(0)) * 100
+                    / i128::from(required))
+                .min(100);
+                format!("{percent}% complete")
             })
     }
 
@@ -279,14 +293,32 @@ fn battle_pass_progress_from_responses_at(
     // an older season's fallback contract keeps its own name and has no countdown.
     let contract_act = active_act.filter(|act| ids_match(&definition.relation_uuid, &act.id));
     let progression_deltas = definition.level_xp.as_slice();
-    let total_levels = Some(i64::try_from(progression_deltas.len()).unwrap_or(0));
-    let total_progression_required = Some(progression_deltas.iter().copied().sum::<i64>());
+    // Epilogue tiers come after the main pass and aren't part of its total.
+    let is_epilogue = |index: usize| {
+        definition
+            .reward_levels
+            .get(index)
+            .is_some_and(|level| level.is_epilogue)
+    };
+    let main_levels = (0..progression_deltas.len())
+        .filter(|index| !is_epilogue(*index))
+        .count();
+    let total_levels = Some(i64::try_from(main_levels).unwrap_or(0));
+    let epilogue_levels = i64::try_from(progression_deltas.len() - main_levels).unwrap_or(0);
+    let total_progression_required = Some(
+        progression_deltas
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !is_epilogue(*index))
+            .map(|(_, xp)| *xp)
+            .sum::<i64>(),
+    );
     let next_level_index = usize::try_from(contract.progression_level_reached.max(0)).ok();
     let next_level_progress_required =
         next_level_index.and_then(|index| progression_deltas.get(index).copied());
+    let all_levels = i64::try_from(progression_deltas.len()).unwrap_or(0);
     let completed = contract.progression_completed
-        || total_levels
-            .is_some_and(|levels| levels > 0 && contract.progression_level_reached >= levels);
+        || (all_levels > 0 && contract.progression_level_reached >= all_levels);
     let remaining_seconds =
         contract_act.and_then(|act| remaining_seconds_until_utc_at(&act.end_time, context.now_utc));
     let paid_pass_owned = battle_pass_paid_pass_owned(definition, contract);
@@ -305,6 +337,7 @@ fn battle_pass_progress_from_responses_at(
         season_name: contract_act.and_then(|act| non_empty_string(act.name.clone())),
         level_reached: contract.progression_level_reached,
         total_levels,
+        epilogue_levels,
         progression_towards_next_level: contract.progression_towards_next_level,
         next_level_progress_required,
         total_progression_earned: contract.contract_progression.total_progression_earned,
