@@ -50,10 +50,13 @@ impl PrimeApp {
         });
 
         let content: Element<_> = if self.show_add_account_prompt {
-            stack![content, add_account_prompt_overlay()]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
+            stack![
+                content,
+                add_account_prompt_overlay(self.capture_prompt_valorant_running)
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
         } else if self.show_import_account_prompt {
             stack![content, import_account_prompt_overlay(self)]
                 .width(Length::Fill)
@@ -70,10 +73,13 @@ impl PrimeApp {
                 .height(Length::Fill)
                 .into()
         } else if let Some(account) = pending_recapture_account {
-            stack![content, recapture_prompt_overlay(account)]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
+            stack![
+                content,
+                recapture_prompt_overlay(account, self.capture_prompt_valorant_running)
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
         } else if let Some(warning) = &self.unavailable_launch_warning {
             stack![content, unavailable_launch_prompt_overlay(warning)]
                 .width(Length::Fill)
@@ -353,22 +359,28 @@ fn account_switcher_item_style(
     style
 }
 
-fn add_account_prompt_overlay() -> Element<'static, Message> {
+fn add_account_prompt_overlay(valorant_running: bool) -> Element<'static, Message> {
+    let mut details = column![
+        text("Add Riot account").size(20),
+        text(
+            "Prime will close Riot Client and VALORANT, clear any stale remembered launcher data, and open the Riot login screen."
+        )
+        .size(14),
+        text(
+            "On the Riot login screen, tick \"Stay signed in\" before you sign in. After Riot Client remembers the login, Prime will capture the launcher session and ask you to confirm the profile details."
+        )
+        .size(14)
+    ]
+    .spacing(8)
+    .width(Length::Fill);
+
+    if valorant_running {
+        details = details.push(running_game_warning());
+    }
+
     let prompt = container(
         column![
-            column![
-                text("Add Riot account").size(20),
-                text(
-                    "Prime will close Riot Client, clear any stale remembered launcher data, and open the Riot login screen."
-                )
-                .size(14),
-                text(
-                    "On the Riot login screen, tick \"Stay signed in\" before you sign in. After Riot Client remembers the login, Prime will capture the launcher session and ask you to confirm the profile details."
-                )
-                .size(14)
-            ]
-            .spacing(8)
-            .width(Length::Fill),
+            details,
             row![
                 space().width(Length::Fill),
                 button("Cancel").on_press(Message::CancelAddAccountCapture),
@@ -542,23 +554,32 @@ fn delete_account_prompt_overlay(account: &AccountProfile) -> Element<'_, Messag
     )
 }
 
-fn recapture_prompt_overlay(account: &AccountProfile) -> Element<'_, Message> {
+fn recapture_prompt_overlay(
+    account: &AccountProfile,
+    valorant_running: bool,
+) -> Element<'_, Message> {
+    let mut details = column![
+        text(format!("Re-capture login for {}?", account.display_name)).size(20),
+        text(
+            "Prime will close Riot Client and VALORANT, clear the current remembered login, and open the Riot login screen."
+        )
+        .size(14),
+        text(format!(
+            "Tick \"Stay signed in\" and sign in to {}. If you sign in to a different Riot account, the saved login is left unchanged.",
+            account.summary()
+        ))
+        .size(14)
+    ]
+    .spacing(8)
+    .width(Length::Fill);
+
+    if valorant_running {
+        details = details.push(running_game_warning());
+    }
+
     let prompt = container(
         column![
-            column![
-                text(format!("Re-capture login for {}?", account.display_name)).size(20),
-                text(
-                    "Prime will close Riot Client and VALORANT, clear the current remembered login, and open the Riot login screen."
-                )
-                .size(14),
-                text(format!(
-                    "Tick \"Stay signed in\" and sign in to {}. If you sign in to a different Riot account, the saved login is left unchanged.",
-                    account.summary()
-                ))
-                .size(14)
-            ]
-            .spacing(8)
-            .width(Length::Fill),
+            details,
             row![
                 space().width(Length::Fill),
                 button("Cancel").on_press(Message::CancelLauncherSessionLogin),
@@ -581,6 +602,14 @@ fn recapture_prompt_overlay(account: &AccountProfile) -> Element<'_, Message> {
             .align_y(alignment::Vertical::Center)
             .style(add_account_prompt_scrim_style),
     )
+}
+
+fn running_game_warning() -> Element<'static, Message> {
+    text("VALORANT is running. Continuing will close it, including any match in progress.")
+        .size(14)
+        .width(Length::Fill)
+        .color(Color::from_rgb8(255, 112, 112))
+        .into()
 }
 
 fn unavailable_launch_prompt_overlay(warning: &UnavailableLaunchWarning) -> Element<'_, Message> {

@@ -26,7 +26,7 @@ use super::data::game_settings::{
 use super::data::image_assets::fetch_current_client_version;
 use super::data::launch_flow::{
     check_riot_client_window_visible, launch_account, load_accounts, start_account_capture,
-    start_current_account_capture, start_verified_launcher_session_login,
+    start_current_account_capture, start_verified_launcher_session_login, valorant_is_running,
 };
 use super::data::loadout::fetch_loadout;
 use super::data::shop::fetch_storefront;
@@ -70,6 +70,7 @@ impl PrimeApp {
                 exported_account: None,
                 confirm_delete_account: None,
                 confirm_recapture_account: None,
+                capture_prompt_valorant_running: false,
                 pending_account: None,
                 store_summary: None,
                 loadout_summary: None,
@@ -249,7 +250,7 @@ impl PrimeApp {
                     "Before Riot Client opens, confirm that you will tick Stay signed in.",
                 );
 
-                Task::none()
+                check_capture_prompt_game_task()
             }
             Message::AddCurrentAccount => {
                 if self.login_capture_blocked() {
@@ -295,8 +296,14 @@ impl PrimeApp {
                     Message::AccountCaptureFinished,
                 )
             }
+            Message::CapturePromptGameChecked(valorant_running) => {
+                self.capture_prompt_valorant_running = valorant_running
+                    && (self.show_add_account_prompt || self.confirm_recapture_account.is_some());
+                Task::none()
+            }
             Message::CancelAddAccountCapture => {
                 self.show_add_account_prompt = false;
+                self.capture_prompt_valorant_running = false;
                 self.set_status("Canceled account capture");
                 Task::none()
             }
@@ -757,18 +764,20 @@ impl PrimeApp {
                     .any(|account| account.id == account_id)
                 {
                     self.confirm_recapture_account = Some(account_id);
+                    check_capture_prompt_game_task()
                 } else {
                     self.set_status("Account profile no longer exists");
+                    Task::none()
                 }
-
-                Task::none()
             }
             Message::CancelLauncherSessionLogin => {
                 self.confirm_recapture_account = None;
+                self.capture_prompt_valorant_running = false;
                 Task::none()
             }
             Message::StartLauncherSessionLogin(account_id) => {
                 self.confirm_recapture_account = None;
+                self.capture_prompt_valorant_running = false;
 
                 if self.login_capture_blocked() {
                     return Task::none();
@@ -1456,12 +1465,7 @@ impl PrimeApp {
                                 availability: AccountAvailability::activity_check_failed(),
                             },
                         };
-                        let valorant_running =
-                            tokio::task::spawn_blocking(crate::launch::valorant_process_is_running)
-                                .await
-                                .ok()
-                                .and_then(Result::ok)
-                                .unwrap_or(false);
+                        let valorant_running = valorant_is_running().await;
 
                         (check, valorant_running)
                     },
@@ -1864,6 +1868,7 @@ impl PrimeApp {
         self.exported_account = None;
         self.confirm_delete_account = None;
         self.confirm_recapture_account = None;
+        self.capture_prompt_valorant_running = false;
     }
 
     fn close_account_surfaces(&mut self) {
@@ -2415,6 +2420,10 @@ pub(super) fn cancel_unavailable_launch_state(
     *launch_preflight_account = None;
     *launching_account = None;
     *launch_progress_checking = false;
+}
+
+fn check_capture_prompt_game_task() -> Task<Message> {
+    Task::perform(valorant_is_running(), Message::CapturePromptGameChecked)
 }
 
 fn alert_and_focus_latest_window() -> Task<Message> {

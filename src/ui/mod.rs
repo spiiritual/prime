@@ -221,6 +221,9 @@ struct PrimeApp {
     exported_account: Option<AccountExportOutput>,
     confirm_delete_account: Option<AccountId>,
     confirm_recapture_account: Option<AccountId>,
+    /// Set while the add or re-capture prompt is open and VALORANT was found running, since
+    /// continuing closes the game.
+    capture_prompt_valorant_running: bool,
     pending_account: Option<CapturedAccountDraft>,
     store_summary: Option<StoreSummary>,
     loadout_summary: Option<LoadoutSummary>,
@@ -508,6 +511,8 @@ enum Message {
     AddCurrentAccount,
     ConfirmAddAccountCapture,
     CancelAddAccountCapture,
+    /// Whether VALORANT was running when the add or re-capture prompt opened.
+    CapturePromptGameChecked(bool),
     AccountCaptureFinished(Result<CapturedAccountDraft, String>),
     CurrentAccountCaptureFinished(Result<CapturedAccountDraft, String>),
     ConfirmCapturedAccount,

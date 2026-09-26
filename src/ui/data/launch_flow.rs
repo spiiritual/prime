@@ -174,6 +174,15 @@ async fn check_launch_target_window() -> Result<Option<LaunchTargetProcess>, Str
         .map_err(|error| error.to_string())
 }
 
+/// Whether a VALORANT process is running. A failed check counts as not running.
+pub(in crate::ui) async fn valorant_is_running() -> bool {
+    tokio::task::spawn_blocking(crate::launch::valorant_process_is_running)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or(false)
+}
+
 pub(in crate::ui) async fn check_riot_client_window_visible() -> Result<bool, String> {
     tokio::task::spawn_blocking(riot_client_window_is_visible)
         .await

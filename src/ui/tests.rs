@@ -1782,6 +1782,52 @@ fn recapture_asks_for_confirmation_before_starting() {
 }
 
 #[test]
+fn add_account_prompt_warns_when_valorant_is_running() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+
+    let task = app.update(Message::AddAccount);
+
+    assert!(app.show_add_account_prompt);
+    assert!(task.units() > 0, "opening the prompt checks for a running game");
+
+    let _ = app.update(Message::CapturePromptGameChecked(true));
+    assert!(app.capture_prompt_valorant_running);
+
+    let _ = app.update(Message::CancelAddAccountCapture);
+    assert!(!app.capture_prompt_valorant_running);
+}
+
+#[test]
+fn recapture_prompt_warns_when_valorant_is_running() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    app.state.push_account(account.clone());
+
+    let task = app.update(Message::RequestLauncherSessionLogin(account.id));
+    assert!(task.units() > 0, "opening the prompt checks for a running game");
+
+    let _ = app.update(Message::CapturePromptGameChecked(true));
+    assert!(app.capture_prompt_valorant_running);
+
+    let _ = app.update(Message::CancelLauncherSessionLogin);
+    assert!(!app.capture_prompt_valorant_running);
+}
+
+#[test]
+fn a_late_game_check_does_not_warn_once_the_prompt_closed() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+
+    let _ = app.update(Message::AddAccount);
+    let _ = app.update(Message::CancelAddAccountCapture);
+    let _ = app.update(Message::CapturePromptGameChecked(true));
+
+    assert!(!app.capture_prompt_valorant_running);
+}
+
+#[test]
 fn recapture_as_a_different_account_keeps_the_existing_backup() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
