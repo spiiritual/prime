@@ -245,7 +245,7 @@ impl PrimeApp {
 
                 let account_id = AccountId::new();
                 let backup_root = self.repo.launcher_backups_dir();
-                self.pending_account = None;
+                self.discard_pending_account();
                 self.close_account_surfaces();
                 self.new_display_name.clear();
                 self.new_username.clear();
@@ -270,7 +270,7 @@ impl PrimeApp {
                     ..LaunchConfig::default()
                 };
                 let backup_root = self.repo.launcher_backups_dir();
-                self.pending_account = None;
+                self.discard_pending_account();
                 self.close_account_surfaces();
                 self.new_display_name.clear();
                 self.new_username.clear();
@@ -2013,6 +2013,13 @@ impl PrimeApp {
             MAIN_PANEL_SCROLLABLE_ID,
             self.tab_scroll_offsets.get(self.active_tab),
         )
+    }
+
+    /// Drops an unsaved captured account and its backup folder, which holds a live login.
+    fn discard_pending_account(&mut self) {
+        if let Some(draft) = self.pending_account.take() {
+            let _ = remove_launcher_session_backup(self.repo.launcher_backups_dir(), draft.account_id);
+        }
     }
 
     fn store_captured_launcher_session(

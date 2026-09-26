@@ -204,6 +204,38 @@ pub fn remove_legacy_launcher_backups(
     Ok(removed)
 }
 
+/// Removes backup slots that no account profile points at, such as captures abandoned before they
+/// were saved. Only folders named like Prime account IDs are touched. Returns the removed slots.
+pub fn remove_unreferenced_launcher_backups(
+    backup_root: impl AsRef<Path>,
+    referenced_data_dirs: &[PathBuf],
+) -> Result<Vec<PathBuf>, LauncherSessionError> {
+    let backup_root = backup_root.as_ref();
+    if !backup_root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut removed = Vec::new();
+    for entry in fs::read_dir(backup_root)? {
+        let slot_dir = entry?.path();
+        let is_account_slot = slot_dir.is_dir()
+            && slot_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| uuid::Uuid::parse_str(name).is_ok());
+        let is_referenced = referenced_data_dirs
+            .iter()
+            .any(|data_dir| data_dir.starts_with(&slot_dir));
+
+        if is_account_slot && !is_referenced {
+            fs::remove_dir_all(&slot_dir)?;
+            removed.push(slot_dir);
+        }
+    }
+
+    Ok(removed)
+}
+
 pub fn clear_existing_launcher_data_dirs() -> Result<usize, LauncherSessionError> {
     let mut cleared = 0;
 
@@ -649,6 +681,28 @@ rso-authenticator:
         assert!(current_slot.exists());
         assert!(unrelated_slot.exists());
         assert!(unknown_format_slot.exists());
+    }
+
+    #[test]
+    fn removes_backup_slots_no_account_references() {
+        let backup_root = tempdir().expect("backup root");
+        let referenced_slot = backup_root.path().join(AccountId::new().to_string());
+        let orphaned_slot = backup_root.path().join(AccountId::new().to_string());
+        let unrelated_dir = backup_root.path().join("keep-me");
+        for dir in [&referenced_slot, &orphaned_slot, &unrelated_dir] {
+            fs::create_dir_all(dir.join("Data")).expect("slot");
+        }
+
+        let removed = remove_unreferenced_launcher_backups(
+            backup_root.path(),
+            &[referenced_slot.join("Data")],
+        )
+        .expect("remove unreferenced");
+
+        assert_eq!(removed, vec![orphaned_slot.clone()]);
+        assert!(referenced_slot.exists());
+        assert!(!orphaned_slot.exists());
+        assert!(unrelated_dir.exists());
     }
 
     #[test]

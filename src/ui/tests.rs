@@ -1430,6 +1430,48 @@ fn staged_recapture(backup_root: &Path, puuid: &str, settings: &str) -> Captured
 }
 
 #[test]
+fn starting_another_capture_discards_the_pending_draft_backup() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let backup_root = app.repo.launcher_backups_dir();
+    let draft = captured_account_draft(&backup_root, "puuid", "Main", "NA1", Shard::Na);
+    let draft_slot = backup_root.join(draft.account_id.to_string());
+    assert!(draft_slot.exists());
+    app.pending_account = Some(draft);
+
+    let _ = app.update(Message::AddCurrentAccount);
+
+    assert!(!draft_slot.exists());
+}
+
+#[test]
+fn loading_accounts_removes_unreferenced_backup_slots() {
+    let dir = tempdir().expect("temp dir");
+    let repo = AccountRepository::new(dir.path().join("accounts.json"));
+    let backup_root = repo.launcher_backups_dir();
+    let account = account_with_backup(
+        &backup_root,
+        "Current",
+        "psl:
+    authorization:
+        riot-client:
+            refresh_token: \"refresh-value\"
+",
+    );
+    let orphaned_slot = backup_root.join(AccountId::new().to_string());
+    fs::create_dir_all(orphaned_slot.join("Data")).expect("orphaned slot");
+    let mut state = StoredState::default();
+    state.push_account(account.clone());
+    repo.save(&state).expect("save state");
+
+    let loaded = load_accounts(&repo).expect("load accounts");
+
+    assert!(!orphaned_slot.exists());
+    assert!(backup_root.join(account.id.to_string()).exists());
+    assert_eq!(loaded.state.accounts[0].launcher_session, account.launcher_session);
+}
+
+#[test]
 fn recapture_asks_for_confirmation_before_starting() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());

@@ -36,11 +36,23 @@ pub(in crate::ui) fn load_accounts(repo: &AccountRepository) -> Result<LoadedAcc
         }
     }
 
-    let legacy_cleanup_error = if removed_legacy_sessions.is_empty() {
+    let mut legacy_cleanup_error = if removed_legacy_sessions.is_empty() {
         None
     } else {
         repo.save(&state).err().map(|error| error.to_string())
     };
+
+    let referenced_data_dirs = state
+        .accounts
+        .iter()
+        .filter_map(|account| account.launcher_session.as_ref())
+        .map(|backup| backup.data_dir.clone())
+        .collect::<Vec<_>>();
+    if let Err(error) =
+        remove_unreferenced_launcher_backups(repo.launcher_backups_dir(), &referenced_data_dirs)
+    {
+        legacy_cleanup_error.get_or_insert(error.to_string());
+    }
 
     Ok(LoadedAccounts {
         state,
