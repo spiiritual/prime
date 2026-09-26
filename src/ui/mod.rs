@@ -473,7 +473,11 @@ enum AppUpdateStatus {
     Installing,
     NotInstalled,
     CheckFailed(String),
-    InstallFailed(String),
+    /// A download or install that failed; the update is kept so it can be tried again.
+    InstallFailed {
+        update: Option<AvailableUpdate>,
+        error: String,
+    },
 }
 
 impl AppUpdateStatus {
@@ -493,7 +497,12 @@ impl AppUpdateStatus {
 
     fn pending_update(&self) -> Option<&AvailableUpdate> {
         match self {
-            Self::Available(update) | Self::Dismissed(update) => Some(update),
+            Self::Available(update)
+            | Self::Dismissed(update)
+            | Self::InstallFailed {
+                update: Some(update),
+                ..
+            } => Some(update),
             _ => None,
         }
     }
@@ -515,7 +524,7 @@ impl AppUpdateStatus {
                 crate::updater::CURRENT_VERSION
             ),
             Self::CheckFailed(error) => format!("Update check failed: {error}"),
-            Self::InstallFailed(error) => format!("Update failed: {error}"),
+            Self::InstallFailed { error, .. } => format!("Update failed: {error}"),
         }
     }
 }

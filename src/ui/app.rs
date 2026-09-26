@@ -2033,8 +2033,12 @@ impl PrimeApp {
                 iced::exit()
             }
             Err(error) => {
-                self.app_update_status = AppUpdateStatus::InstallFailed(error.clone());
+                let update = match &self.app_update_status {
+                    AppUpdateStatus::Downloading(update) => Some(update.clone()),
+                    _ => None,
+                };
                 self.set_status(format!("Update failed: {error}"));
+                self.app_update_status = AppUpdateStatus::InstallFailed { update, error };
                 Task::none()
             }
         }
@@ -2245,6 +2249,8 @@ impl PrimeApp {
                 self.store_summary = None;
                 self.fetch_storefront_task()
             }
+            // Every Shop and Loadout load can add images, so the size is read again here.
+            Tab::Settings => self.image_cache_size_task(),
             Tab::Loadout
                 if !self.selected_account_is_loadout_loading()
                     && self.loadout_summary.as_ref().is_none_or(|summary| {

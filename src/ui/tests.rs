@@ -4485,3 +4485,31 @@ fn an_edited_riot_client_path_shows_as_unsaved_until_saved() {
     let _ = app.update(Message::SaveSettings);
     assert!(!app.riot_client_path_unsaved());
 }
+
+#[test]
+fn a_failed_update_download_can_be_tried_again() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = downloading_update_app(dir.path());
+
+    let _ = app.update(Message::AppUpdatePrepared(Err("disk full".to_string())));
+
+    assert_eq!(
+        app.app_update_status
+            .pending_update()
+            .map(|update| update.latest_version.as_str()),
+        Some("9.9.9")
+    );
+    assert_eq!(app.app_update_status.label(), "Update failed: disk full");
+}
+
+#[test]
+fn opening_settings_refreshes_the_image_cache_size() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.image_cache = crate::image_cache::ImageCache::new(dir.path().join("images"));
+
+    let task = app.update(Message::TabSelected(super::Tab::Settings));
+
+    // Restoring the tab's scroll position is one task; the size refresh is another.
+    assert_eq!(task.units(), 2);
+}
