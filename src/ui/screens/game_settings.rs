@@ -10,7 +10,7 @@ use iced::{
 use crate::account::AccountId;
 use crate::game_settings::{
     CrosshairLines, CrosshairSummary, GameSettingsProfileMetadata, GameSettingsProfilePurpose,
-    GameSettingsProfileSummary, Rgba,
+    GameSettingsProfileSummary, Rgba, Setting,
 };
 use crate::ui::components::compact_loading_indicator;
 use crate::ui::{Message, PrimeApp};
@@ -18,6 +18,8 @@ use crate::ui::{Message, PrimeApp};
 use super::accounts::last_refreshed_label;
 
 const DETAIL_LABEL_WIDTH: f32 = 96.0;
+/// How many keybinds a collapsed preset card shows; the rest are counted.
+const SHORT_KEYBIND_LIMIT: usize = 3;
 const CROSSHAIR_PREVIEW_SIZE: f32 = 88.0;
 /// Screen pixels per VALORANT crosshair unit, before shrinking a large crosshair to fit.
 const CROSSHAIR_PREVIEW_SCALE: f32 = 2.0;
@@ -113,7 +115,8 @@ fn presets_section(app: &PrimeApp) -> Element<'_, Message> {
     }
 
     for profile in saved {
-        presets = presets.push(preset_card(profile, &accounts, busy));
+        let expanded = app.expanded_presets.contains(&profile.id);
+        presets = presets.push(preset_card(profile, &accounts, busy, expanded));
     }
 
     container(presets)
@@ -127,6 +130,7 @@ fn preset_card<'a>(
     profile: &'a GameSettingsProfileMetadata,
     accounts: &[AccountChoice],
     busy: bool,
+    expanded: bool,
 ) -> Element<'a, Message> {
     let profile_id = profile.id.clone();
     let apply_to = pick_list(accounts.to_vec(), None::<AccountChoice>, move |choice| {
@@ -165,10 +169,15 @@ fn preset_card<'a>(
     let summary = &profile.summary;
     let body = row![
         crosshair_tile(summary.crosshair.as_ref()),
-        settings_details(summary)
+        settings_details(&profile.id, summary, expanded)
     ]
     .spacing(16)
-    .align_y(alignment::Vertical::Center);
+    // Keeps the crosshair beside the summary rows when the full list opens below them.
+    .align_y(if expanded {
+        alignment::Vertical::Top
+    } else {
+        alignment::Vertical::Center
+    });
 
     container(column![header, divider(), body].spacing(12))
         .padding(14)
@@ -177,8 +186,13 @@ fn preset_card<'a>(
         .into()
 }
 
-/// The preset's settings as labelled rows. Missing values are VALORANT's defaults.
-fn settings_details(summary: &GameSettingsProfileSummary) -> Element<'_, Message> {
+/// The preset's settings as labelled rows, and when expanded, every setting it copies. Missing
+/// values are VALORANT's defaults.
+fn settings_details<'a>(
+    profile_id: &str,
+    summary: &'a GameSettingsProfileSummary,
+    expanded: bool,
+) -> Element<'a, Message> {
     let mut details = column![
         detail_row("Sensitivity", sensitivity_value(summary)),
         detail_row("Crosshair", crosshair_value(summary)),
@@ -198,23 +212,75 @@ fn settings_details(summary: &GameSettingsProfileSummary) -> Element<'_, Message
     .spacing(8)
     .width(Length::Fill);
 
-    if summary.other_setting_count > 0 {
-        details = details.push(
-            text(format!(
-                "Also includes {} other {}",
-                summary.other_setting_count,
-                if summary.other_setting_count == 1 {
-                    "setting"
-                } else {
-                    "settings"
-                }
-            ))
-            .size(12)
-            .color(MUTED_TEXT),
-        );
+    let listed =
+        summary.keybinds.len() + summary.audio_settings.len() + summary.other_settings.len();
+    if listed == 0 {
+        return details.into();
+    }
+
+    let toggle_label = if expanded {
+        "Show less".to_string()
+    } else {
+        format!("Show all settings ({listed})")
+    };
+    details = details.push(
+        button(text(toggle_label).size(13))
+            .style(iced::widget::button::text)
+            .padding([2, 0])
+            .on_press(Message::TogglePresetSettings(profile_id.to_string())),
+    );
+
+    if expanded {
+        details = details.push(all_settings(summary));
     }
 
     details.into()
+}
+
+/// Every keybind and every other setting a preset copies, as labelled groups.
+fn all_settings(summary: &GameSettingsProfileSummary) -> Element<'_, Message> {
+    let groups = [
+        (
+            "All keybinds",
+            summary
+                .keybinds
+                .iter()
+                .map(|keybind| (keybind.action.as_str(), keybind.key.as_str()))
+                .collect::<Vec<_>>(),
+        ),
+        ("Audio", setting_pairs(&summary.audio_settings)),
+        ("Other", setting_pairs(&summary.other_settings)),
+    ];
+
+    let mut list = column![].spacing(12).width(Length::Fill);
+    for (title, settings) in groups {
+        if settings.is_empty() {
+            continue;
+        }
+
+        let mut group = column![text(title.to_uppercase()).size(11).color(MUTED_TEXT)]
+            .spacing(4)
+            .width(Length::Fill);
+        for (label, value) in settings {
+            group = group.push(
+                row![
+                    text(label).size(13).width(Length::Fill),
+                    text(value).size(13).color(BRIGHT_TEXT)
+                ]
+                .spacing(12),
+            );
+        }
+        list = list.push(group);
+    }
+
+    list.into()
+}
+
+fn setting_pairs(settings: &[Setting]) -> Vec<(&str, &str)> {
+    settings
+        .iter()
+        .map(|setting| (setting.label.as_str(), setting.value.as_str()))
+        .collect()
 }
 
 fn detail_row<'a>(label: &'a str, value: Element<'a, Message>) -> Element<'a, Message> {
@@ -296,7 +362,7 @@ fn keybinds_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message> 
 
     let mut value = row![].spacing(12).align_y(alignment::Vertical::Center);
 
-    for keybind in &summary.keybinds {
+    for keybind in summary.keybinds.iter().take(SHORT_KEYBIND_LIMIT) {
         value = value.push(
             row![
                 keycap(&keybind.key),
@@ -307,7 +373,7 @@ fn keybinds_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message> 
         );
     }
 
-    let hidden = summary.keybind_count.saturating_sub(summary.keybinds.len());
+    let hidden = summary.keybinds.len().saturating_sub(SHORT_KEYBIND_LIMIT);
     if hidden > 0 {
         value = value.push(text(format!("+{hidden} more")).size(13).color(MUTED_TEXT));
     }

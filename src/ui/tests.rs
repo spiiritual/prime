@@ -4279,6 +4279,25 @@ fn renaming_a_preset_starts_from_its_name() {
 }
 
 #[test]
+fn show_all_settings_opens_and_closes_one_preset() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = settings_app(dir.path());
+    let main = settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
+    let alt = settings_profile_metadata("Alt settings", GameSettingsProfilePurpose::Profile, 300);
+    app.settings_profiles = vec![main.clone(), alt.clone()];
+
+    let task = app.update(Message::TogglePresetSettings(main.id.clone()));
+
+    assert_eq!(task.units(), 0);
+    assert!(app.expanded_presets.contains(&main.id));
+    assert!(!app.expanded_presets.contains(&alt.id));
+
+    let _ = app.update(Message::TogglePresetSettings(main.id));
+
+    assert!(app.expanded_presets.is_empty());
+}
+
+#[test]
 fn escape_closes_the_preset_dialogs() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());

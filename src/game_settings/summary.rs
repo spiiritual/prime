@@ -7,9 +7,6 @@ use serde_json::Value;
 
 use super::ValorantSettingsPayload;
 
-/// How many keybinds a summary keeps; the rest are only counted.
-const KEYBIND_LIMIT: usize = 3;
-
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GameSettingsProfileSummary {
     pub sensitivity: Option<f64>,
@@ -20,12 +17,20 @@ pub struct GameSettingsProfileSummary {
     /// The crosshair in use, or `None` for the default one.
     pub crosshair: Option<CrosshairSummary>,
     pub crosshair_profile_count: usize,
-    /// The first few changed keybinds.
+    /// Every changed keybind.
     pub keybinds: Vec<Keybind>,
-    pub keybind_count: usize,
     pub minimap: Vec<String>,
-    /// Other gameplay and interface settings Apply copies, which the summary doesn't describe.
-    pub other_setting_count: usize,
+    /// Audio and voice settings.
+    pub audio_settings: Vec<Setting>,
+    /// Everything else the rows above don't describe.
+    pub other_settings: Vec<Setting>,
+}
+
+/// One setting as the expanded preset card lists it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Setting {
+    pub label: String,
+    pub value: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -149,7 +154,7 @@ pub struct Keybind {
 
 pub(super) fn summarize(payload: &ValorantSettingsPayload) -> GameSettingsProfileSummary {
     let (crosshair, crosshair_profile_count) = saved_crosshair(payload);
-    let keybinds = keybinds(payload);
+    let (audio_settings, other_settings) = listed_settings(payload);
 
     GameSettingsProfileSummary {
         sensitivity: number_setting(payload, "MouseSensitivity"),
@@ -157,10 +162,10 @@ pub(super) fn summarize(payload: &ValorantSettingsPayload) -> GameSettingsProfil
         scoped_multiplier: number_setting(payload, "MouseSensitivityZoomed"),
         crosshair,
         crosshair_profile_count,
-        keybind_count: keybinds.len(),
-        keybinds: keybinds.into_iter().take(KEYBIND_LIMIT).collect(),
+        keybinds: keybinds(payload),
         minimap: minimap(payload),
-        other_setting_count: other_setting_count(payload),
+        audio_settings,
+        other_settings,
     }
 }
 
@@ -426,15 +431,124 @@ fn minimap(payload: &ValorantSettingsPayload) -> Vec<String> {
     minimap
 }
 
-fn other_setting_count(payload: &ValorantSettingsPayload) -> usize {
-    named_settings(payload)
-        .filter(|(key, _)| {
-            let lower = key.to_ascii_lowercase();
-            !lower.contains("sensitivity")
-                && !lower.contains("crosshair")
-                && !lower.contains("minimap")
+/// The settings the summary's own rows don't describe, as audio and everything else, each sorted
+/// by label. Tips and pop-ups the player has already seen are copied too, but aren't listed.
+fn listed_settings(payload: &ValorantSettingsPayload) -> (Vec<Setting>, Vec<Setting>) {
+    let mut audio = Vec::new();
+    let mut other = Vec::new();
+
+    for (entries, from_float_list) in [
+        (&payload.float_settings, true),
+        (&payload.int_settings, false),
+        (&payload.bool_settings, false),
+        (&payload.string_settings, false),
+    ] {
+        for entry in entries.iter().flatten() {
+            let (Some(name), Some(value)) = (
+                entry
+                    .get("settingEnum")
+                    .and_then(Value::as_str)
+                    .map(setting_name),
+                entry.get("value"),
+            ) else {
+                continue;
+            };
+            let lower = name.to_ascii_lowercase();
+            if described_by_summary(&lower) || already_seen(name) {
+                continue;
+            }
+
+            let setting = Setting {
+                label: setting_label(name),
+                value: setting_value(&lower, value, from_float_list),
+            };
+            if is_audio(&lower) {
+                audio.push(setting);
+            } else {
+                other.push(setting);
+            }
+        }
+    }
+
+    audio.sort_by(|a, b| a.label.cmp(&b.label));
+    other.sort_by(|a, b| a.label.cmp(&b.label));
+    (audio, other)
+}
+
+fn described_by_summary(lower_name: &str) -> bool {
+    ["sensitivity", "crosshair", "minimap"]
+        .iter()
+        .any(|part| lower_name.contains(part))
+}
+
+fn already_seen(name: &str) -> bool {
+    [
+        "HasSeen",
+        "HasEver",
+        "HasAccepted",
+        "LastSeen",
+        "LastAccepted",
+    ]
+    .iter()
+    .any(|prefix| name.starts_with(prefix))
+        || name.ends_with("ModuleComplete")
+}
+
+fn is_audio(lower_name: &str) -> bool {
+    [
+        "volume",
+        "voice",
+        "music",
+        "sound",
+        "audio",
+        "hrtf",
+        "pushtotalk",
+        "microphone",
+    ]
+    .iter()
+    .any(|part| lower_name.contains(part))
+}
+
+/// `TeamPushToTalkKey` becomes `Team push to talk key`; acronyms like `HRTF` stay capitalised.
+fn setting_label(name: &str) -> String {
+    split_words(name)
+        .split(' ')
+        .enumerate()
+        .map(|(index, word)| {
+            let acronym = word.len() > 1 && word.chars().all(|ch| ch.is_ascii_uppercase());
+            if index == 0 || acronym {
+                word.to_string()
+            } else {
+                word.to_lowercase()
+            }
         })
-        .count()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn setting_value(lower_name: &str, value: &Value, from_float_list: bool) -> String {
+    match value {
+        Value::Bool(true) => "On".to_string(),
+        Value::Bool(false) => "Off".to_string(),
+        Value::Number(number) => {
+            let number = number.as_f64().unwrap_or_default();
+            if lower_name.contains("volume") {
+                // Float volumes run from 0 to 1; integer ones are already percentages.
+                let percent = if from_float_list {
+                    number * 100.0
+                } else {
+                    number
+                };
+                format!("{}%", percent.round())
+            } else {
+                // Stored as 32-bit floats, so 0.34 comes back as 0.3400000035762787.
+                ((number * 1000.0).round() / 1000.0).to_string()
+            }
+        }
+        Value::String(text) if lower_name.ends_with("key") => key_label(text),
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -500,7 +614,8 @@ mod tests {
         assert_eq!(summary.crosshair_profile_count, 0);
         assert!(summary.keybinds.is_empty());
         assert!(summary.minimap.is_empty());
-        assert_eq!(summary.other_setting_count, 0);
+        assert!(summary.audio_settings.is_empty());
+        assert!(summary.other_settings.is_empty());
     }
 
     #[test]
@@ -567,7 +682,6 @@ mod tests {
             ]
         })));
 
-        assert_eq!(summary.keybind_count, 4);
         assert_eq!(
             summary.keybinds,
             [
@@ -582,6 +696,10 @@ mod tests {
                 Keybind {
                     action: "Equip primary weapon".to_string(),
                     key: "Shift + 1".to_string(),
+                },
+                Keybind {
+                    action: "Toggle mouse cursor".to_string(),
+                    key: "Unbound".to_string(),
                 },
             ]
         );
@@ -600,20 +718,73 @@ mod tests {
         assert_eq!(summary.minimap, ["Fixed rotation", "Player not centered"]);
     }
 
+    fn setting(label: &str, value: &str) -> Setting {
+        Setting {
+            label: label.to_string(),
+            value: value.to_string(),
+        }
+    }
+
     #[test]
-    fn counts_every_other_copied_setting_including_audio() {
+    fn lists_audio_and_other_settings_readably() {
         let summary = summarize(&payload(serde_json::json!({
+            "floatSettings": [
+                // Stored as a 32-bit float.
+                {"settingEnum": "EAresFloatSettingName::OverallVolume", "value": 0.824999988079071},
+                {"settingEnum": "EAresFloatSettingName::MouseSensitivity", "value": 0.4}
+            ],
+            "intSettings": [
+                {"settingEnum": "EAresIntSettingName::MicVolume", "value": 68},
+                {"settingEnum": "EAresIntSettingName::PlayerPerfShowFrameRate", "value": 3}
+            ],
             "boolSettings": [
                 {"settingEnum": "EAresBoolSettingName::ShowCorpses", "value": false},
-                {"settingEnum": "EAresBoolSettingName::HasSeenSettingsTutorial", "value": true},
+                {"settingEnum": "EAresBoolSettingName::EnableHRTF", "value": true},
                 {"settingEnum": "EAresBoolSettingName::MinimapRotates", "value": false}
             ],
-            "floatSettings": [
-                {"settingEnum": "EAresFloatSettingName::OverallVolume", "value": 0.8},
-                {"settingEnum": "EAresFloatSettingName::MouseSensitivity", "value": 0.4}
+            "stringSettings": [
+                {"settingEnum": "EAresStringSettingName::TeamPushToTalkKey", "value": "ThumbMouseButton2"},
+                {"settingEnum": "EAresStringSettingName::PlayerPerfPresetType", "value": "Performance Detailed"}
             ]
         })));
 
-        assert_eq!(summary.other_setting_count, 3);
+        assert_eq!(
+            summary.audio_settings,
+            [
+                setting("Enable HRTF", "On"),
+                setting("Mic volume", "68%"),
+                setting("Overall volume", "82%"),
+                setting("Team push to talk key", "Mouse 5"),
+            ]
+        );
+        assert_eq!(
+            summary.other_settings,
+            [
+                setting("Player perf preset type", "Performance Detailed"),
+                setting("Player perf show frame rate", "3"),
+                setting("Show corpses", "Off"),
+            ]
+        );
+    }
+
+    #[test]
+    fn leaves_out_tips_and_pop_ups_already_seen() {
+        let summary = summarize(&payload(serde_json::json!({
+            "boolSettings": [
+                {"settingEnum": "EAresBoolSettingName::HasSeenSettingsTutorial", "value": true},
+                {"settingEnum": "EAresBoolSettingName::HasAcceptedCodeOfConduct", "value": true},
+                {"settingEnum": "EAresBoolSettingName::HasEverStartedAMatch", "value": true},
+                {"settingEnum": "EAresBoolSettingName::ContextAwareModuleComplete", "value": true}
+            ],
+            "intSettings": [
+                {"settingEnum": "EAresIntSettingName::LastAcceptedCodeOfConductVersion", "value": 1}
+            ],
+            "stringSettings": [
+                {"settingEnum": "EAresStringSettingName::LastSeenAdHocPopup", "value": "ep9act1adhoc"}
+            ]
+        })));
+
+        assert_eq!(summary.audio_settings, []);
+        assert_eq!(summary.other_settings, []);
     }
 }

@@ -20,7 +20,7 @@ mod summary;
 
 pub use summary::{
     CrosshairCenterDot, CrosshairLines, CrosshairOutline, CrosshairSummary,
-    GameSettingsProfileSummary, Keybind, Rgba,
+    GameSettingsProfileSummary, Keybind, Rgba, Setting,
 };
 
 pub const VALORANT_PLAYER_SETTINGS_TYPE: &str = "Ares.PlayerSettings";

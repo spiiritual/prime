@@ -297,6 +297,8 @@ struct PrimeApp {
     /// Whether a newly added account's VALORANT settings are saved as a settings profile.
     save_settings_on_add: bool,
     settings_profiles: Vec<GameSettingsProfileMetadata>,
+    /// Presets whose cards list all their settings.
+    expanded_presets: HashSet<String>,
     /// The name dialog for saving or renaming a preset.
     preset_name_prompt: Option<PresetNamePrompt>,
     settings_saving_account: Option<AccountId>,
@@ -764,6 +766,8 @@ enum Message {
     /// Opens the name dialog for a new preset from this account's settings.
     RequestSavePreset(AccountId),
     RequestRenamePreset(String),
+    /// Opens or closes the full list of a preset's settings.
+    TogglePresetSettings(String),
     PresetNameChanged(String),
     CancelPresetName,
     ConfirmPresetName,
