@@ -15,7 +15,9 @@ use super::data::account_details::{
     penalty_status_from_response, rank_name_for_competitive_tier,
 };
 use super::data::cache_account_api_context;
-use super::data::game_settings::{AppliedGameSettingsResult, SavedGameSettingsResult};
+use super::data::game_settings::{
+    AppliedGameSettingsResult, RestoredGameSettingsResult, SavedGameSettingsResult,
+};
 use super::data::launch_flow::CapturedAccountDraft;
 use super::data::launch_flow::{
     LaunchAccountResult, is_pending_launcher_capture_error, load_accounts, require_launcher_session,
@@ -30,9 +32,9 @@ use super::data::shop::{
     StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay, StoreSummary, format_whole_number,
 };
 use super::{
-    Message, PendingSettingsApply, PrimeApp, countdown_timer_active, loading_status_active,
-    masked_account_export_payload, status_bar_visible, status_message_is_error,
-    status_spinner_active, status_visible_at,
+    Message, PendingSettingsApply, PresetNamePrompt, PresetNameTarget, PrimeApp,
+    countdown_timer_active, loading_status_active, masked_account_export_payload,
+    status_bar_visible, status_message_is_error, status_spinner_active, status_visible_at,
 };
 use crate::account::{
     AccountId, AccountPenalty, AccountPenaltyDuration, AccountPenaltyStatus, AccountProfile,
@@ -3995,14 +3997,10 @@ fn settings_profile_metadata(
         source_puuid: "Main-puuid".to_string(),
         captured_at_unix,
         settings_version: Some(15),
-        summary: GameSettingsProfileSummary {
-            sensitivity_count: 1,
-            crosshair_count: 0,
-            keybind_count: 0,
-            minimap_count: 0,
-            gameplay_interface_count: 0,
-            examples: vec![],
-        },
+        summary: Box::new(GameSettingsProfileSummary {
+            sensitivity: Some(0.4),
+            ..GameSettingsProfileSummary::default()
+        }),
     }
 }
 
@@ -4053,15 +4051,110 @@ fn settings_cloning_does_nothing_while_disabled() {
     app.settings_profiles = vec![profile.clone()];
 
     let tasks = [
-        app.update(Message::SaveAccountSettings(account_id)),
-        app.update(Message::RequestApplySavedSettings(account_id)),
+        app.update(Message::RequestSavePreset(account_id)),
+        app.update(Message::SaveSettingsPreset {
+            account_id,
+            name: "Main settings".to_string(),
+        }),
+        app.update(Message::RequestRenamePreset(profile.id.clone())),
+        app.update(Message::RequestApplyPreset {
+            profile_id: profile.id.clone(),
+            account_id,
+        }),
+        app.update(Message::RequestRestoreSettings(account_id)),
         app.update(Message::RequestDeleteSettingsProfile(profile.id)),
     ];
 
     assert!(tasks.iter().all(|task| task.units() == 0));
     assert_eq!(app.settings_saving_account, None);
+    assert_eq!(app.preset_name_prompt, None);
     assert_eq!(app.confirm_apply_settings, None);
+    assert_eq!(app.confirm_restore_settings, None);
     assert_eq!(app.confirm_delete_settings_profile, None);
+}
+
+#[test]
+fn settings_profiles_have_their_own_accounts_sub_tab() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = settings_app(dir.path());
+
+    let _ = app.update(Message::AccountsTabSelected(
+        super::AccountsTab::GameSettings,
+    ));
+    assert_eq!(app.active_accounts_tab, super::AccountsTab::GameSettings);
+
+    // A finished capture brings the Accounts sub-tab back so its confirmation is in view.
+    let draft = captured_account_draft(
+        &app.repo.launcher_backups_dir(),
+        "puuid-a",
+        "Player",
+        "NA1",
+        Shard::Na,
+    );
+    let _ = app.update(Message::CurrentAccountCaptureFinished(Ok(draft)));
+    assert_eq!(app.active_accounts_tab, super::AccountsTab::Accounts);
+}
+
+#[test]
+fn adding_an_account_saves_its_settings_when_asked() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.settings_cloning = true;
+    let draft = captured_account_draft(
+        &app.repo.launcher_backups_dir(),
+        "puuid-a",
+        "Player",
+        "NA1",
+        Shard::Na,
+    );
+
+    let _ = app.update(Message::CurrentAccountCaptureFinished(Ok(draft.clone())));
+    let _ = app.update(Message::SaveSettingsOnAddToggled(true));
+    let task = app.update(Message::ConfirmCapturedAccount);
+
+    assert_eq!(app.state.accounts.len(), 1);
+    assert_eq!(app.settings_saving_account, Some(draft.account_id));
+    assert!(task.units() > 0);
+    assert!(app.status.starts_with("Added "));
+    assert!(
+        app.status
+            .ends_with("Saving its VALORANT settings as a preset")
+    );
+}
+
+#[test]
+fn adding_an_account_leaves_its_settings_unless_asked() {
+    for (cloning, checked) in [(true, false), (false, true)] {
+        let dir = tempdir().expect("temp dir");
+        let mut app = test_app(dir.path());
+        app.settings_cloning = cloning;
+        let draft = captured_account_draft(
+            &app.repo.launcher_backups_dir(),
+            "puuid-a",
+            "Player",
+            "NA1",
+            Shard::Na,
+        );
+
+        let _ = app.update(Message::CurrentAccountCaptureFinished(Ok(draft)));
+        let _ = app.update(Message::SaveSettingsOnAddToggled(checked));
+        let _ = app.update(Message::ConfirmCapturedAccount);
+
+        assert_eq!(app.state.accounts.len(), 1);
+        assert_eq!(app.settings_saving_account, None);
+    }
+}
+
+#[test]
+fn confirming_without_a_draft_saves_no_settings() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    app.state.select_account(account_id);
+    app.save_settings_on_add = true;
+
+    let _ = app.update(Message::ConfirmCapturedAccount);
+
+    assert_eq!(app.settings_saving_account, None);
 }
 
 fn profile_ids(app: &PrimeApp) -> Vec<String> {
@@ -4072,33 +4165,20 @@ fn profile_ids(app: &PrimeApp) -> Vec<String> {
 }
 
 #[test]
-fn saving_settings_keeps_the_profile_chosen_for_apply() {
+fn a_saved_preset_is_listed_first() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
-    let chosen =
-        settings_profile_metadata("Alt settings", GameSettingsProfilePurpose::Profile, 100);
-    app.settings_profiles = vec![chosen.clone()];
-    app.selected_settings_profile = Some(chosen.id.clone());
+    let older = settings_profile_metadata("Alt settings", GameSettingsProfilePurpose::Profile, 100);
+    app.settings_profiles = vec![older.clone()];
     app.settings_saving_account = Some(account_id);
     let saved =
         settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
 
     let _ = app.update(settings_saved(account_id, saved.clone()));
 
-    assert_eq!(app.selected_settings_profile, Some(chosen.id.clone()));
-    assert_eq!(profile_ids(&app), [saved.id, chosen.id]);
-}
-
-#[test]
-fn saving_the_first_settings_profile_chooses_it_for_apply() {
-    let dir = tempdir().expect("temp dir");
-    let (mut app, account_id) = settings_app(dir.path());
-    let saved =
-        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
-
-    let _ = app.update(settings_saved(account_id, saved.clone()));
-
-    assert_eq!(app.selected_settings_profile, Some(saved.id));
+    assert_eq!(app.settings_saving_account, None);
+    assert_eq!(profile_ids(&app), [saved.id, older.id]);
+    assert_eq!(app.status, "Saved preset Main settings");
 }
 
 #[test]
@@ -4119,33 +4199,112 @@ fn saved_settings_profile_is_listed_when_the_account_update_fails() {
 }
 
 #[test]
-fn loaded_settings_profiles_choose_a_saved_profile_over_a_backup() {
+fn saving_a_preset_asks_for_its_name_first() {
     let dir = tempdir().expect("temp dir");
-    let (mut app, _) = settings_app(dir.path());
-    let backup = settings_profile_metadata("Main backup", GameSettingsProfilePurpose::Backup, 300);
-    let profile =
-        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
+    let (mut app, account_id) = settings_app(dir.path());
 
-    let _ = app.update(Message::GameSettingsProfilesLoaded(Ok(vec![
-        backup.clone(),
-        profile.clone(),
-    ])));
+    let task = app.update(Message::RequestSavePreset(account_id));
 
-    assert_eq!(profile_ids(&app), [backup.id, profile.id.clone()]);
-    assert_eq!(app.selected_settings_profile, Some(profile.id));
+    assert_eq!(task.units(), 0);
+    assert_eq!(app.settings_saving_account, None);
+    assert_eq!(
+        app.preset_name_prompt,
+        Some(PresetNamePrompt {
+            target: PresetNameTarget::New(account_id),
+            name: "Main settings".to_string(),
+        })
+    );
+
+    let _ = app.update(Message::PresetNameChanged("   ".to_string()));
+    let task = app.update(Message::ConfirmPresetName);
+
+    assert_eq!(task.units(), 0);
+    assert!(app.preset_name_prompt.is_some());
+
+    let _ = app.update(Message::PresetNameChanged(" Aim duels ".to_string()));
+    let task = app.update(Message::ConfirmPresetName);
+
+    assert!(task.units() > 0);
+    assert_eq!(app.preset_name_prompt, None);
+    assert_eq!(app.settings_saving_account, Some(account_id));
+    assert!(app.status.contains("Aim duels"), "{}", app.status);
 }
 
 #[test]
-fn applying_settings_asks_to_confirm_the_profile_and_account() {
+fn the_name_dialog_stays_open_when_the_save_cannot_start() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
-    let backup = settings_profile_metadata("Main backup", GameSettingsProfilePurpose::Backup, 300);
-    let profile =
-        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
-    app.settings_profiles = vec![backup, profile.clone()];
-    app.selected_settings_profile = Some(profile.id.clone());
+    let _ = app.update(Message::RequestSavePreset(account_id));
+    app.settings_applying_account = Some(AccountId::new());
 
-    let task = app.update(Message::RequestApplySavedSettings(account_id));
+    let task = app.update(Message::ConfirmPresetName);
+
+    assert_eq!(task.units(), 0);
+    assert!(app.preset_name_prompt.is_some());
+    assert_eq!(app.settings_saving_account, None);
+}
+
+#[test]
+fn renaming_a_preset_starts_from_its_name() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = settings_app(dir.path());
+    let preset =
+        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
+    app.settings_profiles = vec![preset.clone()];
+
+    let _ = app.update(Message::RequestRenamePreset(preset.id.clone()));
+
+    assert_eq!(
+        app.preset_name_prompt,
+        Some(PresetNamePrompt {
+            target: PresetNameTarget::Rename(preset.id.clone()),
+            name: "Main settings".to_string(),
+        })
+    );
+
+    let _ = app.update(Message::PresetNameChanged("Old crosshair".to_string()));
+    let task = app.update(Message::ConfirmPresetName);
+
+    assert!(task.units() > 0);
+    assert_eq!(app.preset_name_prompt, None);
+
+    let renamed = GameSettingsProfileMetadata {
+        name: "Old crosshair".to_string(),
+        ..preset
+    };
+    let _ = app.update(Message::PresetRenamed(Ok(renamed.clone())));
+
+    assert_eq!(app.settings_profiles, [renamed]);
+    assert_eq!(app.status, "Renamed preset to Old crosshair");
+}
+
+#[test]
+fn escape_closes_the_preset_dialogs() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+
+    let _ = app.update(Message::RequestSavePreset(account_id));
+    let _ = app.update(Message::EscapePressed);
+    assert_eq!(app.preset_name_prompt, None);
+
+    let _ = app.update(Message::RequestRestoreSettings(account_id));
+    assert_eq!(app.confirm_restore_settings, Some(account_id));
+    let _ = app.update(Message::EscapePressed);
+    assert_eq!(app.confirm_restore_settings, None);
+}
+
+#[test]
+fn applying_a_preset_asks_to_confirm_first() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let preset =
+        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
+    app.settings_profiles = vec![preset.clone()];
+
+    let task = app.update(Message::RequestApplyPreset {
+        profile_id: preset.id.clone(),
+        account_id,
+    });
 
     assert_eq!(task.units(), 0);
     assert_eq!(app.settings_applying_account, None);
@@ -4153,7 +4312,7 @@ fn applying_settings_asks_to_confirm_the_profile_and_account() {
         app.confirm_apply_settings,
         Some(PendingSettingsApply {
             account_id,
-            profile_id: profile.id,
+            profile_id: preset.id,
         })
     );
 
@@ -4167,11 +4326,13 @@ fn applying_settings_asks_to_confirm_the_profile_and_account() {
 fn confirming_apply_starts_it() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
-    let profile =
+    let preset =
         settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
-    app.settings_profiles = vec![profile.clone()];
-    app.selected_settings_profile = Some(profile.id.clone());
-    let _ = app.update(Message::RequestApplySavedSettings(account_id));
+    app.settings_profiles = vec![preset.clone()];
+    let _ = app.update(Message::RequestApplyPreset {
+        profile_id: preset.id,
+        account_id,
+    });
 
     let task = app.update(Message::ConfirmApplySavedSettings);
 
@@ -4181,39 +4342,133 @@ fn confirming_apply_starts_it() {
     assert!(app.status.contains("Main settings"), "{}", app.status);
 }
 
-#[test]
-fn applied_settings_status_names_the_backup() {
-    let dir = tempdir().expect("temp dir");
-    let (mut app, account_id) = settings_app(dir.path());
-    let source =
-        settings_profile_metadata("Alt settings", GameSettingsProfilePurpose::Profile, 200);
-    let backup = settings_profile_metadata("Main backup", GameSettingsProfilePurpose::Backup, 300);
-    app.settings_applying_account = Some(account_id);
-
-    let _ = app.update(Message::SavedSettingsApplied(Ok(
-        AppliedGameSettingsResult {
-            account_id,
-            session: AuthSession::new("fresh", None, None, "Bearer", Some(3600), 100),
-            launcher_session: None,
-            identity: settings_api_identity(),
-            source_profile: source,
-            backup_profile: backup.clone(),
-        },
-    )));
-
-    assert!(app.status.contains("Main backup"), "{}", app.status);
-    assert!(!app.status.contains(&backup.id), "{}", app.status);
+fn applied(
+    account_id: AccountId,
+    source_profile: GameSettingsProfileMetadata,
+    backup_profile: Option<GameSettingsProfileMetadata>,
+) -> Message {
+    Message::SavedSettingsApplied(Ok(AppliedGameSettingsResult {
+        account_id,
+        session: AuthSession::new("fresh", None, None, "Bearer", Some(3600), 100),
+        launcher_session: None,
+        identity: settings_api_identity(),
+        source_profile,
+        backup_profile,
+    }))
 }
 
 #[test]
-fn deleting_a_settings_profile_asks_first_and_moves_the_choice() {
+fn applied_status_points_to_restore_only_when_it_saved_the_accounts_settings() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let preset =
+        settings_profile_metadata("Alt settings", GameSettingsProfilePurpose::Profile, 200);
+    let backup = settings_profile_metadata(
+        "Main original settings",
+        GameSettingsProfilePurpose::Backup,
+        300,
+    );
+
+    app.settings_applying_account = Some(account_id);
+    let task = app.update(applied(account_id, preset.clone(), Some(backup)));
+
+    assert!(task.units() > 0, "reloads the list to show the new backup");
+    assert_eq!(app.settings_applying_account, None);
+    assert_eq!(
+        app.status,
+        "Applied preset Alt settings. Its own settings were saved; restore them from Game settings"
+    );
+
+    let _ = app.update(applied(account_id, preset, None));
+
+    assert_eq!(app.status, "Applied preset Alt settings");
+}
+
+#[test]
+fn restoring_asks_first_then_starts() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+
+    let task = app.update(Message::RequestRestoreSettings(account_id));
+
+    assert_eq!(task.units(), 0);
+    assert_eq!(app.confirm_restore_settings, Some(account_id));
+    assert_eq!(app.settings_applying_account, None);
+
+    let task = app.update(Message::ConfirmRestoreSettings);
+
+    assert!(task.units() > 0);
+    assert_eq!(app.confirm_restore_settings, None);
+    assert_eq!(app.settings_applying_account, Some(account_id));
+
+    let task = app.update(Message::SettingsRestored(Ok(RestoredGameSettingsResult {
+        account_id,
+        session: AuthSession::new("fresh", None, None, "Bearer", Some(3600), 100),
+        launcher_session: None,
+        identity: settings_api_identity(),
+    })));
+
+    assert!(
+        task.units() > 0,
+        "reloads the list without the restored backup"
+    );
+    assert_eq!(app.settings_applying_account, None);
+    assert_eq!(app.status, "Restored original settings");
+}
+
+#[test]
+fn restore_waits_for_other_settings_work() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    app.settings_saving_account = Some(account_id);
+
+    let task = app.update(Message::RequestRestoreSettings(account_id));
+
+    assert_eq!(task.units(), 0);
+    assert_eq!(app.confirm_restore_settings, None);
+}
+
+#[test]
+fn each_accounts_original_settings_are_its_oldest_backup() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let backup_of = |account_id, captured_at_unix| GameSettingsProfileMetadata {
+        source_account_id: account_id,
+        ..settings_profile_metadata(
+            "Main original settings",
+            GameSettingsProfilePurpose::Backup,
+            captured_at_unix,
+        )
+    };
+    let other_account = AccountId::new();
+    let newer = backup_of(account_id, 300);
+    let original = backup_of(account_id, 100);
+    let other = backup_of(other_account, 200);
+    let preset = GameSettingsProfileMetadata {
+        source_account_id: account_id,
+        ..settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 50)
+    };
+    app.settings_profiles = vec![newer, other.clone(), original.clone(), preset];
+
+    let originals = super::screens::original_settings(&app);
+
+    assert_eq!(
+        originals
+            .iter()
+            .map(|original| original.id.as_str())
+            .collect::<Vec<_>>(),
+        [original.id.as_str(), other.id.as_str()]
+    );
+}
+
+#[test]
+fn deleting_a_preset_asks_first() {
     let dir = tempdir().expect("temp dir");
     let (mut app, _) = settings_app(dir.path());
     let deleted =
         settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
     let kept = settings_profile_metadata("Alt settings", GameSettingsProfilePurpose::Profile, 100);
     app.settings_profiles = vec![deleted.clone(), kept.clone()];
-    app.selected_settings_profile = Some(deleted.id.clone());
 
     let task = app.update(Message::RequestDeleteSettingsProfile(deleted.id.clone()));
 
@@ -4231,13 +4486,7 @@ fn deleting_a_settings_profile_asks_first_and_moves_the_choice() {
     let _ = app.update(Message::SettingsProfileDeleted(deleted.id.clone(), Ok(())));
 
     assert_eq!(profile_ids(&app), std::slice::from_ref(&kept.id));
-    assert_eq!(app.selected_settings_profile, Some(kept.id));
-    assert!(
-        app.status
-            .contains("Deleted settings profile Main settings"),
-        "{}",
-        app.status
-    );
+    assert_eq!(app.status, "Deleted Main settings");
 }
 
 fn seconds_ago(seconds: u64) -> iced::time::Instant {

@@ -45,7 +45,9 @@ Updates: Velopack checks the GitHub releases of `spiiritual/prime`. `PRIME_UPDAT
 
 Both are off by default, so release builds leave them out.
 
-- `settings-cloning`: save an account's VALORANT settings as a profile and apply it to another account.
+- `settings-cloning`: save an account's VALORANT settings as a named preset, apply a preset to any account
+  and restore that account's own settings afterwards, from a Game settings sub-tab of Accounts. Adding an
+  account can also save its settings as a preset.
 - `image-viewer-testing`: click an image to open it full size.
 
 ## Code layout

@@ -17,6 +17,13 @@ use time::OffsetDateTime;
 
 use crate::account::AccountId;
 
+mod summary;
+
+pub use summary::{
+    CrosshairCenterDot, CrosshairLines, CrosshairOutline, CrosshairSummary,
+    GameSettingsProfileSummary, Keybind, Rgba,
+};
+
 pub const VALORANT_PLAYER_SETTINGS_TYPE: &str = "Ares.PlayerSettings";
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -46,7 +53,7 @@ impl GameSettingsProfile {
         let summary = self
             .preference
             .settings_payload()
-            .map(|payload| payload.summary())?;
+            .map(|payload| Box::new(payload.summary()))?;
 
         Ok(GameSettingsProfileMetadata {
             id: self.id.clone(),
@@ -62,8 +69,8 @@ impl GameSettingsProfile {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// A saved profile's details without its settings, as the Game settings tab lists it.
+#[derive(Clone, Debug, PartialEq)]
 pub struct GameSettingsProfileMetadata {
     pub id: String,
     pub name: String,
@@ -73,7 +80,8 @@ pub struct GameSettingsProfileMetadata {
     pub source_puuid: String,
     pub captured_at_unix: i64,
     pub settings_version: Option<i64>,
-    pub summary: GameSettingsProfileSummary,
+    /// Boxed, since it is much larger than the rest and travels in UI messages.
+    pub summary: Box<GameSettingsProfileSummary>,
 }
 
 impl fmt::Display for GameSettingsProfileMetadata {
@@ -177,86 +185,7 @@ pub struct ValorantSettingsPayload {
 
 impl ValorantSettingsPayload {
     pub fn summary(&self) -> GameSettingsProfileSummary {
-        GameSettingsProfileSummary {
-            sensitivity_count: count_named_settings(&self.float_settings, |key| {
-                key.contains("sensitivity")
-            }) + count_named_settings(&self.int_settings, |key| {
-                key.contains("sensitivity")
-            }) + count_named_settings(&self.bool_settings, |key| {
-                key.contains("sensitivity")
-            }) + count_named_settings(&self.string_settings, |key| {
-                key.contains("sensitivity")
-            }),
-            crosshair_count: count_named_settings(&self.float_settings, |key| {
-                key.contains("crosshair")
-            }) + count_named_settings(&self.int_settings, |key| {
-                key.contains("crosshair")
-            }) + count_named_settings(&self.bool_settings, |key| {
-                key.contains("crosshair")
-            }) + count_named_settings(&self.string_settings, |key| {
-                key.contains("crosshair")
-            }) + self.settings_profile_data.as_ref().map_or(0, Vec::len),
-            keybind_count: self.action_mappings.as_ref().map_or(0, Vec::len)
-                + self.axis_mappings.as_ref().map_or(0, Vec::len),
-            minimap_count: count_named_settings(&self.float_settings, |key| {
-                key.contains("minimap")
-            }) + count_named_settings(&self.int_settings, |key| {
-                key.contains("minimap")
-            }) + count_named_settings(&self.bool_settings, |key| {
-                key.contains("minimap")
-            }) + count_named_settings(&self.string_settings, |key| {
-                key.contains("minimap")
-            }),
-            gameplay_interface_count: count_gameplay_interface_settings(self),
-            examples: setting_examples(self, 6),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GameSettingsProfileSummary {
-    pub sensitivity_count: usize,
-    pub crosshair_count: usize,
-    pub keybind_count: usize,
-    pub minimap_count: usize,
-    pub gameplay_interface_count: usize,
-    pub examples: Vec<String>,
-}
-
-impl GameSettingsProfileSummary {
-    pub fn categories_label(&self) -> String {
-        let mut parts = Vec::new();
-
-        if self.sensitivity_count > 0 {
-            parts.push(format!("Sensitivity {}", self.sensitivity_count));
-        }
-        if self.crosshair_count > 0 {
-            parts.push(format!("Crosshair {}", self.crosshair_count));
-        }
-        if self.keybind_count > 0 {
-            parts.push(format!("Keybinds {}", self.keybind_count));
-        }
-        if self.minimap_count > 0 {
-            parts.push(format!("Minimap {}", self.minimap_count));
-        }
-        if self.gameplay_interface_count > 0 {
-            parts.push(format!("Gameplay {}", self.gameplay_interface_count));
-        }
-
-        if parts.is_empty() {
-            "No recognized settings".to_string()
-        } else {
-            parts.join(" | ")
-        }
-    }
-
-    pub fn examples_label(&self) -> String {
-        if self.examples.is_empty() {
-            "No recognized setting names".to_string()
-        } else {
-            self.examples.join(", ")
-        }
+        summary::summarize(self)
     }
 }
 
@@ -328,6 +257,44 @@ impl GameSettingsProfileRepository {
         let mut profiles = self.metadata()?;
         profiles.sort_by_key(|profile| Reverse(profile.captured_at_unix));
         Ok(profiles)
+    }
+
+    /// Renames a saved profile, keeping its settings.
+    pub fn rename(
+        &self,
+        id: &str,
+        name: &str,
+    ) -> Result<GameSettingsProfileMetadata, GameSettingsError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(GameSettingsError::EmptyName);
+        }
+
+        let mut profile = self.load(id)?;
+        profile.name = name.to_string();
+        self.save(&profile)?;
+        profile.metadata()
+    }
+
+    /// The settings an account had before a preset was first applied to it: its oldest backup.
+    pub fn original_settings(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Option<GameSettingsProfileMetadata>, GameSettingsError> {
+        Ok(self.backups_for(account_id)?.pop())
+    }
+
+    /// Every backup of an account's settings, newest first.
+    pub fn backups_for(
+        &self,
+        account_id: AccountId,
+    ) -> Result<Vec<GameSettingsProfileMetadata>, GameSettingsError> {
+        let mut backups = self.saved_metadata()?;
+        backups.retain(|profile| {
+            profile.purpose == GameSettingsProfilePurpose::Backup
+                && profile.source_account_id == account_id
+        });
+        Ok(backups)
     }
 
     pub fn delete(&self, id: &str) -> Result<(), GameSettingsError> {
@@ -485,81 +452,6 @@ fn data_value(raw: &Value) -> Result<&Value, GameSettingsError> {
     }
 }
 
-fn count_named_settings(settings: &Option<Vec<Value>>, matches: impl Fn(&str) -> bool) -> usize {
-    settings
-        .as_ref()
-        .map(|settings| {
-            settings
-                .iter()
-                .filter_map(setting_entry_key)
-                .map(str::to_ascii_lowercase)
-                .filter(|key| matches(key))
-                .count()
-        })
-        .unwrap_or(0)
-}
-
-fn count_gameplay_interface_settings(payload: &ValorantSettingsPayload) -> usize {
-    let named_count = [
-        &payload.float_settings,
-        &payload.int_settings,
-        &payload.bool_settings,
-        &payload.string_settings,
-    ]
-    .into_iter()
-    .map(|settings| {
-        settings
-            .as_ref()
-            .map(|settings| {
-                settings
-                    .iter()
-                    .filter_map(setting_entry_key)
-                    .filter(|key| {
-                        let key = key.to_ascii_lowercase();
-                        setting_key_matches_categories(&key, SettingsCategories::all_gameplay())
-                            && !key.contains("sensitivity")
-                            && !key.contains("crosshair")
-                            && !key.contains("minimap")
-                    })
-                    .count()
-            })
-            .unwrap_or(0)
-    })
-    .sum::<usize>();
-
-    named_count + payload.settings_profiles.as_ref().map_or(0, Vec::len)
-}
-
-fn setting_examples(payload: &ValorantSettingsPayload, limit: usize) -> Vec<String> {
-    let mut examples = Vec::new();
-    let mut seen = HashSet::new();
-
-    for settings in [
-        &payload.float_settings,
-        &payload.int_settings,
-        &payload.bool_settings,
-        &payload.string_settings,
-        &payload.action_mappings,
-        &payload.axis_mappings,
-    ] {
-        let Some(settings) = settings else {
-            continue;
-        };
-
-        for key in settings.iter().filter_map(setting_entry_key) {
-            if examples.len() >= limit {
-                return examples;
-            }
-
-            if seen.insert(key.to_string()) {
-                examples.push(key.to_string());
-            }
-        }
-    }
-
-    examples
-}
-
 fn merge_named_settings(
     source: &Option<Vec<Value>>,
     target: &mut Option<Vec<Value>>,
@@ -707,6 +599,8 @@ pub enum GameSettingsError {
     Io(#[from] io::Error),
     #[error("no settings profile is available")]
     NoSavedProfile,
+    #[error("a preset name can't be empty")]
+    EmptyName,
 }
 
 #[cfg(test)]
@@ -823,26 +717,6 @@ mod tests {
             saved.float_settings.as_ref().expect("float")[0]["value"],
             serde_json::json!(0.7)
         );
-    }
-
-    #[test]
-    fn summarizes_profile_categories_and_examples() {
-        let payload = payload(serde_json::json!({
-            "floatSettings": [{"settingEnum": "MouseSensitivity", "value": 0.32}],
-            "boolSettings": [{"settingEnum": "MinimapRotates", "value": true}],
-            "stringSettings": [{"settingEnum": "SavedCrosshairProfileData", "value": "crosshair"}],
-            "actionMappings": [{"actionName": "Jump", "key": "Space"}],
-            "settingsProfiles": [{"profile": "default"}]
-        }));
-
-        let summary = payload.summary();
-
-        assert_eq!(summary.sensitivity_count, 1);
-        assert_eq!(summary.crosshair_count, 1);
-        assert_eq!(summary.keybind_count, 1);
-        assert_eq!(summary.minimap_count, 1);
-        assert_eq!(summary.gameplay_interface_count, 1);
-        assert!(summary.examples.contains(&"MouseSensitivity".to_string()));
     }
 
     #[test]
@@ -990,6 +864,83 @@ mod tests {
                 .map(|saved| saved.id.as_str())
                 .collect::<Vec<_>>(),
             [profile.id.as_str()]
+        );
+    }
+
+    #[test]
+    fn rename_changes_only_the_name() {
+        let dir = tempfile::tempdir().expect("profile dir");
+        let repository = GameSettingsProfileRepository::new(dir.path());
+        let profile = saved_profile(GameSettingsProfilePurpose::Profile, 100);
+        repository.save(&profile).expect("save profile");
+
+        let renamed = repository
+            .rename(&profile.id, "  Old crosshair  ")
+            .expect("rename");
+
+        assert_eq!(renamed.name, "Old crosshair");
+        let loaded = repository.load(&profile.id).expect("load");
+        assert_eq!(
+            loaded,
+            GameSettingsProfile {
+                name: "Old crosshair".to_string(),
+                ..profile
+            }
+        );
+    }
+
+    #[test]
+    fn rename_refuses_an_empty_name() {
+        let dir = tempfile::tempdir().expect("profile dir");
+        let repository = GameSettingsProfileRepository::new(dir.path());
+        let profile = saved_profile(GameSettingsProfilePurpose::Profile, 100);
+        repository.save(&profile).expect("save profile");
+
+        assert!(matches!(
+            repository.rename(&profile.id, "   "),
+            Err(GameSettingsError::EmptyName)
+        ));
+        assert_eq!(repository.load(&profile.id).expect("load").name, "Main");
+    }
+
+    #[test]
+    fn original_settings_are_the_accounts_oldest_backup() {
+        let dir = tempfile::tempdir().expect("profile dir");
+        let repository = GameSettingsProfileRepository::new(dir.path());
+        let account_id = AccountId::new();
+        let for_account = |purpose, captured_at_unix| GameSettingsProfile {
+            source_account_id: account_id,
+            ..saved_profile(purpose, captured_at_unix)
+        };
+        let original = for_account(GameSettingsProfilePurpose::Backup, 100);
+        let later_backup = for_account(GameSettingsProfilePurpose::Backup, 200);
+        let preset = for_account(GameSettingsProfilePurpose::Profile, 50);
+        let other_account = saved_profile(GameSettingsProfilePurpose::Backup, 10);
+        for profile in [&original, &later_backup, &preset, &other_account] {
+            repository.save(profile).expect("save");
+        }
+
+        assert_eq!(
+            repository
+                .original_settings(account_id)
+                .expect("original")
+                .map(|profile| profile.id),
+            Some(original.id.clone())
+        );
+        assert_eq!(
+            repository
+                .backups_for(account_id)
+                .expect("backups")
+                .iter()
+                .map(|profile| profile.id.as_str())
+                .collect::<Vec<_>>(),
+            [later_backup.id.as_str(), original.id.as_str()]
+        );
+        assert_eq!(
+            repository
+                .original_settings(AccountId::new())
+                .expect("no original"),
+            None
         );
     }
 

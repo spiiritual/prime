@@ -1,8 +1,9 @@
-use iced::widget::{button, column, container, grid, progress_bar, row, stack, text};
+use iced::widget::{column, container, grid, progress_bar, row, stack, text};
 use iced::{Color, Element, Length, Theme, alignment, border};
 
 use crate::ui::components::{
     asset_image, compact_item_name, high_res_image_source, load_error_panel, loading_line,
+    sub_tab_button,
 };
 use crate::ui::data::loadout::{
     BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutGunDisplay,
@@ -54,20 +55,11 @@ fn loadout_tabs(app: &PrimeApp) -> Element<'_, Message> {
 }
 
 fn loadout_tab_button(app: &PrimeApp, tab: LoadoutTab) -> Element<'_, Message> {
-    let is_selected = app.active_loadout_tab == tab;
-    let label = if is_selected {
-        format!("[{}]", tab)
-    } else {
-        tab.to_string()
-    };
-
-    button(text(label).size(14))
-        .padding([12, 16])
-        .width(Length::Fill)
-        .height(46)
-        .style(move |theme, status| loadout_tab_button_style(theme, status, is_selected))
-        .on_press_maybe((!is_selected).then_some(Message::LoadoutTabSelected(tab)))
-        .into()
+    sub_tab_button(
+        tab.to_string(),
+        app.active_loadout_tab == tab,
+        Message::LoadoutTabSelected(tab),
+    )
 }
 
 fn active_loadout_tab(app: &PrimeApp) -> Element<'_, Message> {
@@ -164,27 +156,6 @@ fn retry_loadout(app: &PrimeApp) -> Option<Message> {
     app.loadout_request
         .is_none()
         .then_some(Message::RetryLoadout)
-}
-
-fn loadout_tab_button_style(
-    theme: &Theme,
-    status: iced::widget::button::Status,
-    is_selected: bool,
-) -> iced::widget::button::Style {
-    if !is_selected {
-        let mut style = iced::widget::button::primary(theme, status);
-        style.border.radius = border::radius(4);
-        style.border.width = 1.0;
-        return style;
-    }
-
-    let mut style = iced::widget::button::secondary(theme, iced::widget::button::Status::Disabled);
-    style.background = Some(Color::from_rgb8(68, 72, 78).into());
-    style.text_color = Color::from_rgb8(180, 184, 190);
-    style.border.radius = border::radius(4);
-    style.border.width = 1.0;
-    style.border.color = Color::from_rgb8(96, 102, 112);
-    style
 }
 
 fn loadout_section<'a>(

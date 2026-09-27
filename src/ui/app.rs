@@ -6,7 +6,6 @@ use crate::account::{
     LauncherSessionBackup, Shard,
 };
 use crate::account_transfer::{export_account, import_account};
-use crate::game_settings::{GameSettingsProfileMetadata, GameSettingsProfilePurpose};
 use crate::image_cache::ImageCache;
 use crate::launch::{LaunchConfig, LaunchTargetProcess};
 use crate::riot::auth::{RedirectTokens, parse_redirect_tokens};
@@ -24,7 +23,7 @@ use super::data::account_details::{
 };
 use super::data::game_settings::{
     apply_game_settings_profile, delete_game_settings_profile, load_game_settings_profiles,
-    save_game_settings_profile,
+    rename_game_settings_profile, restore_original_game_settings, save_game_settings_profile,
 };
 use super::data::image_assets::fetch_current_client_version;
 use super::data::launch_flow::{
@@ -36,9 +35,9 @@ use super::data::loadout::fetch_loadout;
 use super::data::shop::fetch_storefront;
 use super::data::{cache_account_api_context, typed_riot_client_path};
 use super::{
-    AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, LoginCapture,
-    LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsApply, PrimeApp, Tab,
-    TabScrollOffsets, ViewRequest,
+    AccountsTab, AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, LoginCapture,
+    LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsApply, PresetNamePrompt,
+    PresetNameTarget, PrimeApp, Tab, TabScrollOffsets, ViewRequest,
 };
 
 impl PrimeApp {
@@ -57,6 +56,7 @@ impl PrimeApp {
                 state: StoredState::default(),
                 accounts_loaded: false,
                 active_tab: Tab::Accounts,
+                active_accounts_tab: AccountsTab::Accounts,
                 active_loadout_tab: LoadoutTab::Skins,
                 tab_scroll_offsets: TabScrollOffsets::default(),
                 new_display_name: String::new(),
@@ -92,12 +92,14 @@ impl PrimeApp {
                 account_availability_loading: false,
                 account_availability_loaded_at: None,
                 settings_cloning: super::settings_cloning_enabled(),
+                save_settings_on_add: false,
                 settings_profiles: Vec::new(),
-                selected_settings_profile: None,
+                preset_name_prompt: None,
                 settings_saving_account: None,
                 settings_applying_account: None,
                 confirm_apply_settings: None,
                 confirm_delete_settings_profile: None,
+                confirm_restore_settings: None,
                 launcher_capture_in_progress: false,
                 launcher_capture_kind: None,
                 login_capture: None,
@@ -160,6 +162,8 @@ impl PrimeApp {
             || self.confirm_recapture_account.is_some()
             || self.confirm_apply_settings.is_some()
             || self.confirm_delete_settings_profile.is_some()
+            || self.confirm_restore_settings.is_some()
+            || self.preset_name_prompt.is_some()
             || self.unavailable_launch_warning.is_some()
             || self.app_update_status.prompt_update().is_some()
             || (super::image_viewer_enabled() && self.image_viewer.is_some())
@@ -184,6 +188,10 @@ impl PrimeApp {
             Message::CancelApplySavedSettings
         } else if self.confirm_delete_settings_profile.is_some() {
             Message::CancelDeleteSettingsProfile
+        } else if self.confirm_restore_settings.is_some() {
+            Message::CancelRestoreSettings
+        } else if self.preset_name_prompt.is_some() {
+            Message::CancelPresetName
         } else if self.unavailable_launch_warning.is_some() {
             Message::CancelUnavailableLaunch
         } else if self.app_update_status.prompt_update().is_some() {
@@ -281,6 +289,11 @@ impl PrimeApp {
                     self.restore_active_tab_scroll_task(),
                 ])
             }
+            Message::AccountsTabSelected(tab) => {
+                self.active_accounts_tab = tab;
+                self.close_account_surfaces();
+                Task::none()
+            }
             Message::LoadoutTabSelected(tab) => {
                 self.active_loadout_tab = tab;
                 self.now = iced::time::Instant::now();
@@ -336,6 +349,10 @@ impl PrimeApp {
             }
             Message::NewShardSelected(shard) => {
                 self.new_shard = shard;
+                Task::none()
+            }
+            Message::SaveSettingsOnAddToggled(save) => {
+                self.save_settings_on_add = save;
                 Task::none()
             }
             Message::AddAccount => {
@@ -478,68 +495,18 @@ impl PrimeApp {
                 }
             }
             Message::ConfirmCapturedAccount => {
-                let Some(draft) = self.pending_account.clone() else {
-                    self.set_status("No captured account is waiting to be saved");
-                    return Task::none();
-                };
+                let save_settings = self.settings_cloning
+                    && self.save_settings_on_add
+                    && self.pending_account.is_some();
+                let task = self.confirm_captured_account();
 
-                if let Some(existing_id) = self
-                    .state
-                    .accounts
-                    .iter()
-                    .find(|account| {
-                        account
-                            .puuid
-                            .as_ref()
-                            .is_some_and(|puuid| puuid.eq_ignore_ascii_case(&draft.puuid))
-                    })
-                    .map(|account| account.id)
-                {
-                    return self.update_existing_captured_account(existing_id, draft);
-                }
-
-                match AccountProfile::new(
-                    self.new_display_name.clone(),
-                    Some(self.new_username.clone()),
-                    self.new_shard,
-                ) {
-                    Ok(mut account) => {
-                        account.id = draft.account_id;
-                        account.shard = self.new_shard;
-                        account.session = draft.session;
-
-                        if let Err(error) = account.attach_launcher_session(draft.backup) {
-                            self.set_status(format!("Captured account rejected: {error}"));
-                            return Task::none();
-                        }
-
-                        if let (Some(game_name), Some(tag_line)) = (draft.game_name, draft.tag_line)
-                            && let Err(error) =
-                                account.apply_riot_identity(draft.puuid, game_name, tag_line)
-                        {
-                            self.set_status(format!("Captured identity rejected: {error}"));
-                            return Task::none();
-                        }
-
-                        self.set_status(format!("Added {}", account.summary()));
-                        self.state.push_account(account);
-                        self.account_availability.remove(&draft.account_id);
-                        self.state.select_account(draft.account_id);
-                        self.clear_selected_account_views();
-                        self.pending_account = None;
-                        self.new_display_name.clear();
-                        self.new_username.clear();
-                        return Task::batch([
-                            self.save_task(),
-                            self.load_account_tab(draft.account_id),
-                        ]);
+                // The draft is cleared only once the account is saved, and it is then selected.
+                match self.state.selected_account {
+                    Some(account_id) if save_settings && self.pending_account.is_none() => {
+                        Task::batch([task, self.save_added_account_settings(account_id)])
                     }
-                    Err(error) => {
-                        self.set_status(error.to_string());
-                    }
+                    _ => task,
                 }
-
-                Task::none()
             }
             Message::CancelCapturedAccount => {
                 let Some(draft) = self.pending_account.as_ref() else {
@@ -1185,21 +1152,7 @@ impl PrimeApp {
             }
             Message::GameSettingsProfilesLoaded(result) => {
                 match result {
-                    Ok(profiles) => {
-                        self.settings_profiles = profiles;
-                        if self
-                            .selected_settings_profile
-                            .as_ref()
-                            .is_none_or(|selected| {
-                                !self
-                                    .settings_profiles
-                                    .iter()
-                                    .any(|profile| &profile.id == selected)
-                            })
-                        {
-                            self.selected_settings_profile = self.default_settings_profile_id();
-                        }
-                    }
+                    Ok(profiles) => self.settings_profiles = profiles,
                     Err(error) => {
                         self.set_status(format!("Could not load settings profiles: {error}"));
                     }
@@ -1207,19 +1160,114 @@ impl PrimeApp {
 
                 Task::none()
             }
-            Message::GameSettingsProfileSelected(profile) => {
-                if self
-                    .settings_profiles
-                    .iter()
-                    .any(|saved| saved.id == profile.id)
+            Message::RequestSavePreset(account_id) => {
+                if !self.settings_cloning
+                    || self.settings_saving_account.is_some()
+                    || self.settings_applying_account.is_some()
                 {
-                    self.selected_settings_profile = Some(profile.id.clone());
-                    self.set_status(format!("Selected settings profile {}", profile.name));
+                    return Task::none();
                 }
 
+                let Some(account) = self
+                    .state
+                    .accounts
+                    .iter()
+                    .find(|account| account.id == account_id)
+                else {
+                    self.set_status("Account profile no longer exists");
+                    return Task::none();
+                };
+
+                let name = default_preset_name(&account.display_name);
+                self.close_account_surfaces();
+                self.preset_name_prompt = Some(PresetNamePrompt {
+                    target: PresetNameTarget::New(account_id),
+                    name,
+                });
                 Task::none()
             }
-            Message::SaveAccountSettings(account_id) => {
+            Message::RequestRenamePreset(profile_id) => {
+                if !self.settings_cloning {
+                    return Task::none();
+                }
+
+                let Some(name) = self
+                    .settings_profiles
+                    .iter()
+                    .find(|profile| profile.id == profile_id)
+                    .map(|profile| profile.name.clone())
+                else {
+                    self.set_status("Settings preset no longer exists");
+                    return Task::none();
+                };
+
+                self.close_account_surfaces();
+                self.preset_name_prompt = Some(PresetNamePrompt {
+                    target: PresetNameTarget::Rename(profile_id),
+                    name,
+                });
+                Task::none()
+            }
+            Message::PresetNameChanged(name) => {
+                if let Some(prompt) = &mut self.preset_name_prompt {
+                    prompt.name = name;
+                }
+                Task::none()
+            }
+            Message::CancelPresetName => {
+                self.preset_name_prompt = None;
+                Task::none()
+            }
+            Message::ConfirmPresetName => {
+                let Some(prompt) = self.preset_name_prompt.clone() else {
+                    return Task::none();
+                };
+                let name = prompt.name.trim().to_string();
+                if name.is_empty() {
+                    return Task::none();
+                }
+
+                match prompt.target {
+                    PresetNameTarget::New(account_id) => {
+                        let task =
+                            self.handle_message(Message::SaveSettingsPreset { account_id, name });
+                        // Stays open when the save could not start, so the name isn't lost.
+                        if self.settings_saving_account == Some(account_id) {
+                            self.preset_name_prompt = None;
+                        }
+                        task
+                    }
+                    PresetNameTarget::Rename(profile_id) => {
+                        self.preset_name_prompt = None;
+                        Task::perform(
+                            rename_game_settings_profile(
+                                self.repo.settings_profiles_dir(),
+                                profile_id,
+                                name,
+                            ),
+                            Message::PresetRenamed,
+                        )
+                    }
+                }
+            }
+            Message::PresetRenamed(result) => match result {
+                Ok(renamed) => {
+                    if let Some(profile) = self
+                        .settings_profiles
+                        .iter_mut()
+                        .find(|profile| profile.id == renamed.id)
+                    {
+                        *profile = renamed.clone();
+                    }
+                    self.set_status(format!("Renamed preset to {}", renamed.name));
+                    Task::none()
+                }
+                Err(error) => {
+                    self.set_status(format!("Could not rename preset: {error}"));
+                    self.load_settings_profiles_task()
+                }
+            },
+            Message::SaveSettingsPreset { account_id, name } => {
                 if !self.settings_cloning
                     || self.settings_saving_account.is_some()
                     || self.settings_applying_account.is_some()
@@ -1245,10 +1293,10 @@ impl PrimeApp {
                 let profile_dir = self.repo.settings_profiles_dir();
                 self.close_account_surfaces();
                 self.settings_saving_account = Some(account_id);
-                self.set_status(format!("Saving settings profile for {summary}"));
+                self.set_status(format!("Saving {summary}'s settings as {name}"));
 
                 Task::perform(
-                    save_game_settings_profile(account, profile_dir),
+                    save_game_settings_profile(account, profile_dir, name),
                     Message::AccountSettingsSaved,
                 )
             }
@@ -1267,9 +1315,6 @@ impl PrimeApp {
                         self.settings_profiles
                             .retain(|profile| profile.id != result.profile.id);
                         self.settings_profiles.insert(0, result.profile.clone());
-                        if self.selected_settings_profile.is_none() {
-                            self.selected_settings_profile = Some(result.profile.id.clone());
-                        }
 
                         if let Err(error) = cache_account_api_context(
                             &mut self.state,
@@ -1279,13 +1324,13 @@ impl PrimeApp {
                             result.identity,
                         ) {
                             self.set_status(format!(
-                                "Saved settings profile {}, but account update failed: {error}",
+                                "Saved preset {}, but account update failed: {error}",
                                 result.profile.name
                             ));
                             return Task::none();
                         }
 
-                        self.set_status(format!("Saved settings profile {}", result.profile.name));
+                        self.set_status(format!("Saved preset {}", result.profile.name));
                         Task::batch([self.save_task(), self.load_settings_profiles_task()])
                     }
                     Err(error) => {
@@ -1346,10 +1391,7 @@ impl PrimeApp {
                     Ok(()) => {
                         self.settings_profiles
                             .retain(|profile| profile.id != profile_id);
-                        if self.selected_settings_profile.as_ref() == Some(&profile_id) {
-                            self.selected_settings_profile = self.default_settings_profile_id();
-                        }
-                        self.set_status(format!("Deleted settings profile {name}"));
+                        self.set_status(format!("Deleted {name}"));
                         Task::none()
                     }
                     Err(error) => {
@@ -1360,7 +1402,10 @@ impl PrimeApp {
                     }
                 }
             }
-            Message::RequestApplySavedSettings(account_id) => {
+            Message::RequestApplyPreset {
+                profile_id,
+                account_id,
+            } => {
                 if !self.settings_cloning
                     || self.settings_saving_account.is_some()
                     || self.settings_applying_account.is_some()
@@ -1375,21 +1420,18 @@ impl PrimeApp {
                     .iter()
                     .any(|account| account.id == account_id)
                 {
-                    self.open_account_menu = None;
-                    self.account_switcher_open = false;
                     self.set_status("Account profile no longer exists");
                     return Task::none();
                 }
 
-                let Some(profile_id) = self
-                    .settings_profile_to_apply()
-                    .map(|profile| profile.id.clone())
-                else {
-                    self.set_status(
-                        "Could not apply account settings: save a settings profile first",
-                    );
+                if !self
+                    .settings_profiles
+                    .iter()
+                    .any(|profile| profile.id == profile_id)
+                {
+                    self.set_status("Settings preset no longer exists");
                     return Task::none();
-                };
+                }
 
                 self.close_account_surfaces();
                 self.confirm_apply_settings = Some(PendingSettingsApply {
@@ -1469,15 +1511,111 @@ impl PrimeApp {
                             return self.load_settings_profiles_task();
                         }
 
+                        let put_aside = if result.backup_profile.is_some() {
+                            ". Its own settings were saved; restore them from Game settings"
+                        } else {
+                            ""
+                        };
                         self.set_status(format!(
-                            "Applied settings profile {} and backed up the previous settings as {}",
-                            result.source_profile.name, result.backup_profile.name
+                            "Applied preset {}{put_aside}",
+                            result.source_profile.name
                         ));
                         Task::batch([self.save_task(), self.load_settings_profiles_task()])
                     }
                     Err(error) => {
                         self.set_status(format!("Could not apply account settings: {error}"));
                         // Apply may have saved its backup before failing.
+                        self.load_settings_profiles_task()
+                    }
+                }
+            }
+            Message::RequestRestoreSettings(account_id) => {
+                if !self.settings_cloning
+                    || self.settings_saving_account.is_some()
+                    || self.settings_applying_account.is_some()
+                    || self.update_blocks_new_work()
+                {
+                    return Task::none();
+                }
+
+                if !self
+                    .state
+                    .accounts
+                    .iter()
+                    .any(|account| account.id == account_id)
+                {
+                    self.set_status("Account profile no longer exists");
+                    return Task::none();
+                }
+
+                self.close_account_surfaces();
+                self.confirm_restore_settings = Some(account_id);
+                Task::none()
+            }
+            Message::CancelRestoreSettings => {
+                self.confirm_restore_settings = None;
+                Task::none()
+            }
+            Message::ConfirmRestoreSettings => {
+                let Some(account_id) = self.confirm_restore_settings.take() else {
+                    return Task::none();
+                };
+                if self.settings_saving_account.is_some()
+                    || self.settings_applying_account.is_some()
+                    || self.update_blocks_new_work()
+                {
+                    return Task::none();
+                }
+
+                let Some(account) = self
+                    .state
+                    .accounts
+                    .iter()
+                    .find(|account| account.id == account_id)
+                    .cloned()
+                else {
+                    self.set_status("Account profile no longer exists");
+                    return Task::none();
+                };
+
+                let summary = account.summary();
+                self.settings_applying_account = Some(account_id);
+                self.set_status(format!("Restoring {summary}'s original settings"));
+
+                Task::perform(
+                    restore_original_game_settings(account, self.repo.settings_profiles_dir()),
+                    Message::SettingsRestored,
+                )
+            }
+            Message::SettingsRestored(result) => {
+                let result_account_id = result.as_ref().ok().map(|result| result.account_id);
+
+                if result_account_id.is_none()
+                    || self.settings_applying_account == result_account_id
+                {
+                    self.settings_applying_account = None;
+                }
+
+                match result {
+                    Ok(result) => {
+                        if let Err(error) = cache_account_api_context(
+                            &mut self.state,
+                            result.account_id,
+                            result.session,
+                            result.launcher_session,
+                            result.identity,
+                        ) {
+                            self.set_status(format!(
+                                "Restored original settings, but profile update failed: {error}"
+                            ));
+                            return self.load_settings_profiles_task();
+                        }
+
+                        self.set_status("Restored original settings");
+                        Task::batch([self.save_task(), self.load_settings_profiles_task()])
+                    }
+                    Err(error) => {
+                        self.set_status(format!("Could not restore original settings: {error}"));
                         self.load_settings_profiles_task()
                     }
                 }
@@ -2580,32 +2718,6 @@ impl PrimeApp {
         typed_riot_client_path(&self.riot_client_path_input) != self.state.riot_client_path
     }
 
-    /// The profile Apply uses: the chosen one, or else the default choice.
-    pub(super) fn settings_profile_to_apply(&self) -> Option<&GameSettingsProfileMetadata> {
-        self.selected_settings_profile
-            .as_ref()
-            .and_then(|selected| {
-                self.settings_profiles
-                    .iter()
-                    .find(|profile| &profile.id == selected)
-            })
-            .or_else(|| {
-                let id = self.default_settings_profile_id()?;
-                self.settings_profiles
-                    .iter()
-                    .find(|profile| profile.id == id)
-            })
-    }
-
-    /// The newest saved profile, or the newest backup when no profile is saved.
-    fn default_settings_profile_id(&self) -> Option<String> {
-        self.settings_profiles
-            .iter()
-            .find(|profile| profile.purpose == GameSettingsProfilePurpose::Profile)
-            .or_else(|| self.settings_profiles.first())
-            .map(|profile| profile.id.clone())
-    }
-
     fn load_settings_profiles_task(&self) -> Task<Message> {
         let profile_dir = self.repo.settings_profiles_dir();
 
@@ -2632,6 +2744,91 @@ impl PrimeApp {
             },
             move |result| Message::ImageViewerImageLoaded(source, result),
         )
+    }
+
+    fn confirm_captured_account(&mut self) -> Task<Message> {
+        let Some(draft) = self.pending_account.clone() else {
+            self.set_status("No captured account is waiting to be saved");
+            return Task::none();
+        };
+
+        if let Some(existing_id) = self
+            .state
+            .accounts
+            .iter()
+            .find(|account| {
+                account
+                    .puuid
+                    .as_ref()
+                    .is_some_and(|puuid| puuid.eq_ignore_ascii_case(&draft.puuid))
+            })
+            .map(|account| account.id)
+        {
+            return self.update_existing_captured_account(existing_id, draft);
+        }
+
+        match AccountProfile::new(
+            self.new_display_name.clone(),
+            Some(self.new_username.clone()),
+            self.new_shard,
+        ) {
+            Ok(mut account) => {
+                account.id = draft.account_id;
+                account.shard = self.new_shard;
+                account.session = draft.session;
+
+                if let Err(error) = account.attach_launcher_session(draft.backup) {
+                    self.set_status(format!("Captured account rejected: {error}"));
+                    return Task::none();
+                }
+
+                if let (Some(game_name), Some(tag_line)) = (draft.game_name, draft.tag_line)
+                    && let Err(error) =
+                        account.apply_riot_identity(draft.puuid, game_name, tag_line)
+                {
+                    self.set_status(format!("Captured identity rejected: {error}"));
+                    return Task::none();
+                }
+
+                self.set_status(format!("Added {}", account.summary()));
+                self.state.push_account(account);
+                self.account_availability.remove(&draft.account_id);
+                self.state.select_account(draft.account_id);
+                self.clear_selected_account_views();
+                self.pending_account = None;
+                self.new_display_name.clear();
+                self.new_username.clear();
+                return Task::batch([self.save_task(), self.load_account_tab(draft.account_id)]);
+            }
+            Err(error) => {
+                self.set_status(error.to_string());
+            }
+        }
+
+        Task::none()
+    }
+
+    /// Saves a just-added account's VALORANT settings as a profile, when that was asked for.
+    fn save_added_account_settings(&mut self, account_id: AccountId) -> Task<Message> {
+        let added = self.status.clone();
+        let name = self
+            .state
+            .accounts
+            .iter()
+            .find(|account| account.id == account_id)
+            .map(|account| default_preset_name(&account.display_name))
+            .unwrap_or_default();
+        let task = self.handle_message(Message::SaveSettingsPreset { account_id, name });
+
+        if self.settings_saving_account == Some(account_id) {
+            self.set_status(format!("{added}. Saving its VALORANT settings as a preset"));
+        } else {
+            self.set_status(format!(
+                "{added}, but its VALORANT settings could not be saved while other settings work runs"
+            ));
+        }
+
+        task
     }
 
     fn update_existing_captured_account(
@@ -2932,6 +3129,7 @@ impl PrimeApp {
     fn show_accounts_tab_top(&mut self) -> Task<Message> {
         let top = operation::AbsoluteOffset { x: 0.0, y: 0.0 };
         self.active_tab = Tab::Accounts;
+        self.active_accounts_tab = AccountsTab::Accounts;
         self.tab_scroll_offsets.set(Tab::Accounts, top);
         operation::scroll_to(MAIN_PANEL_SCROLLABLE_ID, top)
     }
@@ -3119,4 +3317,9 @@ fn non_empty_account_field(value: String) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+/// The name a new preset starts with.
+fn default_preset_name(display_name: &str) -> String {
+    format!("{display_name} settings")
 }

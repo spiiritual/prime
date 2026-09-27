@@ -26,7 +26,17 @@ pub(in crate::ui) struct AppliedGameSettingsResult {
     pub(in crate::ui) launcher_session: Option<LauncherSessionBackup>,
     pub(in crate::ui) identity: ApiIdentity,
     pub(in crate::ui) source_profile: GameSettingsProfileMetadata,
-    pub(in crate::ui) backup_profile: GameSettingsProfileMetadata,
+    /// The account's own settings, put aside by this apply; `None` when an earlier apply had
+    /// already put them aside.
+    pub(in crate::ui) backup_profile: Option<GameSettingsProfileMetadata>,
+}
+
+#[derive(Clone, Debug)]
+pub(in crate::ui) struct RestoredGameSettingsResult {
+    pub(in crate::ui) account_id: AccountId,
+    pub(in crate::ui) session: AuthSession,
+    pub(in crate::ui) launcher_session: Option<LauncherSessionBackup>,
+    pub(in crate::ui) identity: ApiIdentity,
 }
 
 pub(in crate::ui) async fn load_game_settings_profiles(
@@ -46,9 +56,20 @@ pub(in crate::ui) async fn delete_game_settings_profile(
         .map_err(|error| error.to_string())
 }
 
+pub(in crate::ui) async fn rename_game_settings_profile(
+    profile_dir: PathBuf,
+    profile_id: String,
+    name: String,
+) -> Result<GameSettingsProfileMetadata, String> {
+    GameSettingsProfileRepository::new(profile_dir)
+        .rename(&profile_id, &name)
+        .map_err(|error| error.to_string())
+}
+
 pub(in crate::ui) async fn save_game_settings_profile(
     account: AccountProfile,
     profile_dir: PathBuf,
+    name: String,
 ) -> Result<SavedGameSettingsResult, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
     let context = resolve_settings_context(&api, &account).await?;
@@ -59,7 +80,7 @@ pub(in crate::ui) async fn save_game_settings_profile(
         .roaming_settings_version;
     let profile = GameSettingsProfile {
         id: new_profile_id(account.id, GameSettingsProfilePurpose::Profile),
-        name: format!("{} settings", account.display_name),
+        name,
         purpose: GameSettingsProfilePurpose::Profile,
         source_account_id: account.id,
         source_display_name: account.display_name.clone(),
@@ -107,24 +128,36 @@ pub(in crate::ui) async fn apply_game_settings_profile(
         .settings_payload()
         .map_err(|error| error.to_string())?;
 
-    let backup_profile = GameSettingsProfile {
-        id: new_profile_id(account.id, GameSettingsProfilePurpose::Backup),
-        name: format!("{} backup", account.display_name),
-        purpose: GameSettingsProfilePurpose::Backup,
-        source_account_id: account.id,
-        source_display_name: account.display_name.clone(),
-        source_puuid: context.identity.puuid.clone(),
-        captured_at_unix: OffsetDateTime::now_utc().unix_timestamp(),
-        preference_base_url: context.preference_base_url.clone(),
-        settings_version: target_payload.roaming_settings_version,
-        preference: target_document.clone(),
+    // Only the first apply puts the account's own settings aside, so Restore always goes back
+    // to how the account was before any preset.
+    let backup_metadata = if repository
+        .original_settings(account.id)
+        .map_err(|error| error.to_string())?
+        .is_none()
+    {
+        let backup_profile = GameSettingsProfile {
+            id: new_profile_id(account.id, GameSettingsProfilePurpose::Backup),
+            name: format!("{} original settings", account.display_name),
+            purpose: GameSettingsProfilePurpose::Backup,
+            source_account_id: account.id,
+            source_display_name: account.display_name.clone(),
+            source_puuid: context.identity.puuid.clone(),
+            captured_at_unix: OffsetDateTime::now_utc().unix_timestamp(),
+            preference_base_url: context.preference_base_url.clone(),
+            settings_version: target_payload.roaming_settings_version,
+            preference: target_document.clone(),
+        };
+        repository
+            .save(&backup_profile)
+            .map_err(|error| error.to_string())?;
+        Some(
+            backup_profile
+                .metadata()
+                .map_err(|error| error.to_string())?,
+        )
+    } else {
+        None
     };
-    repository
-        .save(&backup_profile)
-        .map_err(|error| error.to_string())?;
-    let backup_metadata = backup_profile
-        .metadata()
-        .map_err(|error| error.to_string())?;
 
     merge_settings_payload(
         &source_payload,
@@ -154,6 +187,73 @@ pub(in crate::ui) async fn apply_game_settings_profile(
             .metadata()
             .map_err(|error| error.to_string())?,
         backup_profile: backup_metadata,
+    })
+}
+
+/// Writes an account's original settings back and then removes every backup of them.
+pub(in crate::ui) async fn restore_original_game_settings(
+    account: AccountProfile,
+    profile_dir: PathBuf,
+) -> Result<RestoredGameSettingsResult, String> {
+    let api = RiotApi::new().map_err(|error| error.to_string())?;
+    let repository = GameSettingsProfileRepository::new(profile_dir);
+    let original = repository
+        .original_settings(account.id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "this account has no original settings to restore".to_string())?;
+    let original = repository
+        .load(&original.id)
+        .map_err(|error| error.to_string())?;
+    let original_payload = original
+        .preference
+        .settings_payload()
+        .map_err(|error| error.to_string())?;
+    let context = resolve_settings_context(&api, &account).await?;
+    if !original
+        .source_puuid
+        .eq_ignore_ascii_case(&context.identity.puuid)
+    {
+        return Err("these original settings belong to a different Riot account".to_string());
+    }
+
+    let mut target_document = fetch_settings_document(&api, &context).await?;
+    let mut target_payload = target_document
+        .settings_payload()
+        .map_err(|error| error.to_string())?;
+    // Apply only replaces these categories, so restoring them undoes it.
+    merge_settings_payload(
+        &original_payload,
+        &mut target_payload,
+        SettingsCategories::all_gameplay(),
+    );
+    target_document
+        .replace_settings_payload(&target_payload)
+        .map_err(|error| error.to_string())?;
+    let body = target_document
+        .save_body(VALORANT_PLAYER_SETTINGS_TYPE)
+        .map_err(|error| error.to_string())?;
+    api.save_player_preference(
+        &context.preference_base_url,
+        &context.session.access_token,
+        &body,
+    )
+    .await
+    .map_err(|error| format!("Riot rejected the settings save: {error}"))?;
+
+    for backup in repository
+        .backups_for(account.id)
+        .map_err(|error| error.to_string())?
+    {
+        repository.delete(&backup.id).map_err(|error| {
+            format!("restored the settings, but could not remove the saved copy: {error}")
+        })?;
+    }
+
+    Ok(RestoredGameSettingsResult {
+        account_id: account.id,
+        session: context.session,
+        launcher_session: context.launcher_session,
+        identity: context.identity,
     })
 }
 

@@ -1,16 +1,15 @@
-use std::fmt;
-
-use iced::widget::{button, column, container, pick_list, row, space, text, text_input, tooltip};
+use iced::widget::{
+    button, checkbox, column, container, pick_list, row, space, text, text_input, tooltip,
+};
 use iced::{Color, Element, Length, Padding, Theme, alignment};
 use time::{OffsetDateTime, UtcOffset};
 
 use crate::account::{AccountId, AccountProfile, CompetitiveRank, Shard};
-use crate::game_settings::{GameSettingsProfileMetadata, GameSettingsProfilePurpose};
 
-use crate::ui::components::{anchored_popover, compact_loading_indicator};
+use crate::ui::components::{anchored_popover, compact_loading_indicator, sub_tab_button};
 use crate::ui::data::account_details::AccountAvailability;
 use crate::ui::data::shop::format_whole_number;
-use crate::ui::{LauncherCaptureKind, Message, PrimeApp};
+use crate::ui::{AccountsTab, LauncherCaptureKind, Message, PrimeApp};
 
 const ACCOUNT_MENU_WIDTH: f32 = 190.0;
 const ACCOUNT_MENU_TOP_OFFSET: f32 = 48.0;
@@ -23,6 +22,38 @@ const ACCOUNT_AVAILABILITY_DOT_TOP_PADDING: f32 = 2.0;
 const ACCOUNT_PENALTY_BADGE_SIZE: f32 = 20.0;
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
+    if !app.settings_cloning {
+        return accounts_tab(app);
+    }
+
+    let active = match app.active_accounts_tab {
+        AccountsTab::Accounts => accounts_tab(app),
+        AccountsTab::GameSettings => super::game_settings::tab(app),
+    };
+
+    column![
+        row![
+            accounts_tab_button(app, AccountsTab::Accounts),
+            accounts_tab_button(app, AccountsTab::GameSettings),
+        ]
+        .spacing(8)
+        .width(Length::Fill),
+        active
+    ]
+    .spacing(14)
+    .width(Length::Fill)
+    .into()
+}
+
+fn accounts_tab_button(app: &PrimeApp, tab: AccountsTab) -> Element<'_, Message> {
+    sub_tab_button(
+        tab.to_string(),
+        app.active_accounts_tab == tab,
+        Message::AccountsTabSelected(tab),
+    )
+}
+
+fn accounts_tab(app: &PrimeApp) -> Element<'_, Message> {
     let mut account_cards = column![].spacing(12).width(Length::Fill);
 
     if app.state.accounts.is_empty() {
@@ -93,6 +124,7 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
                         )
                     ]
                     .spacing(10),
+                    save_settings_on_add_checkbox(app),
                     row![
                         button("Save account").on_press(Message::ConfirmCapturedAccount),
                         button("Cancel").on_press(Message::CancelCapturedAccount)
@@ -106,134 +138,19 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         );
     }
 
-    content = content.push(controls);
-    if app.settings_cloning {
-        content = content.push(settings_profiles_section(app));
-    }
-
-    content.push(account_cards).into()
+    content.push(controls).push(account_cards).into()
 }
 
-/// A saved settings profile as the picker shows it.
-#[derive(Clone, Debug, PartialEq)]
-struct SettingsProfileChoice {
-    profile: GameSettingsProfileMetadata,
-    label: String,
-}
-
-impl SettingsProfileChoice {
-    fn new(profile: &GameSettingsProfileMetadata) -> Self {
-        Self {
-            label: settings_profile_label(profile),
-            profile: profile.clone(),
-        }
-    }
-}
-
-impl fmt::Display for SettingsProfileChoice {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.label)
-    }
-}
-
-fn settings_profiles_section(app: &PrimeApp) -> Element<'_, Message> {
-    let mut profiles = column![
-        text("Settings profiles").size(18),
-        text(
-            "Saved VALORANT settings profiles can be applied to any account with API access. \
-             Applying one first backs up that account's current settings, listed here as a backup."
-        )
-        .size(13)
-    ]
-    .spacing(8)
-    .width(Length::Fill);
-
-    if app.settings_profiles.is_empty() {
-        profiles = profiles.push(text("No saved settings profiles yet").size(13));
-    } else {
-        let profile_to_apply = app.settings_profile_to_apply();
-        let settings_busy =
-            app.settings_saving_account.is_some() || app.settings_applying_account.is_some();
-
-        profiles = profiles.push(
-            row![
-                text("Profile to apply").size(13).width(Length::Fill),
-                pick_list(
-                    app.settings_profiles
-                        .iter()
-                        .map(SettingsProfileChoice::new)
-                        .collect::<Vec<_>>(),
-                    profile_to_apply.map(SettingsProfileChoice::new),
-                    |choice| Message::GameSettingsProfileSelected(choice.profile)
-                )
-                .width(380)
-            ]
-            .spacing(10)
-            .align_y(alignment::Vertical::Center),
-        );
-
-        for profile in &app.settings_profiles {
-            let chosen = profile_to_apply.is_some_and(|chosen| chosen.id == profile.id);
-            profiles = profiles.push(settings_profile_card(profile, chosen, !settings_busy));
-        }
+fn save_settings_on_add_checkbox(app: &PrimeApp) -> Element<'_, Message> {
+    if !app.settings_cloning {
+        return space().into();
     }
 
-    container(profiles)
-        .padding(14)
-        .width(Length::Fill)
-        .style(iced::widget::container::bordered_box)
+    checkbox(app.save_settings_on_add)
+        .label("Save this account's VALORANT settings as a preset")
+        .on_toggle(Message::SaveSettingsOnAddToggled)
+        .text_size(13)
         .into()
-}
-
-fn settings_profile_card(
-    profile: &GameSettingsProfileMetadata,
-    chosen: bool,
-    can_delete: bool,
-) -> Element<'_, Message> {
-    let kind = match profile.purpose {
-        GameSettingsProfilePurpose::Profile => "Saved profile",
-        GameSettingsProfilePurpose::Backup => "Backup made by Apply",
-    };
-    let version = profile
-        .settings_version
-        .map(|version| format!("Version {version}"))
-        .unwrap_or_else(|| "Version unknown".to_string());
-    let details = format!(
-        "{kind} | {} | Source: {} | Saved: {}",
-        version,
-        profile.source_display_name,
-        last_refreshed_label(Some(profile.captured_at_unix))
-    );
-    let select = if chosen {
-        button("Selected")
-    } else {
-        button("Select").on_press(Message::GameSettingsProfileSelected(profile.clone()))
-    };
-
-    container(
-        column![
-            row![
-                text(&profile.name).size(15).width(Length::Fill),
-                select,
-                button("Delete")
-                    .style(iced::widget::button::danger)
-                    .on_press_maybe(
-                        can_delete
-                            .then(|| Message::RequestDeleteSettingsProfile(profile.id.clone()))
-                    )
-            ]
-            .spacing(10)
-            .align_y(alignment::Vertical::Center),
-            text(details).size(13),
-            text(profile.summary.categories_label()).size(13),
-            text(format!("Includes: {}", profile.summary.examples_label())).size(13)
-        ]
-        .spacing(6),
-    )
-    .padding(10)
-    .width(Length::Fill)
-    .style(iced::widget::container::bordered_box)
-    .into()
 }
 
 fn add_account_button(app: &PrimeApp) -> Element<'static, Message> {
@@ -545,7 +462,7 @@ fn last_refreshed_row<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Ele
     if app.profile_identity_refreshing.contains(&account.id) {
         return row![
             compact_loading_indicator(app.loading_frame),
-            text("Last refreshed: Refreshing...").size(13)
+            text("Refreshing profile...").size(13)
         ]
         .spacing(6)
         .align_y(alignment::Vertical::Center)
@@ -553,7 +470,7 @@ fn last_refreshed_row<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Ele
     }
 
     text(format!(
-        "Last refreshed: {}",
+        "Login saved: {}",
         last_refreshed_label(launcher_session_captured_at_unix(account))
     ))
     .size(13)
@@ -615,11 +532,8 @@ fn loading_rank_badge(frame: usize) -> Element<'static, Message> {
 
 fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Message> {
     let account_id = account.id;
-    let settings_busy =
-        app.settings_saving_account.is_some() || app.settings_applying_account.is_some();
-    let account_has_api_access = account.has_launcher_session() || account.session.is_some();
 
-    let mut actions = column![
+    let actions = column![
         button("Re-capture login")
             .width(Length::Fill)
             .on_press_maybe(
@@ -634,28 +548,6 @@ fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Me
             ),
     ]
     .spacing(8);
-
-    if app.settings_cloning {
-        actions = actions
-            .push(
-                button("Save VALORANT settings")
-                    .width(Length::Fill)
-                    .on_press_maybe(
-                        (!settings_busy && account_has_api_access)
-                            .then_some(Message::SaveAccountSettings(account_id)),
-                    ),
-            )
-            .push(
-                button("Apply settings profile")
-                    .width(Length::Fill)
-                    .on_press_maybe(
-                        (!settings_busy
-                            && account_has_api_access
-                            && !app.settings_profiles.is_empty())
-                        .then_some(Message::RequestApplySavedSettings(account_id)),
-                    ),
-            );
-    }
 
     container(
         actions
@@ -677,7 +569,7 @@ fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Me
     .into()
 }
 
-fn last_refreshed_label(timestamp: Option<i64>) -> String {
+pub(super) fn last_refreshed_label(timestamp: Option<i64>) -> String {
     let Some(timestamp) = timestamp else {
         return "Never".to_string();
     };
@@ -687,20 +579,6 @@ fn last_refreshed_label(timestamp: Option<i64>) -> String {
     let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
 
     format_refreshed_at(refreshed_at, offset)
-}
-
-/// Names a saved settings profile with its save time, since repeated saves share a name.
-pub(in crate::ui) fn settings_profile_label(profile: &GameSettingsProfileMetadata) -> String {
-    let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-
-    settings_profile_label_at(&profile.name, profile.captured_at_unix, offset)
-}
-
-fn settings_profile_label_at(name: &str, captured_at_unix: i64, offset: UtcOffset) -> String {
-    match OffsetDateTime::from_unix_timestamp(captured_at_unix) {
-        Ok(saved_at) => format!("{name} (saved {})", format_refreshed_at(saved_at, offset)),
-        Err(_) => name.to_string(),
-    }
 }
 
 fn launcher_session_captured_at_unix(account: &AccountProfile) -> Option<i64> {
@@ -871,14 +749,6 @@ mod tests {
                 UtcOffset::UTC,
             ),
             "2027-01-15 5:00 PM"
-        );
-    }
-
-    #[test]
-    fn settings_profile_label_includes_the_saved_time() {
-        assert_eq!(
-            settings_profile_label_at("Main settings", 1_800_032_400, UtcOffset::UTC),
-            "Main settings (saved 2027-01-15 5:00 PM)"
         );
     }
 

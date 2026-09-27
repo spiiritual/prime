@@ -23,7 +23,9 @@ use data::account_details::{
     AccountActivityCheck, AccountAvailability, AccountAvailabilityRefresh, AccountRanksResult,
     RefreshedProfileIdentity,
 };
-use data::game_settings::{AppliedGameSettingsResult, SavedGameSettingsResult};
+use data::game_settings::{
+    AppliedGameSettingsResult, RestoredGameSettingsResult, SavedGameSettingsResult,
+};
 use data::launch_flow::CapturedAccountDraft;
 use data::launch_flow::{LaunchAccountResult, LoadedAccounts, SHOP_RESET_CHECK_INTERVAL};
 use data::loadout::{LoadoutResult, LoadoutSummary};
@@ -245,6 +247,7 @@ struct PrimeApp {
     /// in-memory state can never overwrite the user's saved accounts.
     accounts_loaded: bool,
     active_tab: Tab,
+    active_accounts_tab: AccountsTab,
     active_loadout_tab: LoadoutTab,
     tab_scroll_offsets: TabScrollOffsets,
     new_display_name: String,
@@ -290,12 +293,17 @@ struct PrimeApp {
     account_availability_loaded_at: Option<iced::time::Instant>,
     /// Whether settings cloning is available; set from the `settings-cloning` feature.
     settings_cloning: bool,
+    /// Whether a newly added account's VALORANT settings are saved as a settings profile.
+    save_settings_on_add: bool,
     settings_profiles: Vec<GameSettingsProfileMetadata>,
-    selected_settings_profile: Option<String>,
+    /// The name dialog for saving or renaming a preset.
+    preset_name_prompt: Option<PresetNamePrompt>,
     settings_saving_account: Option<AccountId>,
     settings_applying_account: Option<AccountId>,
     confirm_apply_settings: Option<PendingSettingsApply>,
     confirm_delete_settings_profile: Option<String>,
+    /// The account whose original settings are waiting for a confirmed Restore.
+    confirm_restore_settings: Option<AccountId>,
     launcher_capture_in_progress: bool,
     launcher_capture_kind: Option<LauncherCaptureKind>,
     /// The running add or re-capture that reopened Riot Client for a sign-in.
@@ -318,6 +326,21 @@ struct PrimeApp {
 struct PendingSettingsApply {
     account_id: AccountId,
     profile_id: String,
+}
+
+/// What the preset name dialog is for.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PresetNameTarget {
+    /// Saving this account's current settings as a new preset.
+    New(AccountId),
+    /// Renaming the saved preset with this ID.
+    Rename(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PresetNamePrompt {
+    target: PresetNameTarget,
+    name: String,
 }
 
 /// A Shop or Loadout load for one account. Each load gets a new ID, so a reply to an earlier
@@ -598,6 +621,22 @@ impl TabScrollOffsets {
     }
 }
 
+/// The Accounts tab's sub-tabs; Game settings only shows with settings cloning.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AccountsTab {
+    Accounts,
+    GameSettings,
+}
+
+impl std::fmt::Display for AccountsTab {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AccountsTab::Accounts => f.write_str("Accounts"),
+            AccountsTab::GameSettings => f.write_str("Game settings"),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LoadoutTab {
     Skins,
@@ -618,6 +657,7 @@ enum Message {
     Loaded(Result<LoadedAccounts, String>),
     Saved(Result<(), String>),
     TabSelected(Tab),
+    AccountsTabSelected(AccountsTab),
     LoadoutTabSelected(LoadoutTab),
     MainPanelScrolled {
         tab: Tab,
@@ -632,6 +672,7 @@ enum Message {
     NewDisplayNameChanged(String),
     NewUsernameChanged(String),
     NewShardSelected(Shard),
+    SaveSettingsOnAddToggled(bool),
     AddAccount,
     AddCurrentAccount,
     ConfirmAddAccountCapture,
@@ -695,17 +736,33 @@ enum Message {
     StatusTimerTick(iced::time::Instant),
     AccountAvailabilitiesLoaded(AccountAvailabilityRefresh),
     GameSettingsProfilesLoaded(Result<Vec<GameSettingsProfileMetadata>, String>),
-    GameSettingsProfileSelected(GameSettingsProfileMetadata),
     RequestDeleteSettingsProfile(String),
     CancelDeleteSettingsProfile,
     ConfirmDeleteSettingsProfile,
     SettingsProfileDeleted(String, Result<(), String>),
-    SaveAccountSettings(AccountId),
+    /// Opens the name dialog for a new preset from this account's settings.
+    RequestSavePreset(AccountId),
+    RequestRenamePreset(String),
+    PresetNameChanged(String),
+    CancelPresetName,
+    ConfirmPresetName,
+    SaveSettingsPreset {
+        account_id: AccountId,
+        name: String,
+    },
     AccountSettingsSaved(Result<SavedGameSettingsResult, String>),
-    RequestApplySavedSettings(AccountId),
+    PresetRenamed(Result<GameSettingsProfileMetadata, String>),
+    RequestApplyPreset {
+        profile_id: String,
+        account_id: AccountId,
+    },
     CancelApplySavedSettings,
     ConfirmApplySavedSettings,
     SavedSettingsApplied(Result<AppliedGameSettingsResult, String>),
+    RequestRestoreSettings(AccountId),
+    CancelRestoreSettings,
+    ConfirmRestoreSettings,
+    SettingsRestored(Result<RestoredGameSettingsResult, String>),
     /// The reply to the Shop load with this request ID.
     StorefrontLoaded(u64, Result<StorefrontResult, String>),
     RetryShop,
