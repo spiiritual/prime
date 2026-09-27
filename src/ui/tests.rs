@@ -4155,7 +4155,6 @@ fn settings_cloning_does_nothing_while_disabled() {
     assert!(tasks.iter().all(|task| task.units() == 0));
     assert_eq!(app.settings_saving_account, None);
     assert_eq!(app.preset_name_prompt, None);
-    assert_eq!(app.settings_preflight, None);
     assert_eq!(app.confirm_settings_change, None);
     assert_eq!(app.confirm_delete_settings_profile, None);
 }
@@ -4394,11 +4393,6 @@ fn escape_closes_the_preset_dialogs() {
     assert_eq!(app.preset_name_prompt, None);
 
     let _ = app.update(Message::RequestRestoreSettings(account_id));
-    let _ = app.update(settings_checked(
-        account_id,
-        AccountAvailability::Available,
-        false,
-    ));
     assert!(app.confirm_settings_change.is_some());
     let _ = app.update(Message::EscapePressed);
     assert_eq!(app.confirm_settings_change, None);
@@ -4410,114 +4404,143 @@ fn settings_checked(
     valorant_running: bool,
 ) -> Message {
     Message::SettingsPreflightChecked(
-        super::data::account_details::AccountActivityCheck {
-            account_id,
-            availability,
-        },
+        account_id,
+        Some((
+            super::data::account_details::AccountActivityCheck {
+                account_id,
+                availability,
+            },
+            None,
+        )),
         valorant_running,
     )
 }
 
+fn with_fresh_availability(
+    app: &mut PrimeApp,
+    account_id: AccountId,
+    availability: AccountAvailability,
+) {
+    app.account_availability_loaded_at = Some(iced::time::Instant::now());
+    app.account_availability.insert(account_id, availability);
+}
+
+fn pending_warning(app: &PrimeApp) -> Option<&str> {
+    app.confirm_settings_change
+        .as_ref()
+        .and_then(|pending| pending.warning.as_deref())
+}
+
 #[test]
-fn applying_a_preset_checks_the_game_then_asks_to_confirm() {
+fn a_fresh_result_opens_the_dialog_without_checking() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
     let preset =
         settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
     app.settings_profiles = vec![preset.clone()];
-    let change = SettingsChange::Apply {
-        account_id,
-        profile_id: preset.id.clone(),
-    };
+    with_fresh_availability(&mut app, account_id, AccountAvailability::Available);
 
-    let task = app.update(Message::RequestApplyPreset {
-        profile_id: preset.id,
+    let _ = app.update(Message::RequestApplyPreset {
+        profile_id: preset.id.clone(),
         account_id,
     });
 
-    assert!(task.units() > 0);
-    assert_eq!(app.settings_preflight, Some(change.clone()));
-    assert_eq!(app.confirm_settings_change, None);
-
-    let task = app.update(settings_checked(
-        account_id,
-        AccountAvailability::Available,
-        false,
-    ));
-
-    assert_eq!(task.units(), 0);
-    assert_eq!(app.settings_preflight, None);
     assert_eq!(
         app.confirm_settings_change,
         Some(PendingSettingsChange {
-            change,
+            change: SettingsChange::Apply {
+                account_id,
+                profile_id: preset.id,
+            },
             warning: None,
+            checking: false,
         })
     );
-    assert_eq!(app.settings_applying_account, None);
+}
 
-    let _ = app.update(Message::CancelSettingsChange);
+#[test]
+fn a_fresh_result_in_a_match_warns_at_once() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    with_fresh_availability(
+        &mut app,
+        account_id,
+        AccountAvailability::Unavailable {
+            reason: "in match".to_string(),
+        },
+    );
 
-    assert_eq!(app.confirm_settings_change, None);
-    assert_eq!(app.settings_applying_account, None);
+    let _ = app.update(Message::RequestRestoreSettings(account_id));
+
+    let warning = pending_warning(&app).expect("warning");
+    assert!(warning.contains("in match"), "{warning}");
+}
+
+#[test]
+fn an_old_result_opens_the_dialog_while_checking() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+
+    let task = app.update(Message::RequestRestoreSettings(account_id));
+
+    assert!(task.units() > 0);
+    assert_eq!(
+        app.confirm_settings_change,
+        Some(PendingSettingsChange {
+            change: SettingsChange::Restore(account_id),
+            warning: None,
+            checking: true,
+        })
+    );
+
+    let _ = app.update(settings_checked(
+        account_id,
+        AccountAvailability::Unavailable {
+            reason: "in lobby".to_string(),
+        },
+        false,
+    ));
+
+    let pending = app.confirm_settings_change.as_ref().expect("still open");
+    assert!(!pending.checking);
+    assert!(pending_warning(&app).expect("warning").contains("in lobby"));
+}
+
+#[test]
+fn a_failed_check_leaves_a_note_and_stops_checking() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let _ = app.update(Message::RequestRestoreSettings(account_id));
+
+    let _ = app.update(settings_checked(
+        account_id,
+        AccountAvailability::activity_check_failed(),
+        false,
+    ));
+
+    assert!(!app.confirm_settings_change.as_ref().expect("open").checking);
+    assert!(
+        pending_warning(&app)
+            .expect("note")
+            .contains("couldn't check")
+    );
 }
 
 #[test]
 fn applying_warns_when_valorant_is_running() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
-    let preset =
-        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
-    app.settings_profiles = vec![preset.clone()];
-    let _ = app.update(Message::RequestApplyPreset {
-        profile_id: preset.id,
-        account_id,
-    });
+    with_fresh_availability(&mut app, account_id, AccountAvailability::Available);
+    let _ = app.update(Message::RequestRestoreSettings(account_id));
 
-    let _ = app.update(settings_checked(
-        account_id,
-        AccountAvailability::Available,
-        true,
-    ));
+    let _ = app.update(Message::SettingsPreflightChecked(account_id, None, true));
 
-    let warning = app
-        .confirm_settings_change
-        .as_ref()
-        .and_then(|pending| pending.warning.as_deref())
-        .expect("warning");
+    let warning = pending_warning(&app).expect("warning");
     assert!(warning.contains("VALORANT is running"), "{warning}");
 }
 
 #[test]
-fn applying_warns_when_the_account_is_in_a_match() {
-    let dir = tempdir().expect("temp dir");
-    let (mut app, account_id) = settings_app(dir.path());
-    let preset =
-        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
-    app.settings_profiles = vec![preset.clone()];
-    let _ = app.update(Message::RequestApplyPreset {
-        profile_id: preset.id,
-        account_id,
-    });
-
-    let _ = app.update(settings_checked(
-        account_id,
-        AccountAvailability::Unavailable {
-            reason: "in match".to_string(),
-        },
-        false,
-    ));
-
-    let warning = app
-        .confirm_settings_change
-        .as_ref()
-        .and_then(|pending| pending.warning.as_deref())
-        .expect("warning");
-    assert!(warning.contains("in match"), "{warning}");
-}
-
-#[test]
-fn a_game_check_for_another_account_is_ignored() {
+fn a_check_for_another_account_changes_nothing() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
     let _ = app.update(Message::RequestRestoreSettings(account_id));
@@ -4525,29 +4548,69 @@ fn a_game_check_for_another_account_is_ignored() {
     let _ = app.update(settings_checked(
         AccountId::new(),
         AccountAvailability::Available,
-        false,
+        true,
     ));
 
-    assert_eq!(
-        app.settings_preflight,
-        Some(SettingsChange::Restore(account_id))
-    );
-    assert_eq!(app.confirm_settings_change, None);
+    assert!(app.confirm_settings_change.as_ref().expect("open").checking);
+    assert_eq!(pending_warning(&app), None);
 }
 
 #[test]
-fn other_settings_work_waits_for_the_game_check() {
+fn confirming_while_checking_starts_the_change_and_the_late_result_is_only_cached() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
     let _ = app.update(Message::RequestRestoreSettings(account_id));
 
-    let task = app.update(Message::SaveSettingsPreset {
-        account_id,
-        name: "Main settings".to_string(),
-    });
+    let task = app.update(Message::ConfirmSettingsChange);
 
-    assert_eq!(task.units(), 0);
-    assert_eq!(app.settings_saving_account, None);
+    assert!(task.units() > 0);
+    assert_eq!(app.settings_applying_account, Some(account_id));
+
+    let _ = app.update(settings_checked(
+        account_id,
+        AccountAvailability::Available,
+        false,
+    ));
+
+    assert_eq!(app.confirm_settings_change, None);
+    assert_eq!(
+        app.account_availability.get(&account_id),
+        Some(&AccountAvailability::Available)
+    );
+}
+
+#[test]
+fn the_checks_refreshed_session_is_saved() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let _ = app.update(Message::RequestRestoreSettings(account_id));
+    let session = AuthSession::new("fresh", None, None, "Bearer", Some(3600), 100);
+
+    let task = app.update(Message::SettingsPreflightChecked(
+        account_id,
+        Some((
+            super::data::account_details::AccountActivityCheck {
+                account_id,
+                availability: AccountAvailability::Available,
+            },
+            Some(super::data::account_details::RefreshedApiContext {
+                account_id,
+                session: session.clone(),
+                launcher_session: None,
+                identity: settings_api_identity(),
+            }),
+        )),
+        false,
+    ));
+
+    assert!(task.units() > 0, "saves accounts.json");
+    let account = app
+        .state
+        .accounts
+        .iter()
+        .find(|account| account.id == account_id)
+        .expect("account");
+    assert_eq!(account.session.as_ref(), Some(&session));
 }
 
 #[test]
@@ -4561,11 +4624,6 @@ fn confirming_apply_starts_it() {
         profile_id: preset.id,
         account_id,
     });
-    let _ = app.update(settings_checked(
-        account_id,
-        AccountAvailability::Available,
-        false,
-    ));
 
     let task = app.update(Message::ConfirmSettingsChange);
 
@@ -4626,21 +4684,11 @@ fn restoring_asks_first_then_starts() {
 
     assert!(task.units() > 0);
     assert_eq!(
-        app.settings_preflight,
-        Some(SettingsChange::Restore(account_id))
-    );
-
-    let _ = app.update(settings_checked(
-        account_id,
-        AccountAvailability::Available,
-        false,
-    ));
-
-    assert_eq!(
         app.confirm_settings_change,
         Some(PendingSettingsChange {
             change: SettingsChange::Restore(account_id),
             warning: None,
+            checking: true,
         })
     );
     assert_eq!(app.settings_applying_account, None);
@@ -4675,7 +4723,7 @@ fn restore_waits_for_other_settings_work() {
     let task = app.update(Message::RequestRestoreSettings(account_id));
 
     assert_eq!(task.units(), 0);
-    assert_eq!(app.settings_preflight, None);
+    assert_eq!(app.confirm_settings_change, None);
 }
 
 #[test]

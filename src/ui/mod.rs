@@ -21,7 +21,7 @@ use crate::updater::{AvailableUpdate, UpdateCheckOutcome};
 use crate::game_settings::GameSettingsProfileMetadata;
 use data::account_details::{
     AccountActivityCheck, AccountAvailability, AccountAvailabilityRefresh, AccountRanksResult,
-    RefreshedProfileIdentity,
+    RefreshedApiContext, RefreshedProfileIdentity,
 };
 use data::game_settings::{
     AppliedGameSettingsResult, RestoredGameSettingsResult, SavedGameSettingsResult,
@@ -121,7 +121,6 @@ fn loading_indicator_active(app: &PrimeApp) -> bool {
         || app.launching_account.is_some()
         || app.settings_saving_account.is_some()
         || app.settings_applying_account.is_some()
-        || app.settings_preflight.is_some()
         || app.app_update_status.is_busy()
         || image_viewer_enabled()
             && app
@@ -303,8 +302,6 @@ struct PrimeApp {
     preset_name_prompt: Option<PresetNamePrompt>,
     settings_saving_account: Option<AccountId>,
     settings_applying_account: Option<AccountId>,
-    /// An Apply or Restore whose game check is running, before it asks to confirm.
-    settings_preflight: Option<SettingsChange>,
     confirm_settings_change: Option<PendingSettingsChange>,
     confirm_delete_settings_profile: Option<String>,
     launcher_capture_in_progress: bool,
@@ -349,6 +346,8 @@ impl SettingsChange {
 struct PendingSettingsChange {
     change: SettingsChange,
     warning: Option<String>,
+    /// Whether the game check is still running.
+    checking: bool,
 }
 
 /// What the preset name dialog is for.
@@ -783,8 +782,13 @@ enum Message {
     },
     SavedSettingsApplied(Result<AppliedGameSettingsResult, String>),
     RequestRestoreSettings(AccountId),
-    /// The game check for an Apply or Restore, and whether VALORANT was running.
-    SettingsPreflightChecked(AccountActivityCheck, bool),
+    /// The game check for an Apply or Restore (none when a recent result was used), with any
+    /// session it refreshed, and whether VALORANT was running.
+    SettingsPreflightChecked(
+        AccountId,
+        Option<(AccountActivityCheck, Option<RefreshedApiContext>)>,
+        bool,
+    ),
     CancelSettingsChange,
     ConfirmSettingsChange,
     SettingsRestored(Result<RestoredGameSettingsResult, String>),

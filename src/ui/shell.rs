@@ -610,7 +610,7 @@ fn settings_change_prompt_overlay<'a>(
         .find(|account| account.id == pending.change.account_id())?;
     let name = &account.display_name;
 
-    let (title, details, action) = match &pending.change {
+    let (title, mut details, action) = match &pending.change {
         SettingsChange::Apply { profile_id, .. } => {
             let profile = app
                 .settings_profiles
@@ -646,12 +646,15 @@ fn settings_change_prompt_overlay<'a>(
         ),
     };
 
-    let (details, action) = match &pending.warning {
-        Some(warning) => (
-            format!("{details}\n\n{warning}"),
-            format!("{action} anyway"),
-        ),
-        None => (details, action.to_string()),
+    if pending.checking {
+        details.push_str(&format!("\n\nChecking whether {name} is in VALORANT…"));
+    }
+    let action = match &pending.warning {
+        Some(warning) => {
+            details.push_str(&format!("\n\n{warning}"));
+            format!("{action} anyway")
+        }
+        None => action.to_string(),
     };
 
     Some(confirmation_prompt_overlay(

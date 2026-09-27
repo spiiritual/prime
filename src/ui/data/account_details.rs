@@ -437,7 +437,6 @@ pub(in crate::ui) async fn fetch_account_availability(
 
 /// Whether the account is in VALORANT, for the settings Apply and Restore warning, with any
 /// session the check obtained so the caller can save it.
-#[allow(dead_code)] // Task 4 calls it.
 pub(in crate::ui) async fn check_settings_activity(
     account: AccountProfile,
     client_version: String,

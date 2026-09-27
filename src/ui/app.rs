@@ -18,8 +18,8 @@ use crate::updater::{UpdateCheckOutcome, check_for_update, download_and_prepare_
 
 use super::data::account_details::{
     AccountActivityCheck, AccountAvailability, AccountRankResult, RefreshedApiContext,
-    fetch_account_availabilities, fetch_account_availability, fetch_account_ranks,
-    fetch_profile_identity,
+    check_settings_activity, fetch_account_availabilities, fetch_account_availability,
+    fetch_account_ranks, fetch_profile_identity,
 };
 use super::data::game_settings::{
     apply_game_settings_profile, delete_game_settings_profile, load_game_settings_profiles,
@@ -98,7 +98,6 @@ impl PrimeApp {
                 preset_name_prompt: None,
                 settings_saving_account: None,
                 settings_applying_account: None,
-                settings_preflight: None,
                 confirm_settings_change: None,
                 confirm_delete_settings_profile: None,
                 launcher_capture_in_progress: false,
@@ -1416,7 +1415,7 @@ impl PrimeApp {
                     return Task::none();
                 }
 
-                self.start_settings_preflight(SettingsChange::Apply {
+                self.open_settings_change(SettingsChange::Apply {
                     account_id,
                     profile_id,
                 })
@@ -1464,42 +1463,46 @@ impl PrimeApp {
                 }
             }
             Message::RequestRestoreSettings(account_id) => {
-                self.start_settings_preflight(SettingsChange::Restore(account_id))
+                self.open_settings_change(SettingsChange::Restore(account_id))
             }
-            Message::SettingsPreflightChecked(check, valorant_running) => {
-                if self
-                    .settings_preflight
-                    .as_ref()
-                    .map(SettingsChange::account_id)
-                    != Some(check.account_id)
-                {
-                    return Task::none();
+            Message::SettingsPreflightChecked(account_id, check, valorant_running) => {
+                let mut task = Task::none();
+                if let Some((check, refreshed)) = check {
+                    self.account_availability
+                        .insert(check.account_id, check.availability);
+                    // Goes through the same PUUID check as the background poll's sessions.
+                    if let Some(refreshed) = refreshed
+                        && self.cache_refreshed_api_context(refreshed)
+                    {
+                        task = self.save_task();
+                    }
                 }
 
-                let Some(change) = self.settings_preflight.take() else {
-                    return Task::none();
-                };
-                self.account_availability
-                    .insert(check.account_id, check.availability.clone());
-
-                let Some(account) = self
+                let Some(display_name) = self
                     .state
                     .accounts
                     .iter()
-                    .find(|account| account.id == check.account_id)
+                    .find(|account| account.id == account_id)
+                    .map(|account| account.display_name.clone())
                 else {
-                    self.set_status("Account profile no longer exists");
-                    return Task::none();
+                    return task;
                 };
+                let availability = self
+                    .account_availability
+                    .get(&account_id)
+                    .cloned()
+                    .unwrap_or_else(AccountAvailability::activity_check_failed);
+                if let Some(pending) = self
+                    .confirm_settings_change
+                    .as_mut()
+                    .filter(|pending| pending.change.account_id() == account_id)
+                {
+                    pending.warning =
+                        settings_change_warning(&display_name, &availability, valorant_running);
+                    pending.checking = false;
+                }
 
-                let warning = settings_change_warning(
-                    &account.display_name,
-                    &check.availability,
-                    valorant_running,
-                );
-                self.set_status("Confirm to change the account's settings");
-                self.confirm_settings_change = Some(PendingSettingsChange { change, warning });
-                Task::none()
+                task
             }
             Message::CancelSettingsChange => {
                 self.confirm_settings_change = None;
@@ -2308,16 +2311,16 @@ impl PrimeApp {
         self.capture_prompt_valorant_running = false;
     }
 
-    /// Whether a preset is being saved or applied, or an Apply or Restore is checking the game.
+    /// Whether a preset is being saved, or a preset applied or original settings restored.
     pub(super) fn settings_work_in_progress(&self) -> bool {
-        self.settings_saving_account.is_some()
-            || self.settings_applying_account.is_some()
-            || self.settings_preflight.is_some()
+        self.settings_saving_account.is_some() || self.settings_applying_account.is_some()
     }
 
-    /// Checks whether the account is in VALORANT before asking to confirm an Apply or Restore,
-    /// since a running game can save its old settings over the change.
-    fn start_settings_preflight(&mut self, change: SettingsChange) -> Task<Message> {
+    /// Opens the confirmation for an Apply or Restore straight away. A background activity
+    /// result under 90 seconds old supplies the warning; otherwise the dialog shows that it's
+    /// checking while `check_settings_activity` runs. Whether VALORANT is running on this PC is
+    /// checked every time, locally.
+    fn open_settings_change(&mut self, change: SettingsChange) -> Task<Message> {
         if !self.settings_cloning
             || self.settings_work_in_progress()
             || self.update_blocks_new_work()
@@ -2336,16 +2339,42 @@ impl PrimeApp {
             return Task::none();
         };
 
+        let fresh = self.fresh_availability(account.id).cloned();
+        let warning = fresh.as_ref().and_then(|availability| {
+            settings_change_warning(&account.display_name, availability, false)
+        });
         self.close_account_surfaces();
-        self.set_status(format!(
-            "Checking whether {} is in VALORANT",
-            account.summary()
-        ));
-        self.settings_preflight = Some(change);
+        self.confirm_settings_change = Some(PendingSettingsChange {
+            change,
+            warning,
+            checking: fresh.is_none(),
+        });
+
+        let account_id = account.id;
+        let client_version = self.client_version_input.clone();
         Task::perform(
-            check_account_in_game(account, self.client_version_input.clone()),
-            |(check, valorant_running)| Message::SettingsPreflightChecked(check, valorant_running),
+            async move {
+                let check = match fresh {
+                    Some(_) => None,
+                    None => Some(check_settings_activity(account, client_version).await),
+                };
+                (check, valorant_is_running().await)
+            },
+            move |(check, valorant_running)| {
+                Message::SettingsPreflightChecked(account_id, check, valorant_running)
+            },
         )
+    }
+
+    /// The background poll's result for this account, when it's recent enough to trust.
+    fn fresh_availability(&self, account_id: AccountId) -> Option<&AccountAvailability> {
+        const FRESH_FOR: std::time::Duration = std::time::Duration::from_secs(90);
+
+        self.account_availability_loaded_at
+            .filter(|loaded_at| loaded_at.elapsed() < FRESH_FOR)?;
+        self.account_availability
+            .get(&account_id)
+            .filter(|availability| !matches!(availability, AccountAvailability::Unknown { .. }))
     }
 
     fn close_account_surfaces(&mut self) {
@@ -3287,6 +3316,11 @@ pub(super) fn settings_change_warning(
     if let Some(reason) = availability.unavailable_reason() {
         warnings.push(format!(
             "{display_name} appears to be in VALORANT right now ({reason}), maybe on another PC."
+        ));
+    }
+    if matches!(availability, AccountAvailability::Unknown { .. }) {
+        warnings.push(format!(
+            "Prime couldn't check whether {display_name} is in VALORANT."
         ));
     }
     if valorant_running {
