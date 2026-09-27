@@ -1,7 +1,7 @@
 # Fewer Riot requests for settings Apply and Restore
 
 Date: 2026-09-27
-Status: approved in chat, awaiting spec review
+Status: approved
 
 ## Why
 
@@ -49,7 +49,8 @@ Best case 7 requests; worst case 12 with two sign-ins.
 
 ### 1. Reuse the background activity result
 
-- `account_availability` records when each result was checked: `(AccountAvailability, Instant)`.
+- A result counts only if the background poll's last run (`account_availability_loaded_at`) is
+  recent and the result isn't "couldn't check".
 - A result is fresh when it is under 90 seconds old (the poll runs every 60 seconds).
 - Requesting Apply or Restore opens the confirmation dialog at once, no longer after the check:
   - VALORANT running on this PC is checked locally every time (no request). The dialog shows its
@@ -59,8 +60,8 @@ Best case 7 requests; worst case 12 with two sign-ins.
     the check runs, then shows the warning or drops the line. A result for another account or an
     earlier request is ignored.
   - Confirm works at any time; the warning never blocks it.
-- `settings_preflight` goes away; the pending change carries the check's state instead:
-  `warning: Option<String>` becomes a state of checking, clear, or a warning.
+- `settings_preflight` goes away; the pending change carries `checking`, `warning`, `check_failed`
+  and the request ID of its check.
 
 ### 2. Keep sessions the check obtains
 
@@ -79,16 +80,14 @@ Best case 7 requests; worst case 12 with two sign-ins.
 - Region resolution: use the saved region; with none, call Riot Geo and save the result through
   `ApiIdentity` and `cache_account_api_context`, as the shard is saved today.
 - The shard comes from the region, as it does after a Geo lookup today.
-- Recovery from a stale region: when a regional request (store, wallet, loadout, MMR, penalties,
-  contracts, player preferences) fails with HTTP 404 and the region came from the saved value, Prime
-  calls Riot Geo, saves the new region, and retries that loader once. A second failure is reported
-  as now.
+- Recovery from a stale region: the account's Refresh action forgets the saved region, and the
+  next request looks it up again through Riot Geo. No automatic retry: region changes are rare
+  (agreed in chat).
 - Activity requests read a 404 as "not in the game", so they can't detect a stale region. They rely
   on the other features to correct it. The accepted risk: until then, a wrong region makes an
   account look available, and the settings warning could be missed.
-- AGENTS.md's Riot API note changes from "Resolve the shard through Riot Geo when an ID token is
-  available" to: the region is saved per account after the first Riot Geo lookup, and a 404 from a
-  regional endpoint triggers a new lookup and one retry.
+- AGENTS.md's Riot API note says the region is saved per account after the first Riot Geo lookup,
+  and that refreshing an account forgets it.
 
 ### 4. Fewer and parallel activity requests
 
@@ -101,11 +100,10 @@ Best case 7 requests; worst case 12 with two sign-ins.
 
 ### 5. One shared HTTP client
 
-- `PrimeApp` holds one `RiotApi`, created at startup and cloned into each task, in place of the
-  eleven `RiotApi::new()` calls in `src/ui`. `reqwest::Client` is reference-counted, so clones share
-  one connection pool.
-- If creating the client fails at startup, Prime reports it once and the features that need Riot
-  report the same error, as they do now when `RiotApi::new()` fails.
+- `RiotApi::shared()` creates one client on first use and hands out clones, in place of the
+  eleven `RiotApi::new()` calls in `src/ui`. `reqwest::Client` is reference-counted, so clones
+  share one connection pool. If creating it fails, every feature that needs Riot reports the same
+  error, as it does now when `RiotApi::new()` fails.
 
 ## New request chain
 
@@ -143,5 +141,4 @@ Tests follow `src/ui/tests.rs` conventions: assert on state and `task.units()`, 
   mismatched subject is refused.
 - Region: saved after the first lookup; a saved region is reused; `accounts.json` without the field
   still loads.
-- 404 recovery: covered at the function level with the retry decision separated from the HTTP call.
 - Activity classification with parallel results keeps today's precedence.
