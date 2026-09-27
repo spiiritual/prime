@@ -416,7 +416,8 @@ pub(in crate::ui) async fn fetch_account_availabilities(
 
     for account in accounts {
         let (check, refreshed) =
-            check_account_availability(&api, account, client_version.clone()).await;
+            check_account_availability(&api, account, client_version.clone(), ActivityDetail::Full)
+                .await;
         result.accounts.push(check);
         result.refreshed_sessions.extend(refreshed);
     }
@@ -429,24 +430,48 @@ pub(in crate::ui) async fn fetch_account_availability(
     account: AccountProfile,
     client_version: String,
 ) -> AccountActivityCheck {
-    check_account_availability(api, account, client_version)
+    check_account_availability(api, account, client_version, ActivityDetail::Full)
         .await
         .0
+}
+
+/// Whether the account is in VALORANT, for the settings Apply and Restore warning, with any
+/// session the check obtained so the caller can save it.
+#[allow(dead_code)] // Task 4 calls it.
+pub(in crate::ui) async fn check_settings_activity(
+    account: AccountProfile,
+    client_version: String,
+) -> (AccountActivityCheck, Option<RefreshedApiContext>) {
+    match RiotApi::shared() {
+        Ok(api) => {
+            check_account_availability(&api, account, client_version, ActivityDetail::InGame).await
+        }
+        Err(_) => (
+            AccountActivityCheck {
+                account_id: account.id,
+                availability: AccountAvailability::activity_check_failed(),
+            },
+            None,
+        ),
+    }
 }
 
 async fn check_account_availability(
     api: &RiotApi,
     account: AccountProfile,
     client_version: String,
+    detail: ActivityDetail,
 ) -> (AccountActivityCheck, Option<RefreshedApiContext>) {
     let account_id = account.id;
     let mut refreshed = None;
     let availability = match resolve_credentials(api, &account, client_version).await {
         Ok(resolved) => {
             let availability = match resolved.region {
-                Some(region) => fetch_resolved_account_activity(api, &resolved.credentials, region)
-                    .await
-                    .into(),
+                Some(region) => {
+                    fetch_resolved_account_activity(api, &resolved.credentials, region, detail)
+                        .await
+                        .into()
+                }
                 None => AccountAvailability::activity_check_failed(),
             };
             if account.session.as_ref() != Some(&resolved.session) {
@@ -471,35 +496,37 @@ async fn check_account_availability(
     )
 }
 
+/// How much of the account's activity a check needs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum ActivityDetail {
+    /// Match, agent select or lobby, for the Accounts tab and Launch's warning.
+    Full,
+    /// Only whether the account is in the game: match or party. One request fewer.
+    InGame,
+}
+
 async fn fetch_resolved_account_activity(
     api: &RiotApi,
     credentials: &ApiCredentials,
     region: ValorantRegion,
+    detail: ActivityDetail,
 ) -> AccountActivity {
-    let current_game = account_activity_probe(api.current_game_player(credentials, region).await);
-    if current_game != AccountActivityProbe::NotFound {
-        return classify_account_activity(
-            current_game,
-            AccountActivityProbe::NotFound,
-            AccountActivityProbe::NotFound,
-        );
-    }
+    let pregame = async {
+        match detail {
+            ActivityDetail::Full => {
+                account_activity_probe(api.pregame_player(credentials, region).await)
+            }
+            // Agent select is covered by the party request: players stay in their party.
+            ActivityDetail::InGame => AccountActivityProbe::NotFound,
+        }
+    };
+    let (current_game, pregame, party) = iced::futures::join!(
+        async { account_activity_probe(api.current_game_player(credentials, region).await) },
+        pregame,
+        async { account_activity_probe(api.party_player(credentials, region).await) },
+    );
 
-    let pregame = account_activity_probe(api.pregame_player(credentials, region).await);
-    if pregame != AccountActivityProbe::NotFound {
-        return classify_account_activity(
-            AccountActivityProbe::NotFound,
-            pregame,
-            AccountActivityProbe::NotFound,
-        );
-    }
-
-    let party = account_activity_probe(api.party_player(credentials, region).await);
-    classify_account_activity(
-        AccountActivityProbe::NotFound,
-        AccountActivityProbe::NotFound,
-        party,
-    )
+    classify_account_activity(current_game, pregame, party)
 }
 
 fn account_activity_probe(
