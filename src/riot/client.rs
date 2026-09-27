@@ -127,7 +127,10 @@ impl RiotApi {
             response.status(),
             StatusCode::BAD_REQUEST | StatusCode::UNAUTHORIZED
         ) {
-            return Err(RiotApiError::RefreshTokenRejected);
+            let body = response.text().await.unwrap_or_default();
+            return Err(RiotApiError::RefreshTokenRejected(
+                refresh_token_error_code(&body),
+            ));
         }
 
         let body = response.error_for_status()?.text().await?;
@@ -429,12 +432,27 @@ struct RiotTokenResponse {
     refresh_token: Option<String>,
 }
 
+/// Riot's OAuth error code from a rejected token request, such as `invalid_grant`.
+fn refresh_token_error_code(body: &str) -> String {
+    #[derive(Deserialize)]
+    struct TokenError {
+        error: Option<String>,
+    }
+
+    serde_json::from_str::<TokenError>(body)
+        .ok()
+        .and_then(|response| response.error)
+        .map(|code| code.trim().to_string())
+        .filter(|code| !code.is_empty())
+        .unwrap_or_else(|| "no reason given".to_string())
+}
+
 fn parse_refresh_token_response(body: &str) -> Result<RefreshTokenReauth, RiotApiError> {
     let response: RiotTokenResponse = serde_json::from_str(body)?;
     let access_token = response
         .access_token
         .filter(|token| !token.trim().is_empty())
-        .ok_or(RiotApiError::RefreshTokenRejected)?;
+        .ok_or_else(|| RiotApiError::RefreshTokenRejected(refresh_token_error_code(body)))?;
     let non_empty = |value: Option<String>| value.filter(|value| !value.trim().is_empty());
 
     Ok(RefreshTokenReauth {
@@ -472,8 +490,14 @@ pub enum RiotApiError {
     MissingField(&'static str),
     #[error("invalid header value: {0}")]
     Header(#[from] reqwest::header::InvalidHeaderValue),
-    #[error("Riot did not accept the saved Riot Client login; re-capture this account's login")]
-    RefreshTokenRejected,
+    /// Riot refused the saved login's refresh token, with its OAuth error code. Riot does this
+    /// when the account is signed out somewhere else, its password changes or the login expires.
+    #[error(
+        "Riot signed out this account's saved login ({0}). This happens when the account is \
+         signed out somewhere else, its password changes or the login expires; re-capture this \
+         account's login"
+    )]
+    RefreshTokenRejected(String),
     #[error("Riot token response was not valid JSON: {0}")]
     AuthResponseJson(#[from] serde_json::Error),
     #[error(
@@ -548,7 +572,20 @@ mod tests {
         let err = parse_refresh_token_response(r#"{"error":"invalid_grant"}"#)
             .expect_err("missing access token");
 
-        assert!(matches!(err, RiotApiError::RefreshTokenRejected));
+        assert!(matches!(err, RiotApiError::RefreshTokenRejected(code) if code == "invalid_grant"));
+    }
+
+    #[test]
+    fn refresh_token_error_code_reads_riots_reason() {
+        assert_eq!(
+            refresh_token_error_code(r#"{"error":"invalid_grant","error_description":""}"#),
+            "invalid_grant"
+        );
+        assert_eq!(refresh_token_error_code("not json"), "no reason given");
+        assert_eq!(
+            refresh_token_error_code(r#"{"error":""}"#),
+            "no reason given"
+        );
     }
 
     #[test]

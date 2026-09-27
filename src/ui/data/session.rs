@@ -154,10 +154,15 @@ pub(in crate::ui::data) async fn reauth_launcher_backup(
     backup: &LauncherSessionBackup,
 ) -> Result<ApiSession, String> {
     let refresh_token = read_backup_refresh_token(backup).map_err(|error| error.to_string())?;
-    let reauth = api.refresh_token_reauth(&refresh_token).await.map_err(|error| {
-            format!(
+    let reauth = api
+        .refresh_token_reauth(&refresh_token)
+        .await
+        .map_err(|error| match error {
+            // Already says what happened and what to do.
+            crate::riot::client::RiotApiError::RefreshTokenRejected(_) => error.to_string(),
+            error => format!(
                 "launcher session reauth failed: {error}. Recapture the Riot Client session or import a fresh redirect token."
-            )
+            ),
         })?;
 
     if let Some(rotated) = reauth
@@ -172,11 +177,8 @@ pub(in crate::ui::data) async fn reauth_launcher_backup(
 
     Ok(ApiSession {
         session: reauth.tokens.into_session(),
-        launcher_session: Some(LauncherSessionBackup {
-            data_dir: backup.data_dir.clone(),
-            captured_at_unix: OffsetDateTime::now_utc().unix_timestamp(),
-            puuid: backup.puuid.clone(),
-        }),
+        // Still the same sign-in, so it keeps its capture time.
+        launcher_session: Some(backup.clone()),
     })
 }
 

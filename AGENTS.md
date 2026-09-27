@@ -84,6 +84,8 @@ Local data: `%APPDATA%\spiiritual\prime\config\` holds `accounts.json`, `launche
   account and restore it before launching.
 - Requests re-authenticate from the captured launcher session when possible. Refreshed sessions and
   entitlement tokens are saved back to the account.
+- Signing the account out anywhere revokes its saved refresh token (`invalid_grant`), and only a
+  re-capture fixes it. Signing in or launching the game elsewhere does not revoke it.
 - Resolve the shard through Riot Geo when an ID token is available. A stale shard gives storefront 404s.
 - The client version comes from the public Valorant version endpoint. Shop and Loadout need it.
 - Skin, bundle, currency and weapon names come from the public content API at valorant-api.com.
