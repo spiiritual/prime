@@ -71,7 +71,7 @@ pub(in crate::ui) async fn save_game_settings_profile(
     profile_dir: PathBuf,
     name: String,
 ) -> Result<SavedGameSettingsResult, String> {
-    let api = RiotApi::new().map_err(|error| error.to_string())?;
+    let api = RiotApi::shared().map_err(|error| error.to_string())?;
     let context = resolve_settings_context(&api, &account).await?;
     let document = fetch_settings_document(&api, &context).await?;
     let settings_version = document
@@ -110,7 +110,7 @@ pub(in crate::ui) async fn apply_game_settings_profile(
     profile_dir: PathBuf,
     profile_id: String,
 ) -> Result<AppliedGameSettingsResult, String> {
-    let api = RiotApi::new().map_err(|error| error.to_string())?;
+    let api = RiotApi::shared().map_err(|error| error.to_string())?;
     let repository = GameSettingsProfileRepository::new(profile_dir);
     let source_profile = repository
         .load(&profile_id)
@@ -187,7 +187,7 @@ pub(in crate::ui) async fn restore_original_game_settings(
     account: AccountProfile,
     profile_dir: PathBuf,
 ) -> Result<RestoredGameSettingsResult, String> {
-    let api = RiotApi::new().map_err(|error| error.to_string())?;
+    let api = RiotApi::shared().map_err(|error| error.to_string())?;
     let repository = GameSettingsProfileRepository::new(profile_dir);
     let original = repository
         .original_settings(account.id)

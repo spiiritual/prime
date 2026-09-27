@@ -429,7 +429,7 @@ async fn resolve_captured_launcher_identity(
     backup: &LauncherSessionBackup,
     fallback_shard: Shard,
 ) -> Result<CapturedLauncherIdentity, String> {
-    let api = RiotApi::new().map_err(|error| error.to_string())?;
+    let api = RiotApi::shared().map_err(|error| error.to_string())?;
     let mut session = reauth_launcher_backup(&api, backup).await?.session;
     let player_info = api
         .player_info(&session.access_token)

@@ -108,6 +108,18 @@ impl RiotApi {
         Ok(Self { client })
     }
 
+    /// One client for the whole app, so requests to the same Riot host reuse connections.
+    /// `reqwest::Client` is reference-counted, so each clone shares the same pool.
+    pub fn shared() -> Result<Self, RiotApiError> {
+        static SHARED: std::sync::LazyLock<Result<RiotApi, String>> =
+            std::sync::LazyLock::new(|| RiotApi::new().map_err(|error| error.to_string()));
+
+        SHARED
+            .as_ref()
+            .cloned()
+            .map_err(|error| RiotApiError::ClientSetup(error.clone()))
+    }
+
     /// Exchanges the remembered Riot Client refresh token for fresh access and ID tokens.
     pub async fn refresh_token_reauth(
         &self,
@@ -505,6 +517,8 @@ pub enum RiotApiError {
         crate::http_error::format_reqwest_error(.0)
     )]
     Http(#[from] reqwest::Error),
+    #[error("could not set up the Riot HTTP client: {0}")]
+    ClientSetup(String),
 }
 
 #[cfg(test)]

@@ -3262,7 +3262,7 @@ async fn check_account_in_game(
     client_version: String,
 ) -> (AccountActivityCheck, bool) {
     let account_id = account.id;
-    let check = match crate::riot::client::RiotApi::new() {
+    let check = match crate::riot::client::RiotApi::shared() {
         Ok(api) => fetch_account_availability(&api, account, client_version).await,
         Err(_) => AccountActivityCheck {
             account_id,

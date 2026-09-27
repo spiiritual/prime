@@ -759,7 +759,7 @@ pub(in crate::ui) async fn fetch_loadout(
     client_version: String,
     image_cache: ImageCache,
 ) -> Result<LoadoutResult, String> {
-    let api = RiotApi::new().map_err(|error| error.to_string())?;
+    let api = RiotApi::shared().map_err(|error| error.to_string())?;
     let resolved = resolve_credentials(&api, &account, client_version).await?;
     let metadata = fetch_loadout_metadata().await;
     let (account_xp, battle_pass, loadout) = iced::futures::join!(

@@ -360,7 +360,7 @@ pub(in crate::ui) async fn fetch_account_ranks(
     accounts: Vec<AccountProfile>,
     client_version: String,
 ) -> AccountRanksResult {
-    let api = match RiotApi::new() {
+    let api = match RiotApi::shared() {
         Ok(api) => api,
         Err(error) => {
             return AccountRanksResult {
@@ -396,7 +396,7 @@ pub(in crate::ui) async fn fetch_account_availabilities(
     accounts: Vec<AccountProfile>,
     client_version: String,
 ) -> AccountAvailabilityRefresh {
-    let api = match RiotApi::new() {
+    let api = match RiotApi::shared() {
         Ok(api) => api,
         Err(_) => {
             return AccountAvailabilityRefresh {
@@ -577,7 +577,7 @@ async fn fetch_account_rank(
 pub(in crate::ui) async fn fetch_profile_identity(
     account: AccountProfile,
 ) -> Result<RefreshedProfileIdentity, String> {
-    let api = RiotApi::new().map_err(|error| error.to_string())?;
+    let api = RiotApi::shared().map_err(|error| error.to_string())?;
     let api_session = refreshed_api_session(&api, &account).await?;
     let session = api_session.session;
     let player_info = api
