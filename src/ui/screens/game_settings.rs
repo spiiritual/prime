@@ -64,7 +64,7 @@ fn settings_account_choices(app: &PrimeApp) -> Vec<AccountChoice> {
 }
 
 fn settings_busy(app: &PrimeApp) -> bool {
-    app.settings_saving_account.is_some() || app.settings_applying_account.is_some()
+    app.settings_work_in_progress()
 }
 
 fn presets_section(app: &PrimeApp) -> Element<'_, Message> {
@@ -201,7 +201,7 @@ fn settings_details(summary: &GameSettingsProfileSummary) -> Element<'_, Message
     if summary.other_setting_count > 0 {
         details = details.push(
             text(format!(
-                "Also includes {} other gameplay and interface {}",
+                "Also includes {} other {}",
                 summary.other_setting_count,
                 if summary.other_setting_count == 1 {
                     "setting"

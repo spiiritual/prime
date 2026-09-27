@@ -5,9 +5,7 @@
 
 use serde_json::Value;
 
-use super::{
-    SettingsCategories, ValorantSettingsPayload, setting_entry_key, setting_key_matches_categories,
-};
+use super::ValorantSettingsPayload;
 
 /// How many keybinds a summary keeps; the rest are only counted.
 const KEYBIND_LIMIT: usize = 3;
@@ -177,7 +175,12 @@ fn named_settings(payload: &ValorantSettingsPayload) -> impl Iterator<Item = (&s
     .into_iter()
     .flatten()
     .flatten()
-    .filter_map(|entry| Some((setting_name(setting_entry_key(entry)?), entry.get("value")?)))
+    .filter_map(|entry| {
+        Some((
+            setting_name(entry.get("settingEnum")?.as_str()?),
+            entry.get("value")?,
+        ))
+    })
 }
 
 /// `EAresFloatSettingName::MouseSensitivity` becomes `MouseSensitivity`.
@@ -427,8 +430,7 @@ fn other_setting_count(payload: &ValorantSettingsPayload) -> usize {
     named_settings(payload)
         .filter(|(key, _)| {
             let lower = key.to_ascii_lowercase();
-            setting_key_matches_categories(key, SettingsCategories::all_gameplay())
-                && !lower.contains("sensitivity")
+            !lower.contains("sensitivity")
                 && !lower.contains("crosshair")
                 && !lower.contains("minimap")
         })
@@ -599,7 +601,7 @@ mod tests {
     }
 
     #[test]
-    fn counts_other_copied_settings_but_not_audio_or_seen_flags() {
+    fn counts_every_other_copied_setting_including_audio() {
         let summary = summarize(&payload(serde_json::json!({
             "boolSettings": [
                 {"settingEnum": "EAresBoolSettingName::ShowCorpses", "value": false},
@@ -612,6 +614,6 @@ mod tests {
             ]
         })));
 
-        assert_eq!(summary.other_setting_count, 1);
+        assert_eq!(summary.other_setting_count, 3);
     }
 }

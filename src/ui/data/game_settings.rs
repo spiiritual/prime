@@ -5,8 +5,8 @@ use super::session::{ApiIdentity, active_api_session, api_identity};
 use super::*;
 use crate::game_settings::{
     GameSettingsProfile, GameSettingsProfileMetadata, GameSettingsProfilePurpose,
-    GameSettingsProfileRepository, SettingsCategories, VALORANT_PLAYER_SETTINGS_TYPE,
-    ValorantSettingsDocument, merge_settings_payload, new_profile_id,
+    GameSettingsProfileRepository, VALORANT_PLAYER_SETTINGS_TYPE, ValorantSettingsDocument,
+    apply_preset, new_profile_id,
 };
 use crate::riot::endpoints::player_preferences_base_url_for_region;
 
@@ -108,25 +108,20 @@ pub(in crate::ui) async fn save_game_settings_profile(
 pub(in crate::ui) async fn apply_game_settings_profile(
     account: AccountProfile,
     profile_dir: PathBuf,
-    profile_id: Option<String>,
+    profile_id: String,
 ) -> Result<AppliedGameSettingsResult, String> {
     let api = RiotApi::new().map_err(|error| error.to_string())?;
     let repository = GameSettingsProfileRepository::new(profile_dir);
-    let source_profile = match profile_id {
-        Some(id) => repository.load(&id).map_err(|error| error.to_string())?,
-        None => repository
-            .latest_profile()
-            .map_err(|error| error.to_string())?,
-    };
-    let source_payload = source_profile
+    let source_profile = repository
+        .load(&profile_id)
+        .map_err(|error| error.to_string())?;
+    // Checked before signing in, so an unreadable preset fails without touching the account.
+    source_profile
         .preference
         .settings_payload()
         .map_err(|error| error.to_string())?;
     let context = resolve_settings_context(&api, &account).await?;
     let mut target_document = fetch_settings_document(&api, &context).await?;
-    let mut target_payload = target_document
-        .settings_payload()
-        .map_err(|error| error.to_string())?;
 
     // Only the first apply puts the account's own settings aside, so Restore always goes back
     // to how the account was before any preset.
@@ -144,7 +139,10 @@ pub(in crate::ui) async fn apply_game_settings_profile(
             source_puuid: context.identity.puuid.clone(),
             captured_at_unix: OffsetDateTime::now_utc().unix_timestamp(),
             preference_base_url: context.preference_base_url.clone(),
-            settings_version: target_payload.roaming_settings_version,
+            settings_version: target_document
+                .settings_payload()
+                .map_err(|error| error.to_string())?
+                .roaming_settings_version,
             preference: target_document.clone(),
         };
         repository
@@ -159,13 +157,7 @@ pub(in crate::ui) async fn apply_game_settings_profile(
         None
     };
 
-    merge_settings_payload(
-        &source_payload,
-        &mut target_payload,
-        SettingsCategories::all_gameplay(),
-    );
-    target_document
-        .replace_settings_payload(&target_payload)
+    apply_preset(&source_profile.preference, &mut target_document)
         .map_err(|error| error.to_string())?;
     let body = target_document
         .save_body(VALORANT_PLAYER_SETTINGS_TYPE)
@@ -204,7 +196,8 @@ pub(in crate::ui) async fn restore_original_game_settings(
     let original = repository
         .load(&original.id)
         .map_err(|error| error.to_string())?;
-    let original_payload = original
+    // Checked before signing in, so unreadable original settings fail without touching the account.
+    original
         .preference
         .settings_payload()
         .map_err(|error| error.to_string())?;
@@ -217,18 +210,7 @@ pub(in crate::ui) async fn restore_original_game_settings(
     }
 
     let mut target_document = fetch_settings_document(&api, &context).await?;
-    let mut target_payload = target_document
-        .settings_payload()
-        .map_err(|error| error.to_string())?;
-    // Apply only replaces these categories, so restoring them undoes it.
-    merge_settings_payload(
-        &original_payload,
-        &mut target_payload,
-        SettingsCategories::all_gameplay(),
-    );
-    target_document
-        .replace_settings_payload(&target_payload)
-        .map_err(|error| error.to_string())?;
+    apply_preset(&original.preference, &mut target_document).map_err(|error| error.to_string())?;
     let body = target_document
         .save_body(VALORANT_PLAYER_SETTINGS_TYPE)
         .map_err(|error| error.to_string())?;

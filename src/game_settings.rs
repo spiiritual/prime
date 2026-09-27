@@ -1,5 +1,4 @@
 use std::cmp::Reverse;
-use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -189,27 +188,6 @@ impl ValorantSettingsPayload {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SettingsCategories {
-    pub sensitivity: bool,
-    pub crosshair: bool,
-    pub keybinds: bool,
-    pub minimap: bool,
-    pub gameplay_interface: bool,
-}
-
-impl SettingsCategories {
-    pub fn all_gameplay() -> Self {
-        Self {
-            sensitivity: true,
-            crosshair: true,
-            keybinds: true,
-            minimap: true,
-            gameplay_interface: true,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct GameSettingsProfileRepository {
     dir: PathBuf,
@@ -236,14 +214,6 @@ impl GameSettingsProfileRepository {
     pub fn load(&self, id: &str) -> Result<GameSettingsProfile, GameSettingsError> {
         let contents = fs::read_to_string(self.profile_path(id))?;
         serde_json::from_str(&contents).map_err(GameSettingsError::Json)
-    }
-
-    pub fn latest_profile(&self) -> Result<GameSettingsProfile, GameSettingsError> {
-        self.profile_metadata()?
-            .into_iter()
-            .max_by_key(|profile| profile.captured_at_unix)
-            .ok_or(GameSettingsError::NoSavedProfile)
-            .and_then(|metadata| self.load(&metadata.id))
     }
 
     pub fn profile_metadata(&self) -> Result<Vec<GameSettingsProfileMetadata>, GameSettingsError> {
@@ -348,36 +318,14 @@ pub fn new_profile_id(account_id: AccountId, purpose: GameSettingsProfilePurpose
     )
 }
 
-pub fn merge_settings_payload(
-    source: &ValorantSettingsPayload,
-    target: &mut ValorantSettingsPayload,
-    categories: SettingsCategories,
-) {
-    merge_named_settings(
-        &source.float_settings,
-        &mut target.float_settings,
-        categories,
-    );
-    merge_named_settings(&source.int_settings, &mut target.int_settings, categories);
-    merge_named_settings(&source.bool_settings, &mut target.bool_settings, categories);
-    merge_named_settings(
-        &source.string_settings,
-        &mut target.string_settings,
-        categories,
-    );
-
-    if categories.keybinds {
-        merge_whole_array(&source.action_mappings, &mut target.action_mappings);
-        merge_whole_array(&source.axis_mappings, &mut target.axis_mappings);
-    }
-
-    if categories.gameplay_interface {
-        merge_whole_array(&source.settings_profiles, &mut target.settings_profiles);
-        merge_whole_array(
-            &source.settings_profile_data,
-            &mut target.settings_profile_data,
-        );
-    }
+/// Makes the target's settings an exact copy of the preset's. Riot leaves settings at their
+/// default out of the payload, so a setting the preset doesn't list goes back to its default
+/// rather than keeping the target's value.
+pub fn apply_preset(
+    preset: &ValorantSettingsDocument,
+    target: &mut ValorantSettingsDocument,
+) -> Result<(), GameSettingsError> {
+    target.replace_settings_payload(&preset.settings_payload()?)
 }
 
 fn decode_settings_payload(raw: &Value) -> Result<ValorantSettingsPayload, GameSettingsError> {
@@ -452,123 +400,6 @@ fn data_value(raw: &Value) -> Result<&Value, GameSettingsError> {
     }
 }
 
-fn merge_named_settings(
-    source: &Option<Vec<Value>>,
-    target: &mut Option<Vec<Value>>,
-    categories: SettingsCategories,
-) {
-    let Some(source) = source else {
-        return;
-    };
-
-    let source_entries = source
-        .iter()
-        .filter_map(|entry| {
-            let key = setting_entry_key(entry)?;
-            setting_key_matches_categories(key, categories).then_some((key.to_string(), entry))
-        })
-        .collect::<Vec<_>>();
-
-    if source_entries.is_empty() {
-        return;
-    }
-
-    let replacements = source_entries
-        .iter()
-        .map(|(key, entry)| (key.clone(), (*entry).clone()))
-        .collect::<HashMap<_, _>>();
-    let mut consumed = HashSet::new();
-    let target_entries = target.get_or_insert_with(Vec::new);
-
-    for entry in target_entries.iter_mut() {
-        if let Some(key) = setting_entry_key(entry).map(str::to_string)
-            && let Some(replacement) = replacements.get(&key)
-        {
-            *entry = replacement.clone();
-            consumed.insert(key);
-        }
-    }
-
-    for (key, entry) in source_entries {
-        if !consumed.contains(&key) {
-            target_entries.push(entry.clone());
-        }
-    }
-}
-
-fn merge_whole_array(source: &Option<Vec<Value>>, target: &mut Option<Vec<Value>>) {
-    if let Some(source) = source {
-        *target = Some(source.clone());
-    }
-}
-
-fn setting_entry_key(entry: &Value) -> Option<&str> {
-    let Value::Object(map) = entry else {
-        return None;
-    };
-
-    [
-        "settingEnum",
-        "SettingEnum",
-        "settingName",
-        "SettingName",
-        "name",
-        "Name",
-        "key",
-        "Key",
-        "actionName",
-        "ActionName",
-        "axisName",
-        "AxisName",
-    ]
-    .into_iter()
-    .find_map(|field| map.get(field)?.as_str())
-    .filter(|key| !key.trim().is_empty())
-}
-
-fn setting_key_matches_categories(key: &str, categories: SettingsCategories) -> bool {
-    let key = key.to_ascii_lowercase();
-
-    if excluded_setting_key(&key) {
-        return false;
-    }
-
-    if categories.sensitivity && key.contains("sensitivity") {
-        return true;
-    }
-
-    if categories.crosshair && key.contains("crosshair") {
-        return true;
-    }
-
-    if categories.minimap && key.contains("minimap") {
-        return true;
-    }
-
-    categories.gameplay_interface
-}
-
-fn excluded_setting_key(key: &str) -> bool {
-    const EXCLUDED_PARTS: &[&str] = &[
-        "eula",
-        "legal",
-        "seen",
-        "firsttime",
-        "first_time",
-        "onboarding",
-        "tutorial",
-        "audio",
-        "volume",
-        "sound",
-        "voice",
-        "microphone",
-        "speaker",
-        "device",
-    ];
-
-    EXCLUDED_PARTS.iter().any(|part| key.contains(part))
-}
-
 fn safe_profile_id(value: &str) -> String {
     value
         .chars()
@@ -597,8 +428,6 @@ pub enum GameSettingsError {
     Json(#[from] serde_json::Error),
     #[error("settings profile I/O failed: {0}")]
     Io(#[from] io::Error),
-    #[error("no settings profile is available")]
-    NoSavedProfile,
     #[error("a preset name can't be empty")]
     EmptyName,
 }
@@ -719,65 +548,79 @@ mod tests {
         );
     }
 
+    fn encoded_document(payload: &ValorantSettingsPayload) -> ValorantSettingsDocument {
+        ValorantSettingsDocument::new(serde_json::json!({
+            "type": VALORANT_PLAYER_SETTINGS_TYPE,
+            "data": encode_settings_payload(payload).expect("encode")
+        }))
+    }
+
+    // Riot leaves settings at their default out of the payload, so these two are shaped like
+    // real accounts: each lists only what its player changed.
+    fn preset_account() -> ValorantSettingsPayload {
+        payload(serde_json::json!({
+            "roamingSetttingsVersion": 15,
+            "floatSettings": [
+                {"settingEnum": "EAresFloatSettingName::MouseSensitivity", "value": 0.3},
+                {"settingEnum": "EAresFloatSettingName::OverallVolume", "value": 0.5}
+            ],
+            "boolSettings": [
+                {"settingEnum": "EAresBoolSettingName::PushToTalkEnabled", "value": true}
+            ],
+            "stringSettings": [
+                {"settingEnum": "EAresStringSettingName::TeamPushToTalkKey", "value": "ThumbMouseButton2"}
+            ],
+            "actionMappings": [{"name": "Ping", "key": "MiddleMouseButton"}]
+        }))
+    }
+
+    fn target_account() -> ValorantSettingsPayload {
+        payload(serde_json::json!({
+            "roamingSetttingsVersion": 15,
+            "floatSettings": [
+                {"settingEnum": "EAresFloatSettingName::MouseSensitivity", "value": 0.8},
+                {"settingEnum": "EAresFloatSettingName::VoiceOverVolume", "value": 0.2}
+            ],
+            "intSettings": [
+                {"settingEnum": "EAresIntSettingName::ColorBlindMode", "value": 1}
+            ],
+            "boolSettings": [
+                {"settingEnum": "EAresBoolSettingName::ShowNewPlayerTips", "value": true}
+            ],
+            "actionMappings": [
+                {"name": "Ping", "key": "MiddleMouseButton"},
+                {"name": "ShowScoreboard", "key": "None"}
+            ]
+        }))
+    }
+
     #[test]
-    fn merge_replaces_selected_categories_and_preserves_excluded_target_settings() {
-        let source = payload(serde_json::json!({
-            "floatSettings": [
-                {"settingEnum": "MouseSensitivity", "value": 0.32},
-                {"settingEnum": "MasterVolume", "value": 1.0}
-            ],
-            "boolSettings": [
-                {"settingEnum": "MinimapRotates", "value": true},
-                {"settingEnum": "HasSeenIntro", "value": true}
-            ],
-            "stringSettings": [
-                {"settingEnum": "SavedCrosshairProfileData", "value": "source-crosshair"}
-            ],
-            "actionMappings": [{"actionName": "Jump", "key": "Space"}]
-        }));
-        let mut target = payload(serde_json::json!({
-            "floatSettings": [
-                {"settingEnum": "MasterVolume", "value": 0.2},
-                {"settingEnum": "MouseSensitivity", "value": 0.8}
-            ],
-            "boolSettings": [
-                {"settingEnum": "HasSeenIntro", "value": false},
-                {"settingEnum": "MinimapRotates", "value": false}
-            ],
-            "stringSettings": [
-                {"settingEnum": "SavedCrosshairProfileData", "value": "target-crosshair"}
-            ],
-            "actionMappings": [{"actionName": "Jump", "key": "WheelDown"}],
-            "unknownTargetField": true
-        }));
+    fn applying_a_preset_copies_exactly_its_settings() {
+        let preset = encoded_document(&preset_account());
+        let mut target = encoded_document(&target_account());
 
-        merge_settings_payload(&source, &mut target, SettingsCategories::all_gameplay());
+        apply_preset(&preset, &mut target).expect("apply");
 
         assert_eq!(
-            target.float_settings.as_ref().expect("float")[0]["value"],
-            serde_json::json!(0.2)
+            target.settings_payload().expect("settings"),
+            preset_account()
         );
+        assert!(target.raw["data"].is_string(), "{:?}", target.raw);
+    }
+
+    #[test]
+    fn applying_the_original_after_a_preset_gives_back_the_original() {
+        let original = encoded_document(&target_account());
+        let preset = encoded_document(&preset_account());
+        let mut account = original.clone();
+
+        apply_preset(&preset, &mut account).expect("apply preset");
+        apply_preset(&original, &mut account).expect("restore original");
+
         assert_eq!(
-            target.float_settings.as_ref().expect("float")[1]["value"],
-            serde_json::json!(0.32)
+            account.settings_payload().expect("settings"),
+            target_account()
         );
-        assert_eq!(
-            target.bool_settings.as_ref().expect("bool")[0]["value"],
-            serde_json::json!(false)
-        );
-        assert_eq!(
-            target.bool_settings.as_ref().expect("bool")[1]["value"],
-            serde_json::json!(true)
-        );
-        assert_eq!(
-            target.string_settings.as_ref().expect("string")[0]["value"],
-            serde_json::json!("source-crosshair")
-        );
-        assert_eq!(
-            target.action_mappings.as_ref().expect("actions")[0]["key"],
-            serde_json::json!("Space")
-        );
-        assert_eq!(target.extra["unknownTargetField"], serde_json::json!(true));
     }
 
     #[test]
@@ -811,7 +654,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             [profile.id.as_str()]
         );
-        assert_eq!(repository.latest_profile().expect("latest").id, profile.id);
     }
 
     fn saved_profile(

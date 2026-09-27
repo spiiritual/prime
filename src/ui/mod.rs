@@ -121,6 +121,7 @@ fn loading_indicator_active(app: &PrimeApp) -> bool {
         || app.launching_account.is_some()
         || app.settings_saving_account.is_some()
         || app.settings_applying_account.is_some()
+        || app.settings_preflight.is_some()
         || app.app_update_status.is_busy()
         || image_viewer_enabled()
             && app
@@ -300,10 +301,10 @@ struct PrimeApp {
     preset_name_prompt: Option<PresetNamePrompt>,
     settings_saving_account: Option<AccountId>,
     settings_applying_account: Option<AccountId>,
-    confirm_apply_settings: Option<PendingSettingsApply>,
+    /// An Apply or Restore whose game check is running, before it asks to confirm.
+    settings_preflight: Option<SettingsChange>,
+    confirm_settings_change: Option<PendingSettingsChange>,
     confirm_delete_settings_profile: Option<String>,
-    /// The account whose original settings are waiting for a confirmed Restore.
-    confirm_restore_settings: Option<AccountId>,
     launcher_capture_in_progress: bool,
     launcher_capture_kind: Option<LauncherCaptureKind>,
     /// The running add or re-capture that reopened Riot Client for a sign-in.
@@ -321,11 +322,31 @@ struct PrimeApp {
     now: iced::time::Instant,
 }
 
-/// An Apply waiting for confirmation: the saved settings profile and the account it would change.
+/// A change to one account's VALORANT settings.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct PendingSettingsApply {
-    account_id: AccountId,
-    profile_id: String,
+enum SettingsChange {
+    /// Replaces the account's settings with a saved preset's.
+    Apply {
+        account_id: AccountId,
+        profile_id: String,
+    },
+    /// Puts back the settings the account had before its first preset.
+    Restore(AccountId),
+}
+
+impl SettingsChange {
+    fn account_id(&self) -> AccountId {
+        match self {
+            Self::Apply { account_id, .. } | Self::Restore(account_id) => *account_id,
+        }
+    }
+}
+
+/// A settings change waiting for confirmation, with a warning when the game could undo it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PendingSettingsChange {
+    change: SettingsChange,
+    warning: Option<String>,
 }
 
 /// What the preset name dialog is for.
@@ -756,12 +777,12 @@ enum Message {
         profile_id: String,
         account_id: AccountId,
     },
-    CancelApplySavedSettings,
-    ConfirmApplySavedSettings,
     SavedSettingsApplied(Result<AppliedGameSettingsResult, String>),
     RequestRestoreSettings(AccountId),
-    CancelRestoreSettings,
-    ConfirmRestoreSettings,
+    /// The game check for an Apply or Restore, and whether VALORANT was running.
+    SettingsPreflightChecked(AccountActivityCheck, bool),
+    CancelSettingsChange,
+    ConfirmSettingsChange,
     SettingsRestored(Result<RestoredGameSettingsResult, String>),
     /// The reply to the Shop load with this request ID.
     StorefrontLoaded(u64, Result<StorefrontResult, String>),

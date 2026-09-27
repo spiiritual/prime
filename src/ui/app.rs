@@ -36,8 +36,8 @@ use super::data::shop::fetch_storefront;
 use super::data::{cache_account_api_context, typed_riot_client_path};
 use super::{
     AccountsTab, AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, LoginCapture,
-    LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsApply, PresetNamePrompt,
-    PresetNameTarget, PrimeApp, Tab, TabScrollOffsets, ViewRequest,
+    LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange, PresetNamePrompt,
+    PresetNameTarget, PrimeApp, SettingsChange, Tab, TabScrollOffsets, ViewRequest,
 };
 
 impl PrimeApp {
@@ -97,9 +97,9 @@ impl PrimeApp {
                 preset_name_prompt: None,
                 settings_saving_account: None,
                 settings_applying_account: None,
-                confirm_apply_settings: None,
+                settings_preflight: None,
+                confirm_settings_change: None,
                 confirm_delete_settings_profile: None,
-                confirm_restore_settings: None,
                 launcher_capture_in_progress: false,
                 launcher_capture_kind: None,
                 login_capture: None,
@@ -160,9 +160,8 @@ impl PrimeApp {
             || self.exported_account.is_some()
             || self.confirm_delete_account.is_some()
             || self.confirm_recapture_account.is_some()
-            || self.confirm_apply_settings.is_some()
+            || self.confirm_settings_change.is_some()
             || self.confirm_delete_settings_profile.is_some()
-            || self.confirm_restore_settings.is_some()
             || self.preset_name_prompt.is_some()
             || self.unavailable_launch_warning.is_some()
             || self.app_update_status.prompt_update().is_some()
@@ -184,12 +183,10 @@ impl PrimeApp {
             Message::CancelDeleteAccount
         } else if self.confirm_recapture_account.is_some() {
             Message::CancelLauncherSessionLogin
-        } else if self.confirm_apply_settings.is_some() {
-            Message::CancelApplySavedSettings
+        } else if self.confirm_settings_change.is_some() {
+            Message::CancelSettingsChange
         } else if self.confirm_delete_settings_profile.is_some() {
             Message::CancelDeleteSettingsProfile
-        } else if self.confirm_restore_settings.is_some() {
-            Message::CancelRestoreSettings
         } else if self.preset_name_prompt.is_some() {
             Message::CancelPresetName
         } else if self.unavailable_launch_warning.is_some() {
@@ -1161,10 +1158,7 @@ impl PrimeApp {
                 Task::none()
             }
             Message::RequestSavePreset(account_id) => {
-                if !self.settings_cloning
-                    || self.settings_saving_account.is_some()
-                    || self.settings_applying_account.is_some()
-                {
+                if !self.settings_cloning || self.settings_work_in_progress() {
                     return Task::none();
                 }
 
@@ -1269,8 +1263,7 @@ impl PrimeApp {
             },
             Message::SaveSettingsPreset { account_id, name } => {
                 if !self.settings_cloning
-                    || self.settings_saving_account.is_some()
-                    || self.settings_applying_account.is_some()
+                    || self.settings_work_in_progress()
                     || self.update_blocks_new_work()
                 {
                     return Task::none();
@@ -1344,10 +1337,7 @@ impl PrimeApp {
                 None => Task::none(),
             },
             Message::RequestDeleteSettingsProfile(profile_id) => {
-                if !self.settings_cloning
-                    || self.settings_saving_account.is_some()
-                    || self.settings_applying_account.is_some()
-                {
+                if !self.settings_cloning || self.settings_work_in_progress() {
                     return Task::none();
                 }
 
@@ -1406,86 +1396,20 @@ impl PrimeApp {
                 profile_id,
                 account_id,
             } => {
-                if !self.settings_cloning
-                    || self.settings_saving_account.is_some()
-                    || self.settings_applying_account.is_some()
-                    || self.update_blocks_new_work()
-                {
-                    return Task::none();
-                }
-
-                if !self
-                    .state
-                    .accounts
-                    .iter()
-                    .any(|account| account.id == account_id)
-                {
-                    self.set_status("Account profile no longer exists");
-                    return Task::none();
-                }
-
-                if !self
-                    .settings_profiles
-                    .iter()
-                    .any(|profile| profile.id == profile_id)
+                if self.settings_cloning
+                    && !self
+                        .settings_profiles
+                        .iter()
+                        .any(|profile| profile.id == profile_id)
                 {
                     self.set_status("Settings preset no longer exists");
                     return Task::none();
                 }
 
-                self.close_account_surfaces();
-                self.confirm_apply_settings = Some(PendingSettingsApply {
+                self.start_settings_preflight(SettingsChange::Apply {
                     account_id,
                     profile_id,
-                });
-                Task::none()
-            }
-            Message::CancelApplySavedSettings => {
-                self.confirm_apply_settings = None;
-                Task::none()
-            }
-            Message::ConfirmApplySavedSettings => {
-                let Some(pending) = self.confirm_apply_settings.take() else {
-                    return Task::none();
-                };
-                if self.settings_saving_account.is_some()
-                    || self.settings_applying_account.is_some()
-                    || self.update_blocks_new_work()
-                {
-                    return Task::none();
-                }
-
-                let Some(account) = self
-                    .state
-                    .accounts
-                    .iter()
-                    .find(|account| account.id == pending.account_id)
-                    .cloned()
-                else {
-                    self.set_status("Account profile no longer exists");
-                    return Task::none();
-                };
-                let Some(profile_name) = self
-                    .settings_profiles
-                    .iter()
-                    .find(|profile| profile.id == pending.profile_id)
-                    .map(|profile| profile.name.clone())
-                else {
-                    self.set_status(
-                        "Could not apply account settings: that settings profile no longer exists",
-                    );
-                    return Task::none();
-                };
-
-                let summary = account.summary();
-                let profile_dir = self.repo.settings_profiles_dir();
-                self.settings_applying_account = Some(pending.account_id);
-                self.set_status(format!("Applying {profile_name} to {summary}"));
-
-                Task::perform(
-                    apply_game_settings_profile(account, profile_dir, Some(pending.profile_id)),
-                    Message::SavedSettingsApplied,
-                )
+                })
             }
             Message::SavedSettingsApplied(result) => {
                 let result_account_id = result.as_ref().ok().map(|result| result.account_id);
@@ -1530,40 +1454,53 @@ impl PrimeApp {
                 }
             }
             Message::RequestRestoreSettings(account_id) => {
-                if !self.settings_cloning
-                    || self.settings_saving_account.is_some()
-                    || self.settings_applying_account.is_some()
-                    || self.update_blocks_new_work()
+                self.start_settings_preflight(SettingsChange::Restore(account_id))
+            }
+            Message::SettingsPreflightChecked(check, valorant_running) => {
+                if self
+                    .settings_preflight
+                    .as_ref()
+                    .map(SettingsChange::account_id)
+                    != Some(check.account_id)
                 {
                     return Task::none();
                 }
 
-                if !self
+                let Some(change) = self.settings_preflight.take() else {
+                    return Task::none();
+                };
+                self.account_availability
+                    .insert(check.account_id, check.availability.clone());
+
+                let Some(account) = self
                     .state
                     .accounts
                     .iter()
-                    .any(|account| account.id == account_id)
-                {
+                    .find(|account| account.id == check.account_id)
+                else {
                     self.set_status("Account profile no longer exists");
                     return Task::none();
-                }
+                };
 
-                self.close_account_surfaces();
-                self.confirm_restore_settings = Some(account_id);
+                let warning = settings_change_warning(
+                    &account.display_name,
+                    &check.availability,
+                    valorant_running,
+                );
+                self.set_status("Confirm to change the account's settings");
+                self.confirm_settings_change = Some(PendingSettingsChange { change, warning });
                 Task::none()
             }
-            Message::CancelRestoreSettings => {
-                self.confirm_restore_settings = None;
+            Message::CancelSettingsChange => {
+                self.confirm_settings_change = None;
+                self.set_status("Canceled settings change");
                 Task::none()
             }
-            Message::ConfirmRestoreSettings => {
-                let Some(account_id) = self.confirm_restore_settings.take() else {
+            Message::ConfirmSettingsChange => {
+                let Some(pending) = self.confirm_settings_change.take() else {
                     return Task::none();
                 };
-                if self.settings_saving_account.is_some()
-                    || self.settings_applying_account.is_some()
-                    || self.update_blocks_new_work()
-                {
+                if self.settings_work_in_progress() || self.update_blocks_new_work() {
                     return Task::none();
                 }
 
@@ -1571,7 +1508,7 @@ impl PrimeApp {
                     .state
                     .accounts
                     .iter()
-                    .find(|account| account.id == account_id)
+                    .find(|account| account.id == pending.change.account_id())
                     .cloned()
                 else {
                     self.set_status("Account profile no longer exists");
@@ -1579,13 +1516,37 @@ impl PrimeApp {
                 };
 
                 let summary = account.summary();
-                self.settings_applying_account = Some(account_id);
-                self.set_status(format!("Restoring {summary}'s original settings"));
+                let profile_dir = self.repo.settings_profiles_dir();
+                match pending.change {
+                    SettingsChange::Apply { profile_id, .. } => {
+                        let Some(profile_name) = self
+                            .settings_profiles
+                            .iter()
+                            .find(|profile| profile.id == profile_id)
+                            .map(|profile| profile.name.clone())
+                        else {
+                            self.set_status(
+                                "Could not apply account settings: that settings profile no longer exists",
+                            );
+                            return Task::none();
+                        };
 
-                Task::perform(
-                    restore_original_game_settings(account, self.repo.settings_profiles_dir()),
-                    Message::SettingsRestored,
-                )
+                        self.settings_applying_account = Some(account.id);
+                        self.set_status(format!("Applying {profile_name} to {summary}"));
+                        Task::perform(
+                            apply_game_settings_profile(account, profile_dir, profile_id),
+                            Message::SavedSettingsApplied,
+                        )
+                    }
+                    SettingsChange::Restore(_) => {
+                        self.settings_applying_account = Some(account.id);
+                        self.set_status(format!("Restoring {summary}'s original settings"));
+                        Task::perform(
+                            restore_original_game_settings(account, profile_dir),
+                            Message::SettingsRestored,
+                        )
+                    }
+                }
             }
             Message::SettingsRestored(result) => {
                 let result_account_id = result.as_ref().ok().map(|result| result.account_id);
@@ -1906,24 +1867,8 @@ impl PrimeApp {
                 self.launch_preflight_account = Some(id);
                 self.set_status(format!("Checking availability for {summary}"));
 
-                let client_version = self.client_version_input.clone();
                 Task::perform(
-                    async move {
-                        let api = crate::riot::client::RiotApi::new().map_err(|_| ()).ok();
-
-                        let check = match api {
-                            Some(api) => {
-                                fetch_account_availability(&api, account, client_version).await
-                            }
-                            None => AccountActivityCheck {
-                                account_id: id,
-                                availability: AccountAvailability::activity_check_failed(),
-                            },
-                        };
-                        let valorant_running = valorant_is_running().await;
-
-                        (check, valorant_running)
-                    },
+                    check_account_in_game(account, self.client_version_input.clone()),
                     |(check, valorant_running)| {
                         Message::LaunchPreflightChecked(check, valorant_running)
                     },
@@ -2348,9 +2293,49 @@ impl PrimeApp {
         self.exported_account = None;
         self.confirm_delete_account = None;
         self.confirm_recapture_account = None;
-        self.confirm_apply_settings = None;
+        self.confirm_settings_change = None;
         self.confirm_delete_settings_profile = None;
         self.capture_prompt_valorant_running = false;
+    }
+
+    /// Whether a preset is being saved or applied, or an Apply or Restore is checking the game.
+    pub(super) fn settings_work_in_progress(&self) -> bool {
+        self.settings_saving_account.is_some()
+            || self.settings_applying_account.is_some()
+            || self.settings_preflight.is_some()
+    }
+
+    /// Checks whether the account is in VALORANT before asking to confirm an Apply or Restore,
+    /// since a running game can save its old settings over the change.
+    fn start_settings_preflight(&mut self, change: SettingsChange) -> Task<Message> {
+        if !self.settings_cloning
+            || self.settings_work_in_progress()
+            || self.update_blocks_new_work()
+        {
+            return Task::none();
+        }
+
+        let Some(account) = self
+            .state
+            .accounts
+            .iter()
+            .find(|account| account.id == change.account_id())
+            .cloned()
+        else {
+            self.set_status("Account profile no longer exists");
+            return Task::none();
+        };
+
+        self.close_account_surfaces();
+        self.set_status(format!(
+            "Checking whether {} is in VALORANT",
+            account.summary()
+        ));
+        self.settings_preflight = Some(change);
+        Task::perform(
+            check_account_in_game(account, self.client_version_input.clone()),
+            |(check, valorant_running)| Message::SettingsPreflightChecked(check, valorant_running),
+        )
     }
 
     fn close_account_surfaces(&mut self) {
@@ -3262,6 +3247,50 @@ pub(super) fn cancel_unavailable_launch_state(
     *launch_preflight_account = None;
     *launching_account = None;
     *launch_progress_checking = false;
+}
+
+/// The account's activity, and whether VALORANT is running on this PC.
+async fn check_account_in_game(
+    account: AccountProfile,
+    client_version: String,
+) -> (AccountActivityCheck, bool) {
+    let account_id = account.id;
+    let check = match crate::riot::client::RiotApi::new() {
+        Ok(api) => fetch_account_availability(&api, account, client_version).await,
+        Err(_) => AccountActivityCheck {
+            account_id,
+            availability: AccountAvailability::activity_check_failed(),
+        },
+    };
+
+    (check, valorant_is_running().await)
+}
+
+/// Why an Apply or Restore might not stick: a running game keeps the settings it loaded and can
+/// save them over the change.
+pub(super) fn settings_change_warning(
+    display_name: &str,
+    availability: &AccountAvailability,
+    valorant_running: bool,
+) -> Option<String> {
+    let mut warnings = Vec::new();
+    if let Some(reason) = availability.unavailable_reason() {
+        warnings.push(format!(
+            "{display_name} appears to be in VALORANT right now ({reason}), maybe on another PC."
+        ));
+    }
+    if valorant_running {
+        warnings.push("VALORANT is running on this PC.".to_string());
+    }
+    if warnings.is_empty() {
+        return None;
+    }
+
+    warnings.push(format!(
+        "If {display_name} is signed in to the game, it won't see the change and may save its \
+         old settings over it. Close VALORANT first."
+    ));
+    Some(warnings.join(" "))
 }
 
 fn fetch_client_version_task(user_requested: bool) -> Task<Message> {

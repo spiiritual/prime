@@ -9,8 +9,9 @@ use crate::game_settings::{GameSettingsProfileMetadata, GameSettingsProfilePurpo
 
 use super::components::{anchored_popover, currency_balance_display, loading_indicator};
 use super::{
-    AccountExportOutput, ImageViewerImage, MAIN_PANEL_SCROLLABLE_ID, Message, PresetNamePrompt,
-    PresetNameTarget, PrimeApp, Tab, UnavailableLaunchWarning, screens,
+    AccountExportOutput, ImageViewerImage, MAIN_PANEL_SCROLLABLE_ID, Message,
+    PendingSettingsChange, PresetNamePrompt, PresetNameTarget, PrimeApp, SettingsChange, Tab,
+    UnavailableLaunchWarning, screens,
 };
 use super::{status_bar_visible, status_spinner_active};
 
@@ -50,19 +51,6 @@ impl PrimeApp {
                 .find(|account| account.id == account_id)
         });
 
-        let pending_settings_apply = self.confirm_apply_settings.as_ref().and_then(|pending| {
-            let account = self
-                .state
-                .accounts
-                .iter()
-                .find(|account| account.id == pending.account_id)?;
-            let profile = self
-                .settings_profiles
-                .iter()
-                .find(|profile| profile.id == pending.profile_id)?;
-            Some((account, profile))
-        });
-
         let pending_settings_delete =
             self.confirm_delete_settings_profile
                 .as_ref()
@@ -71,13 +59,6 @@ impl PrimeApp {
                         .iter()
                         .find(|profile| &profile.id == profile_id)
                 });
-
-        let pending_settings_restore = self.confirm_restore_settings.and_then(|account_id| {
-            self.state
-                .accounts
-                .iter()
-                .find(|account| account.id == account_id)
-        });
 
         let content: Element<_> = if self.show_add_account_prompt {
             stack![
@@ -113,27 +94,17 @@ impl PrimeApp {
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
-        } else if let Some((account, profile)) = pending_settings_apply {
-            stack![
-                content,
-                apply_settings_prompt_overlay(
-                    account,
-                    profile,
-                    screens::original_settings(self)
-                        .iter()
-                        .any(|original| original.source_account_id == account.id)
-                )
-            ]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-        } else if let Some(profile) = pending_settings_delete {
-            stack![content, delete_settings_profile_prompt_overlay(profile)]
+        } else if let Some(prompt) = self
+            .confirm_settings_change
+            .as_ref()
+            .and_then(|pending| settings_change_prompt_overlay(self, pending))
+        {
+            stack![content, prompt]
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
-        } else if let Some(account) = pending_settings_restore {
-            stack![content, restore_settings_prompt_overlay(account)]
+        } else if let Some(profile) = pending_settings_delete {
+            stack![content, delete_settings_profile_prompt_overlay(profile)]
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
@@ -628,30 +599,67 @@ fn delete_account_prompt_overlay(account: &AccountProfile) -> Element<'_, Messag
     )
 }
 
-fn apply_settings_prompt_overlay<'a>(
-    account: &'a AccountProfile,
-    profile: &'a GameSettingsProfileMetadata,
-    keeps_earlier_original: bool,
-) -> Element<'a, Message> {
+fn settings_change_prompt_overlay<'a>(
+    app: &'a PrimeApp,
+    pending: &'a PendingSettingsChange,
+) -> Option<Element<'a, Message>> {
+    let account = app
+        .state
+        .accounts
+        .iter()
+        .find(|account| account.id == pending.change.account_id())?;
     let name = &account.display_name;
-    let undo = if keeps_earlier_original {
-        format!(
-            "{name}'s own settings from before the first preset are still saved, so Restore will \
-             bring those back."
-        )
-    } else {
-        format!("Prime saves {name}'s own settings first, so you can restore them later.")
+
+    let (title, details, action) = match &pending.change {
+        SettingsChange::Apply { profile_id, .. } => {
+            let profile = app
+                .settings_profiles
+                .iter()
+                .find(|profile| &profile.id == profile_id)?;
+            let keeps_earlier_original = screens::original_settings(app)
+                .iter()
+                .any(|original| original.source_account_id == account.id);
+            let undo = if keeps_earlier_original {
+                format!(
+                    "{name}'s own settings from before the first preset are still saved, so \
+                     Restore will bring those back."
+                )
+            } else {
+                format!("Prime saves {name}'s own settings first, so you can restore them later.")
+            };
+
+            (
+                format!("Apply {} to {name}?", profile.name),
+                format!(
+                    "This replaces all of {name}'s VALORANT settings, including audio, with the \
+                     preset's. {undo}"
+                ),
+                "Apply preset",
+            )
+        }
+        SettingsChange::Restore(_) => (
+            format!("Restore {name}'s own settings?"),
+            format!(
+                "This puts back all the VALORANT settings {name} had before a preset was applied."
+            ),
+            "Restore",
+        ),
     };
 
-    confirmation_prompt_overlay(
-        format!("Apply {} to {name}?", profile.name),
-        format!(
-            "This replaces {name}'s sensitivity, crosshair, keybind, minimap and gameplay \
-             settings. {undo}"
+    let (details, action) = match &pending.warning {
+        Some(warning) => (
+            format!("{details}\n\n{warning}"),
+            format!("{action} anyway"),
         ),
-        Message::CancelApplySavedSettings,
-        button("Apply preset").on_press(Message::ConfirmApplySavedSettings),
-    )
+        None => (details, action.to_string()),
+    };
+
+    Some(confirmation_prompt_overlay(
+        title,
+        details,
+        Message::CancelSettingsChange,
+        button(text(action)).on_press(Message::ConfirmSettingsChange),
+    ))
 }
 
 fn delete_settings_profile_prompt_overlay(
@@ -679,20 +687,6 @@ fn delete_settings_profile_prompt_overlay(
         button(action)
             .style(iced::widget::button::danger)
             .on_press(Message::ConfirmDeleteSettingsProfile),
-    )
-}
-
-fn restore_settings_prompt_overlay(account: &AccountProfile) -> Element<'_, Message> {
-    let name = &account.display_name;
-
-    confirmation_prompt_overlay(
-        format!("Restore {name}'s own settings?"),
-        format!(
-            "This puts back the settings {name} had before a preset was applied, replacing its \
-             current sensitivity, crosshair, keybind, minimap and gameplay settings."
-        ),
-        Message::CancelRestoreSettings,
-        button("Restore").on_press(Message::ConfirmRestoreSettings),
     )
 }
 
