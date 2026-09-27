@@ -38,7 +38,7 @@ use super::{
 };
 use crate::account::{
     AccountId, AccountPenalty, AccountPenaltyDuration, AccountPenaltyStatus, AccountProfile,
-    AuthSession, CompetitiveRank, LauncherSessionBackup, Shard,
+    AuthSession, CompetitiveRank, LauncherSessionBackup, Shard, ValorantRegion,
 };
 use crate::game_settings::{
     GameSettingsProfileMetadata, GameSettingsProfilePurpose, GameSettingsProfileSummary,
@@ -3117,6 +3117,7 @@ fn cache_account_api_context_leaves_the_account_alone_for_another_riot_account()
             game_name: None,
             tag_line: None,
             shard: Shard::Eu,
+            region: None,
         },
     );
 
@@ -3140,7 +3141,7 @@ fn api_identity_refuses_a_session_for_another_riot_account() {
     let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
     account.puuid = Some("puuid-a".to_string());
 
-    let error = api_identity(&account, Some(&player_info("puuid-b")), Shard::Na)
+    let error = api_identity(&account, Some(&player_info("puuid-b")), None, Shard::Na)
         .expect_err("another account");
 
     assert!(error.contains("puuid-b"), "{error}");
@@ -3152,7 +3153,7 @@ fn api_identity_uses_the_signed_in_riot_account() {
     account.puuid = Some("puuid-a".to_string());
 
     let identity =
-        api_identity(&account, Some(&player_info("puuid-a")), Shard::Eu).expect("identity");
+        api_identity(&account, Some(&player_info("puuid-a")), None, Shard::Eu).expect("identity");
 
     assert_eq!(identity.puuid, "puuid-a");
     assert_eq!(identity.game_name.as_deref(), Some("Player"));
@@ -3164,10 +3165,90 @@ fn api_identity_falls_back_to_the_saved_puuid_without_player_info() {
     let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
     account.puuid = Some("puuid-a".to_string());
 
-    let identity = api_identity(&account, None, Shard::Na).expect("identity");
+    let identity = api_identity(&account, None, None, Shard::Na).expect("identity");
 
     assert_eq!(identity.puuid, "puuid-a");
     assert_eq!(identity.game_name, None);
+}
+
+#[test]
+fn api_identity_takes_the_puuid_from_the_token_subject() {
+    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    account.puuid = Some("puuid-a".to_string());
+
+    let identity = api_identity(&account, None, Some("puuid-a"), Shard::Na).expect("identity");
+
+    assert_eq!(identity.puuid, "puuid-a");
+    assert_eq!(identity.game_name, None);
+}
+
+#[test]
+fn api_identity_refuses_a_token_for_another_riot_account() {
+    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    account.puuid = Some("puuid-a".to_string());
+
+    assert!(api_identity(&account, None, Some("puuid-b"), Shard::Na).is_err());
+}
+
+#[test]
+fn api_identity_without_a_token_subject_uses_the_saved_puuid() {
+    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    account.puuid = Some("puuid-a".to_string());
+
+    let identity = api_identity(&account, None, None, Shard::Na).expect("identity");
+
+    assert_eq!(identity.puuid, "puuid-a");
+}
+
+#[test]
+fn caching_an_api_context_saves_the_region() {
+    let mut state = StoredState::default();
+    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    account.puuid = Some("puuid-a".to_string());
+    let account_id = account.id;
+    state.push_account(account);
+
+    cache_account_api_context(
+        &mut state,
+        account_id,
+        AuthSession::new("access", None, None, "Bearer", Some(3600), 100),
+        None,
+        ApiIdentity {
+            puuid: "puuid-a".to_string(),
+            game_name: None,
+            tag_line: None,
+            shard: Shard::Na,
+            region: Some(ValorantRegion::Br),
+        },
+    )
+    .expect("cached");
+
+    assert_eq!(state.accounts[0].region, Some(ValorantRegion::Br));
+}
+
+#[test]
+fn refreshing_a_profile_forgets_its_saved_region() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    account.puuid = Some("puuid-a".to_string());
+    account.region = Some(ValorantRegion::Na);
+    let account_id = account.id;
+    app.state.push_account(account);
+
+    let _ = app.update(Message::ProfileIdentityLoaded(
+        account_id,
+        Ok(super::data::account_details::RefreshedProfileIdentity {
+            account_id,
+            session: AuthSession::new("access", None, None, "Bearer", Some(3600), 100),
+            launcher_session: None,
+            puuid: "puuid-a".to_string(),
+            game_name: "Main".to_string(),
+            tag_line: "NA1".to_string(),
+        }),
+    ));
+
+    assert_eq!(app.state.accounts[0].region, None);
 }
 
 #[test]
@@ -3210,6 +3291,7 @@ fn cache_account_api_context_updates_matching_account() {
             game_name: Some("Player".to_string()),
             tag_line: Some("NA1".to_string()),
             shard: Shard::Eu,
+            region: None,
         },
     )
     .expect("cache api context");
@@ -3248,6 +3330,7 @@ fn cache_account_api_context_updates_refreshed_launcher_session() {
             game_name: None,
             tag_line: None,
             shard: Shard::Na,
+            region: None,
         },
     )
     .expect("cache api context");
@@ -3270,6 +3353,7 @@ fn availability_refresh(
                 game_name: None,
                 tag_line: None,
                 shard: Shard::Na,
+                region: None,
             },
         }],
     })
@@ -3787,6 +3871,7 @@ fn a_loadout_whose_battle_pass_failed_says_so() {
                 game_name: None,
                 tag_line: None,
                 shard: Shard::Na,
+                region: None,
             },
         }),
     ));
@@ -3976,6 +4061,7 @@ fn cache_account_api_context_rejects_missing_account() {
             game_name: None,
             tag_line: None,
             shard: Shard::Na,
+            region: None,
         },
     )
     .expect_err("missing account");
@@ -4010,6 +4096,7 @@ fn settings_api_identity() -> ApiIdentity {
         game_name: None,
         tag_line: None,
         shard: Shard::Na,
+        region: None,
     }
 }
 
@@ -4977,6 +5064,7 @@ fn rank_result(account_id: AccountId, rank: Result<Option<CompetitiveRank>, Stri
                     game_name: None,
                     tag_line: None,
                     shard: Shard::Na,
+                    region: None,
                 },
             }],
             failures: vec![],

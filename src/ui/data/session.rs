@@ -8,6 +8,7 @@ pub(in crate::ui) struct ApiIdentity {
     pub(in crate::ui) game_name: Option<String>,
     pub(in crate::ui) tag_line: Option<String>,
     pub(in crate::ui) shard: Shard,
+    pub(in crate::ui) region: Option<ValorantRegion>,
 }
 
 pub(in crate::ui) async fn resolve_credentials(
@@ -17,7 +18,12 @@ pub(in crate::ui) async fn resolve_credentials(
 ) -> Result<ResolvedApiCredentials, String> {
     let api_session = active_api_session(api, account).await?;
     let mut session = api_session.session;
-    let player_info = api.player_info(&session.access_token).await.ok();
+    let token_subject = crate::riot::auth::jwt_subject(&session.access_token);
+    // The token already names its account; userinfo is only needed when it doesn't.
+    let player_info = match token_subject {
+        Some(_) => None,
+        None => api.player_info(&session.access_token).await.ok(),
+    };
 
     let entitlements_token = entitlement_token(api, &session).await?;
     if session
@@ -28,10 +34,19 @@ pub(in crate::ui) async fn resolve_credentials(
         session.entitlements_token = Some(entitlements_token.clone());
     }
 
-    let mut identity = api_identity(account, player_info.as_ref(), account.shard)?;
-    let region = resolve_session_region(api, &session, player_info.as_ref())
-        .await
-        .ok();
+    let mut identity = api_identity(
+        account,
+        player_info.as_ref(),
+        token_subject.as_deref(),
+        account.shard,
+    )?;
+    let region = match account.region {
+        Some(region) => Some(region),
+        None => resolve_session_region(api, &session, player_info.as_ref())
+            .await
+            .ok(),
+    };
+    identity.region = region;
     identity.shard = match region {
         Some(region) => region.shard(),
         None => resolve_session_shard(api, &session, player_info.as_ref(), account.shard).await,
@@ -57,10 +72,12 @@ pub(in crate::ui) async fn resolve_credentials(
 pub(in crate::ui) fn api_identity(
     account: &AccountProfile,
     player_info: Option<&PlayerInfoResponse>,
+    token_subject: Option<&str>,
     shard: Shard,
 ) -> Result<ApiIdentity, String> {
     let puuid = player_info
         .map(|info| info.sub.trim().to_string())
+        .or_else(|| token_subject.map(|subject| subject.trim().to_string()))
         .or_else(|| account.puuid.clone())
         .or_else(|| {
             account
@@ -79,6 +96,7 @@ pub(in crate::ui) fn api_identity(
         game_name: player_info.map(|info| info.acct.game_name.clone()),
         tag_line: player_info.map(|info| info.acct.tag_line.clone()),
         shard,
+        region: None,
     })
 }
 

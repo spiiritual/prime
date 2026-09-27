@@ -972,6 +972,9 @@ impl PrimeApp {
                             }
 
                             account.session = Some(identity.session);
+                            // Refresh re-reads who the account is; its region is looked up again
+                            // through Riot Geo on the next request, in case it moved.
+                            account.region = None;
                             if let Some(launcher_session) = identity.launcher_session {
                                 account.launcher_session = Some(launcher_session);
                             }

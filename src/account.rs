@@ -86,7 +86,8 @@ impl FromStr for Shard {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ValorantRegion {
     Na,
     Latam,
@@ -424,6 +425,8 @@ pub struct AccountProfile {
     pub penalty_status: AccountPenaltyStatus,
     pub account_level: Option<i64>,
     #[serde(default)]
+    pub region: Option<ValorantRegion>,
+    #[serde(default)]
     #[serde(skip_serializing)]
     // Compatibility: accepted for old in-memory/test profiles, but never written.
     pub last_refreshed_at_unix: Option<i64>,
@@ -462,6 +465,7 @@ impl AccountProfile {
             competitive_rank: None,
             penalty_status: AccountPenaltyStatus::default(),
             account_level: None,
+            region: None,
             last_refreshed_at_unix: None,
         })
     }
@@ -597,6 +601,30 @@ mod tests {
         let err = AccountProfile::new("  ", None, Shard::Na).unwrap_err();
 
         assert_eq!(err, AccountValidationError::EmptyDisplayName);
+    }
+
+    #[test]
+    fn a_profile_saved_without_a_region_still_loads() {
+        let mut value =
+            serde_json::to_value(AccountProfile::new("Main", None, Shard::Na).expect("account"))
+                .expect("serialize");
+        value.as_object_mut().expect("object").remove("region");
+
+        let profile: AccountProfile = serde_json::from_value(value).expect("loads");
+
+        assert_eq!(profile.region, None);
+    }
+
+    #[test]
+    fn a_saved_region_round_trips() {
+        let mut profile = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        profile.region = Some(ValorantRegion::Latam);
+
+        let json = serde_json::to_string(&profile).expect("serialize");
+        let loaded: AccountProfile = serde_json::from_str(&json).expect("loads");
+
+        assert_eq!(loaded.region, Some(ValorantRegion::Latam));
+        assert!(json.contains("\"region\":\"latam\""), "{json}");
     }
 
     #[test]

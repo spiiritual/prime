@@ -114,6 +114,9 @@ pub(super) fn cache_account_api_context(
         .map_err(|error| error.to_string())?;
 
     account.shard = identity.shard;
+    if identity.region.is_some() {
+        account.region = identity.region;
+    }
     account.session = Some(session);
     if let Some(launcher_session) = launcher_session {
         account.launcher_session = Some(launcher_session);

@@ -1,7 +1,6 @@
 use time::OffsetDateTime;
 
-use super::launch_flow::resolve_session_region;
-use super::session::{ApiIdentity, active_api_session, api_identity};
+use super::session::{ApiIdentity, resolve_credentials};
 use super::*;
 use crate::game_settings::{
     GameSettingsProfile, GameSettingsProfileMetadata, GameSettingsProfilePurpose,
@@ -251,25 +250,25 @@ async fn resolve_settings_context(
     api: &RiotApi,
     account: &AccountProfile,
 ) -> Result<SettingsContext, String> {
-    let api_session = active_api_session(api, account).await.map_err(|error| {
-        if error.contains("needs an imported Riot token or a captured launcher session") {
-            "Account needs a captured launcher session or imported Riot token".to_string()
-        } else {
-            error
-        }
-    })?;
-    let session = api_session.session;
-    let player_info = api.player_info(&session.access_token).await.ok();
-    let region = resolve_session_region(api, &session, player_info.as_ref())
+    // Player preferences don't send the client version. resolve_credentials checks that the
+    // session belongs to this account, since settings are read and written through it.
+    let resolved = resolve_credentials(api, account, String::new())
         .await
-        .map_err(|_| "Could not resolve Riot player preferences region".to_string())?;
-    // Settings are read and written through this session, so it must be this account's.
-    let identity = api_identity(account, player_info.as_ref(), region.shard())?;
+        .map_err(|error| {
+            if error.contains("needs an imported Riot token or a captured launcher session") {
+                "Account needs a captured launcher session or imported Riot token".to_string()
+            } else {
+                error
+            }
+        })?;
+    let region = resolved
+        .region
+        .ok_or_else(|| "Could not resolve Riot player preferences region".to_string())?;
 
     Ok(SettingsContext {
-        session,
-        launcher_session: api_session.launcher_session,
-        identity,
+        session: resolved.session,
+        launcher_session: resolved.launcher_session,
+        identity: resolved.identity,
         preference_base_url: player_preferences_base_url_for_region(region).to_string(),
     })
 }
