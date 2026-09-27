@@ -656,10 +656,14 @@ fn settings_change_prompt_overlay<'a>(
         }
         None => action.to_string(),
     };
+    let note = pending
+        .check_failed
+        .then(|| format!("Prime couldn't check whether {name} is in VALORANT."));
 
     Some(confirmation_prompt_overlay(
         title,
         details,
+        note,
         Message::CancelSettingsChange,
         button(text(action)).on_press(Message::ConfirmSettingsChange),
     ))
@@ -686,6 +690,7 @@ fn delete_settings_profile_prompt_overlay(
     confirmation_prompt_overlay(
         title,
         details.to_string(),
+        None,
         Message::CancelDeleteSettingsProfile,
         button(action)
             .style(iced::widget::button::danger)
@@ -755,15 +760,18 @@ fn preset_name_prompt_overlay<'a>(
     )
 }
 
+/// A confirmation dialog; `note` is a muted line under the details.
 fn confirmation_prompt_overlay<'a>(
     title: String,
     details: String,
+    note: Option<String>,
     cancel: Message,
     confirm: iced::widget::Button<'a, Message>,
 ) -> Element<'a, Message> {
     let prompt = container(
         column![
             column![text(title).size(20), text(details).size(14)]
+                .push(note.map(|note| text(note).size(14).color(screens::MUTED_TEXT)))
                 .spacing(8)
                 .width(Length::Fill),
             row![

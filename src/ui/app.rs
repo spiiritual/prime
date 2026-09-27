@@ -1465,7 +1465,7 @@ impl PrimeApp {
             Message::RequestRestoreSettings(account_id) => {
                 self.open_settings_change(SettingsChange::Restore(account_id))
             }
-            Message::SettingsPreflightChecked(account_id, check, valorant_running) => {
+            Message::SettingsPreflightChecked(request_id, account_id, check, valorant_running) => {
                 let mut task = Task::none();
                 if let Some((check, refreshed)) = check {
                     self.account_availability
@@ -1492,14 +1492,14 @@ impl PrimeApp {
                     .get(&account_id)
                     .cloned()
                     .unwrap_or_else(AccountAvailability::activity_check_failed);
-                if let Some(pending) = self
-                    .confirm_settings_change
-                    .as_mut()
-                    .filter(|pending| pending.change.account_id() == account_id)
-                {
+                if let Some(pending) = self.confirm_settings_change.as_mut().filter(|pending| {
+                    pending.request_id == request_id && pending.change.account_id() == account_id
+                }) {
                     pending.warning =
                         settings_change_warning(&display_name, &availability, valorant_running);
                     pending.checking = false;
+                    pending.check_failed =
+                        matches!(availability, AccountAvailability::Unknown { .. });
                 }
 
                 task
@@ -2344,10 +2344,14 @@ impl PrimeApp {
             settings_change_warning(&account.display_name, availability, false)
         });
         self.close_account_surfaces();
+        self.next_request_id += 1;
+        let request_id = self.next_request_id;
         self.confirm_settings_change = Some(PendingSettingsChange {
+            request_id,
             change,
             warning,
             checking: fresh.is_none(),
+            check_failed: false,
         });
 
         let account_id = account.id;
@@ -2361,7 +2365,7 @@ impl PrimeApp {
                 (check, valorant_is_running().await)
             },
             move |(check, valorant_running)| {
-                Message::SettingsPreflightChecked(account_id, check, valorant_running)
+                Message::SettingsPreflightChecked(request_id, account_id, check, valorant_running)
             },
         )
     }
@@ -3316,11 +3320,6 @@ pub(super) fn settings_change_warning(
     if let Some(reason) = availability.unavailable_reason() {
         warnings.push(format!(
             "{display_name} appears to be in VALORANT right now ({reason}), maybe on another PC."
-        ));
-    }
-    if matches!(availability, AccountAvailability::Unknown { .. }) {
-        warnings.push(format!(
-            "Prime couldn't check whether {display_name} is in VALORANT."
         ));
     }
     if valorant_running {

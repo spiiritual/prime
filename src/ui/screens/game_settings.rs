@@ -24,7 +24,7 @@ const CROSSHAIR_PREVIEW_SIZE: f32 = 88.0;
 /// Screen pixels per VALORANT crosshair unit, before shrinking a large crosshair to fit.
 const CROSSHAIR_PREVIEW_SCALE: f32 = 2.0;
 const SWATCH_SIZE: f32 = 12.0;
-const MUTED_TEXT: Color = Color::from_rgb(0.56, 0.59, 0.64);
+pub(in crate::ui) const MUTED_TEXT: Color = Color::from_rgb(0.56, 0.59, 0.64);
 const BRIGHT_TEXT: Color = Color::from_rgb(0.86, 0.88, 0.91);
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {

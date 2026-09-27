@@ -344,10 +344,14 @@ impl SettingsChange {
 /// A settings change waiting for confirmation, with a warning when the game could undo it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PendingSettingsChange {
+    /// Tells this dialog's game check apart from one started by an earlier dialog.
+    request_id: u64,
     change: SettingsChange,
     warning: Option<String>,
     /// Whether the game check is still running.
     checking: bool,
+    /// Whether the game check failed, so the dialog notes that Prime couldn't check.
+    check_failed: bool,
 }
 
 /// What the preset name dialog is for.
@@ -782,9 +786,10 @@ enum Message {
     },
     SavedSettingsApplied(Result<AppliedGameSettingsResult, String>),
     RequestRestoreSettings(AccountId),
-    /// The game check for an Apply or Restore (none when a recent result was used), with any
-    /// session it refreshed, and whether VALORANT was running.
+    /// The game check for the Apply or Restore dialog with this request ID (none when a recent
+    /// result was used), with any session it refreshed, and whether VALORANT was running.
     SettingsPreflightChecked(
+        u64,
         AccountId,
         Option<(AccountActivityCheck, Option<RefreshedApiContext>)>,
         bool,
