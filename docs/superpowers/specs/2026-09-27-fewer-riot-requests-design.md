@@ -18,7 +18,7 @@ limiting.
   2 requests.
 - The worst case (token expired, region unknown) sends one sign-in, not two.
 - No feature loses correctness: sessions are still checked against the account's PUUID before use,
-  and a stale region still corrects itself.
+  and refreshing an account corrects a stale saved region.
 
 ## Non-goals
 
@@ -83,9 +83,9 @@ Best case 7 requests; worst case 12 with two sign-ins.
 - Recovery from a stale region: the account's Refresh action forgets the saved region, and the
   next request looks it up again through Riot Geo. No automatic retry: region changes are rare
   (agreed in chat).
-- Activity requests read a 404 as "not in the game", so they can't detect a stale region. They rely
-  on the other features to correct it. The accepted risk: until then, a wrong region makes an
-  account look available, and the settings warning could be missed.
+- Until the account is refreshed, activity requests read a 404 as "not in the game", and other
+  regional requests return 404 errors. The accepted risk: a wrong region makes the account look
+  available, so the settings warning could be missed until the account is refreshed.
 - AGENTS.md's Riot API note says the region is saved per account after the first Riot Geo lookup,
   and that refreshing an account forgets it.
 
