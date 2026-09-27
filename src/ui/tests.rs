@@ -27,7 +27,7 @@ use super::data::loadout::{
     combine_loadout_sections, weapon_category, weapon_order,
 };
 use super::data::non_empty_path;
-use super::data::session::{ApiIdentity, api_identity};
+use super::data::session::{ApiIdentity, api_identity, needs_player_info};
 use super::data::shop::{
     StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay, StoreSummary, format_whole_number,
 };
@@ -3173,13 +3173,49 @@ fn api_identity_falls_back_to_the_saved_puuid_without_player_info() {
 
 #[test]
 fn api_identity_takes_the_puuid_from_the_token_subject() {
-    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
-    account.puuid = Some("puuid-a".to_string());
+    // No saved PUUID and no launcher backup, so only the subject can supply it.
+    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
 
     let identity = api_identity(&account, None, Some("puuid-a"), Shard::Na).expect("identity");
 
     assert_eq!(identity.puuid, "puuid-a");
     assert_eq!(identity.game_name, None);
+}
+
+#[test]
+fn userinfo_is_skipped_when_the_token_names_the_account_and_a_region_is_saved() {
+    let session = AuthSession::new("access", None, None, "Bearer", Some(3600), 100);
+
+    assert!(!needs_player_info(true, Some(ValorantRegion::Na), &session));
+}
+
+#[test]
+fn userinfo_is_skipped_when_riot_geo_can_find_the_region() {
+    let session = AuthSession::new(
+        "access",
+        Some("id-token".to_string()),
+        None,
+        "Bearer",
+        Some(3600),
+        100,
+    );
+
+    assert!(!needs_player_info(true, None, &session));
+}
+
+#[test]
+fn userinfo_finds_the_region_when_there_is_no_id_token() {
+    let session = AuthSession::new(
+        "access",
+        Some("  ".to_string()),
+        None,
+        "Bearer",
+        Some(3600),
+        100,
+    );
+
+    assert!(needs_player_info(true, None, &session));
+    assert!(needs_player_info(false, Some(ValorantRegion::Na), &session));
 }
 
 #[test]
@@ -4511,6 +4547,53 @@ fn an_old_result_opens_the_dialog_while_checking() {
     let pending = app.confirm_settings_change.as_ref().expect("still open");
     assert!(!pending.checking);
     assert!(pending_warning(&app).expect("warning").contains("in lobby"));
+    // The check only looks for the game, so it doesn't relabel the Accounts tab.
+    assert_eq!(app.account_availability.get(&account_id), None);
+}
+
+#[test]
+fn a_cached_unknown_result_opens_the_dialog_while_checking() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    with_fresh_availability(
+        &mut app,
+        account_id,
+        AccountAvailability::activity_check_failed(),
+    );
+
+    let task = app.update(Message::RequestRestoreSettings(account_id));
+
+    assert!(task.units() > 0);
+    assert!(app.confirm_settings_change.as_ref().expect("open").checking);
+}
+
+#[test]
+fn a_poll_over_90_seconds_old_opens_the_dialog_while_checking() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let in_match = AccountAvailability::Unavailable {
+        reason: "in match".to_string(),
+    };
+    with_fresh_availability(&mut app, account_id, in_match.clone());
+    app.account_availability_loaded_at =
+        Some(iced::time::Instant::now() - std::time::Duration::from_secs(91));
+
+    let _ = app.update(Message::RequestRestoreSettings(account_id));
+
+    let pending = app.confirm_settings_change.as_ref().expect("open");
+    assert!(pending.checking);
+    assert_eq!(pending.warning, None);
+
+    let _ = app.update(settings_checked(
+        app.next_request_id,
+        account_id,
+        AccountAvailability::Available,
+        false,
+    ));
+
+    // The warning comes from the check, and the Accounts tab keeps the poll's result.
+    assert_eq!(pending_warning(&app), None);
+    assert_eq!(app.account_availability.get(&account_id), Some(&in_match));
 }
 
 #[test]
@@ -4566,14 +4649,11 @@ fn a_check_for_another_account_changes_nothing() {
 
     assert!(app.confirm_settings_change.as_ref().expect("open").checking);
     assert_eq!(pending_warning(&app), None);
-    assert_eq!(
-        app.account_availability.get(&other_account),
-        Some(&AccountAvailability::Available)
-    );
+    assert_eq!(app.account_availability.get(&other_account), None);
 }
 
 #[test]
-fn a_check_from_an_earlier_request_only_caches() {
+fn a_check_from_an_earlier_request_changes_nothing() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
     let _ = app.update(Message::RequestRestoreSettings(account_id));
@@ -4595,14 +4675,12 @@ fn a_check_from_an_earlier_request_only_caches() {
     assert_eq!(app.confirm_settings_change, reopened);
     assert_eq!(
         app.account_availability.get(&account_id),
-        Some(&AccountAvailability::Unavailable {
-            reason: "in lobby".to_string(),
-        })
+        Some(&AccountAvailability::Available)
     );
 }
 
 #[test]
-fn confirming_while_checking_starts_the_change_and_the_late_result_is_only_cached() {
+fn confirming_while_checking_starts_the_change_and_ignores_the_late_result() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
     let _ = app.update(Message::RequestRestoreSettings(account_id));
@@ -4621,10 +4699,7 @@ fn confirming_while_checking_starts_the_change_and_the_late_result_is_only_cache
     ));
 
     assert_eq!(app.confirm_settings_change, None);
-    assert_eq!(
-        app.account_availability.get(&account_id),
-        Some(&AccountAvailability::Available)
-    );
+    assert_eq!(app.account_availability.get(&account_id), None);
 }
 
 #[test]

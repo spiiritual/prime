@@ -1467,16 +1467,17 @@ impl PrimeApp {
             }
             Message::SettingsPreflightChecked(request_id, account_id, check, valorant_running) => {
                 let mut task = Task::none();
-                if let Some((check, refreshed)) = check {
-                    self.account_availability
-                        .insert(check.account_id, check.availability);
+                // The check only looks for the game, so its result stays out of the Accounts
+                // tab's availability: it would show agent select as a lobby.
+                let checked = check.map(|(check, refreshed)| {
                     // Goes through the same PUUID check as the background poll's sessions.
                     if let Some(refreshed) = refreshed
                         && self.cache_refreshed_api_context(refreshed)
                     {
                         task = self.save_task();
                     }
-                }
+                    check.availability
+                });
 
                 let Some(display_name) = self
                     .state
@@ -1487,10 +1488,9 @@ impl PrimeApp {
                 else {
                     return task;
                 };
-                let availability = self
-                    .account_availability
-                    .get(&account_id)
-                    .cloned()
+                // Without a check, the dialog opened on the poll's fresh result.
+                let availability = checked
+                    .or_else(|| self.account_availability.get(&account_id).cloned())
                     .unwrap_or_else(AccountAvailability::activity_check_failed);
                 if let Some(pending) = self.confirm_settings_change.as_mut().filter(|pending| {
                     pending.request_id == request_id && pending.change.account_id() == account_id

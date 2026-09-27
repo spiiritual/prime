@@ -19,10 +19,10 @@ pub(in crate::ui) async fn resolve_credentials(
     let api_session = active_api_session(api, account).await?;
     let mut session = api_session.session;
     let token_subject = crate::riot::auth::jwt_subject(&session.access_token);
-    // The token already names its account; userinfo is only needed when it doesn't.
-    let player_info = match token_subject {
-        Some(_) => None,
-        None => api.player_info(&session.access_token).await.ok(),
+    let player_info = if needs_player_info(token_subject.is_some(), account.region, &session) {
+        api.player_info(&session.access_token).await.ok()
+    } else {
+        None
     };
 
     let entitlements_token = entitlement_token(api, &session).await?;
@@ -40,13 +40,16 @@ pub(in crate::ui) async fn resolve_credentials(
         token_subject.as_deref(),
         account.shard,
     )?;
-    let region = match account.region {
-        Some(region) => Some(region),
+    let looked_up_region = match account.region {
+        Some(_) => None,
         None => resolve_session_region(api, &session, player_info.as_ref())
             .await
             .ok(),
     };
-    identity.region = region;
+    let region = account.region.or(looked_up_region);
+    // Only a region looked up now is saved, so a request that started before Refresh cleared
+    // the saved region can't write the old one back.
+    identity.region = looked_up_region;
     identity.shard = match region {
         Some(region) => region.shard(),
         None => resolve_session_shard(api, &session, player_info.as_ref(), account.shard).await,
@@ -65,6 +68,20 @@ pub(in crate::ui) async fn resolve_credentials(
         launcher_session: api_session.launcher_session,
         identity,
     })
+}
+
+/// Whether to ask userinfo: for the PUUID when the token doesn't name its account, or for the
+/// region when none is saved and Riot Geo can't be asked because there is no ID token.
+pub(in crate::ui) fn needs_player_info(
+    token_has_subject: bool,
+    saved_region: Option<ValorantRegion>,
+    session: &AuthSession,
+) -> bool {
+    let has_id_token = session
+        .id_token
+        .as_ref()
+        .is_some_and(|token| !token.trim().is_empty());
+    !token_has_subject || (saved_region.is_none() && !has_id_token)
 }
 
 /// The Riot account an API session acts as. Fails when the session belongs to a different Riot

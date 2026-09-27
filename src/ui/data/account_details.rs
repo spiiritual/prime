@@ -473,7 +473,11 @@ async fn check_account_availability(
                 }
                 None => AccountAvailability::activity_check_failed(),
             };
-            if account.session.as_ref() != Some(&resolved.session) {
+            let new_region = resolved
+                .identity
+                .region
+                .is_some_and(|region| account.region != Some(region));
+            if new_region || account.session.as_ref() != Some(&resolved.session) {
                 refreshed = Some(RefreshedApiContext {
                     account_id,
                     session: resolved.session,
