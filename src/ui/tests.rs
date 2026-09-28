@@ -32,9 +32,10 @@ use super::data::shop::{
     StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay, StoreSummary, format_whole_number,
 };
 use super::{
-    Message, PendingSettingsChange, PresetNamePrompt, PresetNameTarget, PrimeApp, SettingsChange,
-    countdown_timer_active, loading_status_active, masked_account_export_payload,
-    status_bar_visible, status_message_is_error, status_spinner_active, status_visible_at,
+    Message, PendingSettingsChange, PendingSettingsCheck, PresetNamePrompt, PresetNameTarget,
+    PrimeApp, SettingsChange, countdown_timer_active, loading_status_active,
+    masked_account_export_payload, status_bar_visible, status_message_is_error,
+    status_spinner_active, status_visible_at,
 };
 use crate::account::{
     AccountId, AccountPenalty, AccountPenaltyDuration, AccountPenaltyStatus, AccountProfile,
@@ -4191,6 +4192,7 @@ fn settings_cloning_does_nothing_while_disabled() {
     assert!(tasks.iter().all(|task| task.units() == 0));
     assert_eq!(app.settings_saving_account, None);
     assert_eq!(app.preset_name_prompt, None);
+    assert_eq!(app.settings_check, None);
     assert_eq!(app.confirm_settings_change, None);
     assert_eq!(app.confirm_delete_settings_profile, None);
 }
@@ -4429,6 +4431,12 @@ fn escape_closes_the_preset_dialogs() {
     assert_eq!(app.preset_name_prompt, None);
 
     let _ = app.update(Message::RequestRestoreSettings(account_id));
+    let _ = app.update(settings_checked(
+        app.next_request_id,
+        account_id,
+        AccountAvailability::Available,
+        false,
+    ));
     assert!(app.confirm_settings_change.is_some());
     let _ = app.update(Message::EscapePressed);
     assert_eq!(app.confirm_settings_change, None);
@@ -4469,6 +4477,16 @@ fn pending_warning(app: &PrimeApp) -> Option<&str> {
         .and_then(|pending| pending.warning.as_deref())
 }
 
+/// Delivers the local-only result sent when the poll's result was fresh, so no Riot check ran.
+fn settings_checked_locally(app: &mut PrimeApp, account_id: AccountId, valorant_running: bool) {
+    let _ = app.update(Message::SettingsPreflightChecked(
+        app.next_request_id,
+        account_id,
+        None,
+        valorant_running,
+    ));
+}
+
 #[test]
 fn a_fresh_result_opens_the_dialog_without_checking() {
     let dir = tempdir().expect("temp dir");
@@ -4477,22 +4495,34 @@ fn a_fresh_result_opens_the_dialog_without_checking() {
         settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
     app.settings_profiles = vec![preset.clone()];
     with_fresh_availability(&mut app, account_id, AccountAvailability::Available);
+    let change = SettingsChange::Apply {
+        account_id,
+        profile_id: preset.id.clone(),
+    };
 
     let _ = app.update(Message::RequestApplyPreset {
-        profile_id: preset.id.clone(),
+        profile_id: preset.id,
         account_id,
     });
 
+    // Only the local VALORANT check runs; the dialog waits for it.
+    assert_eq!(app.confirm_settings_change, None);
+    assert_eq!(
+        app.settings_check,
+        Some(PendingSettingsCheck {
+            request_id: app.next_request_id,
+            change: change.clone(),
+        })
+    );
+
+    settings_checked_locally(&mut app, account_id, false);
+
+    assert_eq!(app.settings_check, None);
     assert_eq!(
         app.confirm_settings_change,
         Some(PendingSettingsChange {
-            request_id: app.next_request_id,
-            change: SettingsChange::Apply {
-                account_id,
-                profile_id: preset.id,
-            },
+            change,
             warning: None,
-            checking: false,
             check_failed: false,
         })
     );
@@ -4511,29 +4541,30 @@ fn a_fresh_result_in_a_match_warns_at_once() {
     );
 
     let _ = app.update(Message::RequestRestoreSettings(account_id));
+    settings_checked_locally(&mut app, account_id, false);
 
     let warning = pending_warning(&app).expect("warning");
     assert!(warning.contains("in match"), "{warning}");
 }
 
 #[test]
-fn an_old_result_opens_the_dialog_while_checking() {
+fn an_old_result_checks_first_with_a_loading_state() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
 
     let task = app.update(Message::RequestRestoreSettings(account_id));
 
     assert!(task.units() > 0);
+    assert_eq!(app.confirm_settings_change, None);
     assert_eq!(
-        app.confirm_settings_change,
-        Some(PendingSettingsChange {
+        app.settings_check,
+        Some(PendingSettingsCheck {
             request_id: app.next_request_id,
             change: SettingsChange::Restore(account_id),
-            warning: None,
-            checking: true,
-            check_failed: false,
         })
     );
+    assert!(app.settings_work_in_progress());
+    assert!(super::loading_indicator_active(&app));
 
     let _ = app.update(settings_checked(
         app.next_request_id,
@@ -4544,15 +4575,36 @@ fn an_old_result_opens_the_dialog_while_checking() {
         false,
     ));
 
-    let pending = app.confirm_settings_change.as_ref().expect("still open");
-    assert!(!pending.checking);
+    assert_eq!(app.settings_check, None);
+    assert!(!app.settings_work_in_progress());
+    let pending = app.confirm_settings_change.as_ref().expect("open");
+    assert!(!pending.check_failed);
     assert!(pending_warning(&app).expect("warning").contains("in lobby"));
     // The check only looks for the game, so it doesn't relabel the Accounts tab.
     assert_eq!(app.account_availability.get(&account_id), None);
 }
 
 #[test]
-fn a_cached_unknown_result_opens_the_dialog_while_checking() {
+fn a_check_finding_a_match_warns() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let _ = app.update(Message::RequestRestoreSettings(account_id));
+
+    let _ = app.update(settings_checked(
+        app.next_request_id,
+        account_id,
+        AccountAvailability::Unavailable {
+            reason: "in match".to_string(),
+        },
+        false,
+    ));
+
+    let warning = pending_warning(&app).expect("warning");
+    assert!(warning.contains("in match"), "{warning}");
+}
+
+#[test]
+fn a_cached_unknown_result_starts_a_real_check() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
     with_fresh_availability(
@@ -4564,11 +4616,24 @@ fn a_cached_unknown_result_opens_the_dialog_while_checking() {
     let task = app.update(Message::RequestRestoreSettings(account_id));
 
     assert!(task.units() > 0);
-    assert!(app.confirm_settings_change.as_ref().expect("open").checking);
+    assert_eq!(app.confirm_settings_change, None);
+    assert!(app.settings_check.is_some());
+
+    let _ = app.update(settings_checked(
+        app.next_request_id,
+        account_id,
+        AccountAvailability::Available,
+        false,
+    ));
+
+    // The check's own result wins over the cached failure.
+    let pending = app.confirm_settings_change.as_ref().expect("open");
+    assert!(!pending.check_failed);
+    assert_eq!(pending.warning, None);
 }
 
 #[test]
-fn a_poll_over_90_seconds_old_opens_the_dialog_while_checking() {
+fn a_poll_over_90_seconds_old_starts_a_real_check() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
     let in_match = AccountAvailability::Unavailable {
@@ -4578,11 +4643,11 @@ fn a_poll_over_90_seconds_old_opens_the_dialog_while_checking() {
     app.account_availability_loaded_at =
         Some(iced::time::Instant::now() - std::time::Duration::from_secs(91));
 
-    let _ = app.update(Message::RequestRestoreSettings(account_id));
+    let task = app.update(Message::RequestRestoreSettings(account_id));
 
-    let pending = app.confirm_settings_change.as_ref().expect("open");
-    assert!(pending.checking);
-    assert_eq!(pending.warning, None);
+    assert!(task.units() > 0);
+    assert_eq!(app.confirm_settings_change, None);
+    assert!(app.settings_check.is_some());
 
     let _ = app.update(settings_checked(
         app.next_request_id,
@@ -4592,12 +4657,13 @@ fn a_poll_over_90_seconds_old_opens_the_dialog_while_checking() {
     ));
 
     // The warning comes from the check, and the Accounts tab keeps the poll's result.
+    assert!(app.confirm_settings_change.is_some());
     assert_eq!(pending_warning(&app), None);
     assert_eq!(app.account_availability.get(&account_id), Some(&in_match));
 }
 
 #[test]
-fn a_failed_check_leaves_a_note_and_stops_checking() {
+fn a_failed_check_opens_the_dialog_with_a_note() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
     let _ = app.update(Message::RequestRestoreSettings(account_id));
@@ -4610,7 +4676,6 @@ fn a_failed_check_leaves_a_note_and_stops_checking() {
     ));
 
     let pending = app.confirm_settings_change.as_ref().expect("open");
-    assert!(!pending.checking);
     assert!(pending.check_failed);
     assert_eq!(pending.warning, None);
 }
@@ -4622,12 +4687,7 @@ fn applying_warns_when_valorant_is_running() {
     with_fresh_availability(&mut app, account_id, AccountAvailability::Available);
     let _ = app.update(Message::RequestRestoreSettings(account_id));
 
-    let _ = app.update(Message::SettingsPreflightChecked(
-        app.next_request_id,
-        account_id,
-        None,
-        true,
-    ));
+    settings_checked_locally(&mut app, account_id, true);
 
     let warning = pending_warning(&app).expect("warning");
     assert!(warning.contains("VALORANT is running"), "{warning}");
@@ -4638,6 +4698,7 @@ fn a_check_for_another_account_changes_nothing() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
     let _ = app.update(Message::RequestRestoreSettings(account_id));
+    let checking = app.settings_check.clone();
     let other_account = AccountId::new();
 
     let _ = app.update(settings_checked(
@@ -4647,8 +4708,8 @@ fn a_check_for_another_account_changes_nothing() {
         true,
     ));
 
-    assert!(app.confirm_settings_change.as_ref().expect("open").checking);
-    assert_eq!(pending_warning(&app), None);
+    assert_eq!(app.confirm_settings_change, None);
+    assert_eq!(app.settings_check, checking);
     assert_eq!(app.account_availability.get(&other_account), None);
 }
 
@@ -4658,10 +4719,10 @@ fn a_check_from_an_earlier_request_changes_nothing() {
     let (mut app, account_id) = settings_app(dir.path());
     let _ = app.update(Message::RequestRestoreSettings(account_id));
     let first_request = app.next_request_id;
-    let _ = app.update(Message::CancelSettingsChange);
+    let _ = app.update(Message::EscapePressed);
     with_fresh_availability(&mut app, account_id, AccountAvailability::Available);
     let _ = app.update(Message::RequestRestoreSettings(account_id));
-    let reopened = app.confirm_settings_change.clone();
+    let checking = app.settings_check.clone();
 
     let _ = app.update(settings_checked(
         first_request,
@@ -4672,45 +4733,17 @@ fn a_check_from_an_earlier_request_changes_nothing() {
         true,
     ));
 
-    assert_eq!(app.confirm_settings_change, reopened);
+    assert_eq!(app.confirm_settings_change, None);
+    assert_eq!(app.settings_check, checking);
     assert_eq!(
         app.account_availability.get(&account_id),
         Some(&AccountAvailability::Available)
     );
 }
 
-#[test]
-fn confirming_while_checking_starts_the_change_and_ignores_the_late_result() {
-    let dir = tempdir().expect("temp dir");
-    let (mut app, account_id) = settings_app(dir.path());
-    let _ = app.update(Message::RequestRestoreSettings(account_id));
-    let request_id = app.next_request_id;
-
-    let task = app.update(Message::ConfirmSettingsChange);
-
-    assert!(task.units() > 0);
-    assert_eq!(app.settings_applying_account, Some(account_id));
-
-    let _ = app.update(settings_checked(
+fn check_with_session(request_id: u64, account_id: AccountId, session: &AuthSession) -> Message {
+    Message::SettingsPreflightChecked(
         request_id,
-        account_id,
-        AccountAvailability::Available,
-        false,
-    ));
-
-    assert_eq!(app.confirm_settings_change, None);
-    assert_eq!(app.account_availability.get(&account_id), None);
-}
-
-#[test]
-fn the_checks_refreshed_session_is_saved() {
-    let dir = tempdir().expect("temp dir");
-    let (mut app, account_id) = settings_app(dir.path());
-    let _ = app.update(Message::RequestRestoreSettings(account_id));
-    let session = AuthSession::new("fresh", None, None, "Bearer", Some(3600), 100);
-
-    let task = app.update(Message::SettingsPreflightChecked(
-        app.next_request_id,
         account_id,
         Some((
             super::data::account_details::AccountActivityCheck {
@@ -4725,16 +4758,96 @@ fn the_checks_refreshed_session_is_saved() {
             }),
         )),
         false,
-    ));
+    )
+}
 
-    assert!(task.units() > 0, "saves accounts.json");
-    let account = app
-        .state
+fn saved_session(app: &PrimeApp, account_id: AccountId) -> Option<&AuthSession> {
+    app.state
         .accounts
         .iter()
         .find(|account| account.id == account_id)
-        .expect("account");
-    assert_eq!(account.session.as_ref(), Some(&session));
+        .and_then(|account| account.session.as_ref())
+}
+
+#[test]
+fn escape_while_checking_cancels_but_keeps_the_checks_session() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let _ = app.update(Message::RequestRestoreSettings(account_id));
+    let request_id = app.next_request_id;
+
+    let _ = app.update(Message::EscapePressed);
+
+    assert_eq!(app.settings_check, None);
+    assert!(!app.settings_work_in_progress());
+
+    let session = AuthSession::new("fresh", None, None, "Bearer", Some(3600), 100);
+    let task = app.update(check_with_session(request_id, account_id, &session));
+
+    assert!(task.units() > 0, "saves accounts.json");
+    assert_eq!(saved_session(&app, account_id), Some(&session));
+    assert_eq!(app.confirm_settings_change, None);
+}
+
+#[test]
+fn the_checks_refreshed_session_is_saved_before_the_dialog_opens() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let _ = app.update(Message::RequestRestoreSettings(account_id));
+    let session = AuthSession::new("fresh", None, None, "Bearer", Some(3600), 100);
+
+    let task = app.update(check_with_session(
+        app.next_request_id,
+        account_id,
+        &session,
+    ));
+
+    assert!(task.units() > 0, "saves accounts.json");
+    assert_eq!(saved_session(&app, account_id), Some(&session));
+    assert!(app.confirm_settings_change.is_some());
+}
+
+#[test]
+fn other_settings_work_waits_for_the_check() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let preset =
+        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
+    app.settings_profiles = vec![preset.clone()];
+    let _ = app.update(Message::RequestRestoreSettings(account_id));
+    let checking = app.settings_check.clone();
+
+    let tasks = [
+        app.update(Message::RequestSavePreset(account_id)),
+        app.update(Message::RequestApplyPreset {
+            profile_id: preset.id,
+            account_id,
+        }),
+        app.update(Message::ConfirmSettingsChange),
+    ];
+
+    assert!(tasks.iter().all(|task| task.units() == 0));
+    assert_eq!(app.preset_name_prompt, None);
+    assert_eq!(app.settings_check, checking);
+    assert_eq!(app.settings_applying_account, None);
+}
+
+#[test]
+fn a_check_for_a_deleted_account_opens_nothing() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    let _ = app.update(Message::RequestRestoreSettings(account_id));
+    app.state.remove_account(account_id);
+
+    let _ = app.update(settings_checked(
+        app.next_request_id,
+        account_id,
+        AccountAvailability::Available,
+        false,
+    ));
+
+    assert_eq!(app.settings_check, None);
+    assert_eq!(app.confirm_settings_change, None);
 }
 
 #[test]
@@ -4748,6 +4861,12 @@ fn confirming_apply_starts_it() {
         profile_id: preset.id,
         account_id,
     });
+    let _ = app.update(settings_checked(
+        app.next_request_id,
+        account_id,
+        AccountAvailability::Available,
+        false,
+    ));
 
     let task = app.update(Message::ConfirmSettingsChange);
 
@@ -4805,15 +4924,19 @@ fn restoring_asks_first_then_starts() {
     let (mut app, account_id) = settings_app(dir.path());
 
     let task = app.update(Message::RequestRestoreSettings(account_id));
-
     assert!(task.units() > 0);
+    let _ = app.update(settings_checked(
+        app.next_request_id,
+        account_id,
+        AccountAvailability::Available,
+        false,
+    ));
+
     assert_eq!(
         app.confirm_settings_change,
         Some(PendingSettingsChange {
-            request_id: app.next_request_id,
             change: SettingsChange::Restore(account_id),
             warning: None,
-            checking: true,
             check_failed: false,
         })
     );
@@ -4849,6 +4972,7 @@ fn restore_waits_for_other_settings_work() {
     let task = app.update(Message::RequestRestoreSettings(account_id));
 
     assert_eq!(task.units(), 0);
+    assert_eq!(app.settings_check, None);
     assert_eq!(app.confirm_settings_change, None);
 }
 

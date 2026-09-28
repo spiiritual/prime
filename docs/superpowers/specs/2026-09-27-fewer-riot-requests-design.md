@@ -13,7 +13,8 @@ limiting.
 
 ## Goals
 
-- The Apply and Restore confirmation dialog opens immediately, every time.
+- The Apply and Restore confirmation dialog opens immediately when a fresh background result
+  exists, and otherwise after a visible check of about a second.
 - A typical Apply (Accounts tab open, saved token valid) sends only the settings read and save:
   2 requests.
 - The worst case (token expired, region unknown) sends one sign-in, not two.
@@ -52,16 +53,22 @@ Best case 7 requests; worst case 12 with two sign-ins.
 - A result counts only if the background poll's last run (`account_availability_loaded_at`) is
   recent and the result isn't "couldn't check".
 - A result is fresh when it is under 90 seconds old (the poll runs every 60 seconds).
-- Requesting Apply or Restore opens the confirmation dialog at once, no longer after the check:
-  - VALORANT running on this PC is checked locally every time (no request). The dialog shows its
-    warning as soon as the local check returns.
-  - Fresh result: the dialog's warning comes from it and no Riot request is sent.
-  - Stale or missing result: the dialog shows "Checking whether <account> is in VALORANT..." while
-    the check runs, then shows the warning or drops the line. A result for another account or an
-    earlier request is ignored.
-  - Confirm works at any time; the warning never blocks it.
-- `settings_preflight` goes away; the pending change carries `checking`, `warning`, `check_failed`
-  and the request ID of its check.
+- Requesting Apply or Restore checks first, then opens the confirmation dialog with its warning
+  complete:
+  - While the checks run, the control that was pressed shows a loading state ("Checking
+    <account>..." on the preset card for Apply, on the account's Restore row for Restore), and other
+    settings actions wait. Escape, or anything else that closes the account dialogs, cancels it;
+    a late result then opens nothing.
+  - VALORANT running on this PC is checked locally every time (no request).
+  - Fresh result: the dialog's warning comes from it and no Riot request is sent, so the dialog
+    opens near-instantly, after the local check.
+  - Stale or missing result: the Riot check runs, about a second, and the dialog opens with its
+    result. A result for another account or an earlier request opens nothing.
+  - The check's refreshed session is saved before the dialog opens, so the Apply or Restore
+    reuses it. This avoids two sign-ins with the same saved login at once, which a Confirm during
+    the check would otherwise start.
+- `settings_preflight` goes away. `settings_check` holds the change and the request ID of its
+  check; the pending change in the dialog carries `warning` and `check_failed`.
 
 ### 2. Keep sessions the check obtains
 
@@ -133,10 +140,12 @@ Background poll per account per minute: 4 to 7 requests before, 3 after in most 
 
 Tests follow `src/ui/tests.rs` conventions: assert on state and `task.units()`, never run tasks.
 
-- Fresh result: requesting Apply opens the dialog with the stored warning and starts no Riot check.
-- Stale result: the dialog opens at once in the checking state; the check result fills the warning;
-  a result for another account is ignored; confirming while checking starts the Apply.
-- The check's refreshed session is saved to the account.
+- Fresh result: requesting Apply starts no Riot check; the dialog opens with the stored warning
+  after the local check.
+- Stale result: requesting shows the loading state and no dialog; the check result opens the
+  dialog with its warning; a result for another account or an earlier request opens nothing;
+  other settings work waits; Escape cancels the check.
+- The check's refreshed session is saved to the account, even after the check was canceled.
 - Identity from the token's subject: a matching subject is accepted without `userinfo`; a
   mismatched subject is refused.
 - Region: saved after the first lookup; a saved region is reused; `accounts.json` without the field

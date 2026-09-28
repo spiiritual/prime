@@ -36,8 +36,9 @@ use super::data::shop::fetch_storefront;
 use super::data::{cache_account_api_context, typed_riot_client_path};
 use super::{
     AccountsTab, AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, LoginCapture,
-    LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange, PresetNamePrompt,
-    PresetNameTarget, PrimeApp, SettingsChange, Tab, TabScrollOffsets, ViewRequest,
+    LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange,
+    PendingSettingsCheck, PresetNamePrompt, PresetNameTarget, PrimeApp, SettingsChange, Tab,
+    TabScrollOffsets, ViewRequest,
 };
 
 impl PrimeApp {
@@ -98,6 +99,7 @@ impl PrimeApp {
                 preset_name_prompt: None,
                 settings_saving_account: None,
                 settings_applying_account: None,
+                settings_check: None,
                 confirm_settings_change: None,
                 confirm_delete_settings_profile: None,
                 launcher_capture_in_progress: false,
@@ -195,6 +197,8 @@ impl PrimeApp {
             Message::DismissAppUpdate
         } else if self.account_switcher_open || self.open_account_menu.is_some() {
             Message::DismissPopovers
+        } else if self.settings_check.is_some() {
+            Message::CancelSettingsChange
         } else {
             return None;
         };
@@ -1479,6 +1483,12 @@ impl PrimeApp {
                     check.availability
                 });
 
+                // A canceled or superseded check opens nothing.
+                let Some(pending) = self.settings_check.take_if(|pending| {
+                    pending.request_id == request_id && pending.change.account_id() == account_id
+                }) else {
+                    return task;
+                };
                 let Some(display_name) = self
                     .state
                     .accounts
@@ -1488,23 +1498,24 @@ impl PrimeApp {
                 else {
                     return task;
                 };
-                // Without a check, the dialog opened on the poll's fresh result.
+                // Without a check, the poll's result was fresh.
                 let availability = checked
                     .or_else(|| self.account_availability.get(&account_id).cloned())
                     .unwrap_or_else(AccountAvailability::activity_check_failed);
-                if let Some(pending) = self.confirm_settings_change.as_mut().filter(|pending| {
-                    pending.request_id == request_id && pending.change.account_id() == account_id
-                }) {
-                    pending.warning =
-                        settings_change_warning(&display_name, &availability, valorant_running);
-                    pending.checking = false;
-                    pending.check_failed =
-                        matches!(availability, AccountAvailability::Unknown { .. });
-                }
+                self.confirm_settings_change = Some(PendingSettingsChange {
+                    change: pending.change,
+                    warning: settings_change_warning(
+                        &display_name,
+                        &availability,
+                        valorant_running,
+                    ),
+                    check_failed: matches!(availability, AccountAvailability::Unknown { .. }),
+                });
 
                 task
             }
             Message::CancelSettingsChange => {
+                self.settings_check = None;
                 self.confirm_settings_change = None;
                 self.set_status("Canceled settings change");
                 Task::none()
@@ -2306,20 +2317,25 @@ impl PrimeApp {
         self.exported_account = None;
         self.confirm_delete_account = None;
         self.confirm_recapture_account = None;
+        self.settings_check = None;
         self.confirm_settings_change = None;
         self.confirm_delete_settings_profile = None;
         self.capture_prompt_valorant_running = false;
     }
 
-    /// Whether a preset is being saved, or a preset applied or original settings restored.
+    /// Whether a preset is being saved, a preset applied or original settings restored, or the
+    /// check before one of those runs.
     pub(super) fn settings_work_in_progress(&self) -> bool {
-        self.settings_saving_account.is_some() || self.settings_applying_account.is_some()
+        self.settings_saving_account.is_some()
+            || self.settings_applying_account.is_some()
+            || self.settings_check.is_some()
     }
 
-    /// Opens the confirmation for an Apply or Restore straight away. A background activity
-    /// result under 90 seconds old supplies the warning; otherwise the dialog shows that it's
-    /// checking while `check_settings_activity` runs. Whether VALORANT is running on this PC is
-    /// checked every time, locally.
+    /// Starts the checks behind an Apply or Restore; its confirmation opens when they finish, with
+    /// the pressed control showing a loading state meanwhile. A background activity result under
+    /// 90 seconds old skips the Riot check; otherwise `check_settings_activity` runs, and its
+    /// refreshed session is saved before the dialog can start the change, so the two never sign
+    /// in at once. Whether VALORANT is running on this PC is checked every time, locally.
     fn open_settings_change(&mut self, change: SettingsChange) -> Task<Message> {
         if !self.settings_cloning
             || self.settings_work_in_progress()
@@ -2339,28 +2355,20 @@ impl PrimeApp {
             return Task::none();
         };
 
-        let fresh = self.fresh_availability(account.id).cloned();
-        let warning = fresh.as_ref().and_then(|availability| {
-            settings_change_warning(&account.display_name, availability, false)
-        });
+        let fresh = self.fresh_availability(account.id).is_some();
         self.close_account_surfaces();
         self.next_request_id += 1;
         let request_id = self.next_request_id;
-        self.confirm_settings_change = Some(PendingSettingsChange {
-            request_id,
-            change,
-            warning,
-            checking: fresh.is_none(),
-            check_failed: false,
-        });
+        self.settings_check = Some(PendingSettingsCheck { request_id, change });
 
         let account_id = account.id;
         let client_version = self.client_version_input.clone();
         Task::perform(
             async move {
-                let check = match fresh {
-                    Some(_) => None,
-                    None => Some(check_settings_activity(account, client_version).await),
+                let check = if fresh {
+                    None
+                } else {
+                    Some(check_settings_activity(account, client_version).await)
                 };
                 (check, valorant_is_running().await)
             },

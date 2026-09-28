@@ -646,9 +646,6 @@ fn settings_change_prompt_overlay<'a>(
         ),
     };
 
-    if pending.checking {
-        details.push_str(&format!("\n\nChecking whether {name} is in VALORANT…"));
-    }
     let action = match &pending.warning {
         Some(warning) => {
             details.push_str(&format!("\n\n{warning}"));

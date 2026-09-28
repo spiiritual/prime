@@ -121,6 +121,7 @@ fn loading_indicator_active(app: &PrimeApp) -> bool {
         || app.launching_account.is_some()
         || app.settings_saving_account.is_some()
         || app.settings_applying_account.is_some()
+        || app.settings_check.is_some()
         || app.app_update_status.is_busy()
         || image_viewer_enabled()
             && app
@@ -302,6 +303,8 @@ struct PrimeApp {
     preset_name_prompt: Option<PresetNamePrompt>,
     settings_saving_account: Option<AccountId>,
     settings_applying_account: Option<AccountId>,
+    /// The Apply or Restore whose game check runs before its dialog opens.
+    settings_check: Option<PendingSettingsCheck>,
     confirm_settings_change: Option<PendingSettingsChange>,
     confirm_delete_settings_profile: Option<String>,
     launcher_capture_in_progress: bool,
@@ -341,15 +344,19 @@ impl SettingsChange {
     }
 }
 
+/// A settings change whose game check is running; its dialog opens when the check is done.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PendingSettingsCheck {
+    /// Tells this check's result apart from one started by an earlier, canceled request.
+    request_id: u64,
+    change: SettingsChange,
+}
+
 /// A settings change waiting for confirmation, with a warning when the game could undo it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PendingSettingsChange {
-    /// Tells this dialog's game check apart from one started by an earlier dialog.
-    request_id: u64,
     change: SettingsChange,
     warning: Option<String>,
-    /// Whether the game check is still running.
-    checking: bool,
     /// Whether the game check failed, so the dialog notes that Prime couldn't check.
     check_failed: bool,
 }

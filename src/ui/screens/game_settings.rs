@@ -13,7 +13,7 @@ use crate::game_settings::{
     GameSettingsProfileSummary, Rgba, Setting,
 };
 use crate::ui::components::compact_loading_indicator;
-use crate::ui::{Message, PrimeApp};
+use crate::ui::{Message, PrimeApp, SettingsChange};
 
 use super::accounts::last_refreshed_label;
 
@@ -116,7 +116,19 @@ fn presets_section(app: &PrimeApp) -> Element<'_, Message> {
 
     for profile in saved {
         let expanded = app.expanded_presets.contains(&profile.id);
-        presets = presets.push(preset_card(profile, &accounts, busy, expanded));
+        let checking = app
+            .settings_check
+            .as_ref()
+            .and_then(|check| match &check.change {
+                SettingsChange::Apply {
+                    account_id,
+                    profile_id,
+                } if *profile_id == profile.id => {
+                    Some(progress_label(app, *account_id, "Checking"))
+                }
+                _ => None,
+            });
+        presets = presets.push(preset_card(profile, &accounts, busy, expanded, checking));
     }
 
     container(presets)
@@ -131,6 +143,7 @@ fn preset_card<'a>(
     accounts: &[AccountChoice],
     busy: bool,
     expanded: bool,
+    checking: Option<Element<'static, Message>>,
 ) -> Element<'a, Message> {
     let profile_id = profile.id.clone();
     let apply_to = pick_list(accounts.to_vec(), None::<AccountChoice>, move |choice| {
@@ -142,7 +155,7 @@ fn preset_card<'a>(
     .placeholder("Apply to...")
     .width(170);
 
-    let header = row![
+    let mut header = row![
         column![
             text(&profile.name).size(17),
             text(format!(
@@ -154,17 +167,23 @@ fn preset_card<'a>(
             .color(MUTED_TEXT)
         ]
         .spacing(2)
-        .width(Length::Fill),
-        apply_to,
-        button("Rename").on_press(Message::RequestRenamePreset(profile.id.clone())),
-        button("Delete")
-            .style(iced::widget::button::danger)
-            .on_press_maybe(
-                (!busy).then(|| Message::RequestDeleteSettingsProfile(profile.id.clone()))
-            )
+        .width(Length::Fill)
     ]
     .spacing(10)
     .align_y(alignment::Vertical::Center);
+    if let Some(checking) = checking {
+        header = header.push(checking);
+    }
+    let header = header
+        .push(apply_to)
+        .push(button("Rename").on_press(Message::RequestRenamePreset(profile.id.clone())))
+        .push(
+            button("Delete")
+                .style(iced::widget::button::danger)
+                .on_press_maybe(
+                    (!busy).then(|| Message::RequestDeleteSettingsProfile(profile.id.clone())),
+                ),
+        );
 
     let summary = &profile.summary;
     let body = row![
@@ -673,6 +692,10 @@ fn restore_section(app: &PrimeApp) -> Option<Element<'_, Message>> {
                 original.source_account_id,
                 "Working on",
             ));
+        } else if app.settings_check.as_ref().is_some_and(|check| {
+            check.change == SettingsChange::Restore(original.source_account_id)
+        }) {
+            line = line.push(progress_label(app, original.source_account_id, "Checking"));
         }
 
         line = line
