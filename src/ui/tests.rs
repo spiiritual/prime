@@ -4467,7 +4467,8 @@ fn with_fresh_availability(
     account_id: AccountId,
     availability: AccountAvailability,
 ) {
-    app.account_availability_loaded_at = Some(iced::time::Instant::now());
+    app.account_availability_checked_at
+        .insert(account_id, iced::time::Instant::now());
     app.account_availability.insert(account_id, availability);
 }
 
@@ -4640,8 +4641,10 @@ fn a_poll_over_90_seconds_old_starts_a_real_check() {
         reason: "in match".to_string(),
     };
     with_fresh_availability(&mut app, account_id, in_match.clone());
-    app.account_availability_loaded_at =
-        Some(iced::time::Instant::now() - std::time::Duration::from_secs(91));
+    app.account_availability_checked_at.insert(
+        account_id,
+        iced::time::Instant::now() - std::time::Duration::from_secs(91),
+    );
 
     let task = app.update(Message::RequestRestoreSettings(account_id));
 
@@ -4660,6 +4663,64 @@ fn a_poll_over_90_seconds_old_starts_a_real_check() {
     assert!(app.confirm_settings_change.is_some());
     assert_eq!(pending_warning(&app), None);
     assert_eq!(app.account_availability.get(&account_id), Some(&in_match));
+}
+
+#[test]
+fn a_poll_that_has_only_started_does_not_make_an_old_result_fresh() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    app.client_version_input = "release-1".to_string();
+    // Left over from a poll long ago, before the user spent a while on another tab.
+    app.account_availability
+        .insert(account_id, AccountAvailability::Available);
+    app.active_tab = super::Tab::Shop;
+
+    let task = app.update(Message::TabSelected(super::Tab::Accounts));
+
+    assert!(task.units() > 0);
+    assert!(app.account_availability_loading);
+    assert_eq!(app.fresh_availability(account_id), None);
+}
+
+#[test]
+fn a_poll_result_arriving_makes_it_fresh() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+
+    let _ = app.update(Message::AccountAvailabilitiesLoaded(
+        AccountAvailabilityRefresh {
+            accounts: vec![super::data::account_details::AccountActivityCheck {
+                account_id,
+                availability: AccountAvailability::Available,
+            }],
+            refreshed_sessions: vec![],
+        },
+    ));
+
+    assert_eq!(
+        app.fresh_availability(account_id),
+        Some(&AccountAvailability::Available)
+    );
+}
+
+#[test]
+fn a_launch_check_result_makes_it_fresh() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    app.launch_preflight_account = Some(account_id);
+    let in_lobby = AccountAvailability::Unavailable {
+        reason: "in lobby".to_string(),
+    };
+
+    let _ = app.update(Message::LaunchPreflightChecked(
+        super::data::account_details::AccountActivityCheck {
+            account_id,
+            availability: in_lobby.clone(),
+        },
+        false,
+    ));
+
+    assert_eq!(app.fresh_availability(account_id), Some(&in_lobby));
 }
 
 #[test]

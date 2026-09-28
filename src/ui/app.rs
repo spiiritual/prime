@@ -92,6 +92,7 @@ impl PrimeApp {
                 account_availability: Default::default(),
                 account_availability_loading: false,
                 account_availability_loaded_at: None,
+                account_availability_checked_at: Default::default(),
                 settings_cloning: super::settings_cloning_enabled(),
                 save_settings_on_add: false,
                 settings_profiles: Vec::new(),
@@ -1131,6 +1132,7 @@ impl PrimeApp {
             Message::AccountAvailabilitiesLoaded(result) => {
                 self.account_availability_loading = false;
 
+                let arrived_at = iced::time::Instant::now();
                 for account in result.accounts {
                     if self
                         .state
@@ -1140,6 +1142,8 @@ impl PrimeApp {
                     {
                         self.account_availability
                             .insert(account.account_id, account.availability);
+                        self.account_availability_checked_at
+                            .insert(account.account_id, arrived_at);
                     }
                 }
 
@@ -1906,6 +1910,8 @@ impl PrimeApp {
                 self.launch_preflight_account = None;
                 self.account_availability
                     .insert(check.account_id, check.availability.clone());
+                self.account_availability_checked_at
+                    .insert(check.account_id, iced::time::Instant::now());
 
                 let Some(account) = self
                     .state
@@ -2378,12 +2384,14 @@ impl PrimeApp {
         )
     }
 
-    /// The background poll's result for this account, when it's recent enough to trust.
-    fn fresh_availability(&self, account_id: AccountId) -> Option<&AccountAvailability> {
+    /// The background poll's (or Launch check's) result for this account, when it arrived
+    /// recently enough to trust.
+    pub(super) fn fresh_availability(&self, account_id: AccountId) -> Option<&AccountAvailability> {
         const FRESH_FOR: std::time::Duration = std::time::Duration::from_secs(90);
 
-        self.account_availability_loaded_at
-            .filter(|loaded_at| loaded_at.elapsed() < FRESH_FOR)?;
+        self.account_availability_checked_at
+            .get(&account_id)
+            .filter(|checked_at| checked_at.elapsed() < FRESH_FOR)?;
         self.account_availability
             .get(&account_id)
             .filter(|availability| !matches!(availability, AccountAvailability::Unknown { .. }))

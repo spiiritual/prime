@@ -292,6 +292,9 @@ struct PrimeApp {
     account_availability: HashMap<AccountId, AccountAvailability>,
     account_availability_loading: bool,
     account_availability_loaded_at: Option<iced::time::Instant>,
+    /// When each account's entry in `account_availability` arrived, so Apply and Restore only
+    /// trust recent results.
+    account_availability_checked_at: HashMap<AccountId, iced::time::Instant>,
     /// Whether settings cloning is available; set from the `settings-cloning` feature.
     settings_cloning: bool,
     /// Whether a newly added account's VALORANT settings are saved as a settings profile.
