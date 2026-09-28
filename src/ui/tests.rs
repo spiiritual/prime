@@ -4785,6 +4785,22 @@ fn a_poll_tick_while_settings_are_applied_starts_no_poll() {
 }
 
 #[test]
+fn a_poll_tick_while_a_preset_is_saved_starts_no_poll() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account_id) = settings_app(dir.path());
+    app.client_version_input = "release-1".to_string();
+    app.active_tab = super::Tab::Accounts;
+    app.settings_saving_account = Some(account_id);
+
+    let task = app.update(Message::AccountAvailabilityTimerTick(
+        iced::time::Instant::now(),
+    ));
+
+    assert_eq!(task.units(), 0);
+    assert!(!app.account_availability_loading);
+}
+
+#[test]
 fn a_failed_check_opens_the_dialog_with_a_note() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());

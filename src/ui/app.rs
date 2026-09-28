@@ -2491,13 +2491,12 @@ impl PrimeApp {
         }
     }
 
-    /// Whether an availability poll must not start: one is running, or a Launch or settings check
-    /// or a settings apply is signing in with the same refresh token.
+    /// Whether an availability poll must not start: one is running, or a Launch check or settings
+    /// work (check, save or apply) is signing in with the same refresh token.
     fn availability_poll_blocked(&self) -> bool {
         self.account_availability_loading
             || self.launch_preflight_account.is_some()
-            || self.settings_check.is_some()
-            || self.settings_applying_account.is_some()
+            || self.settings_work_in_progress()
     }
 
     fn fetch_account_availabilities_task(&mut self) -> Task<Message> {
