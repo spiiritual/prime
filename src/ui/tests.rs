@@ -27,7 +27,9 @@ use super::data::loadout::{
     combine_loadout_sections, weapon_category, weapon_order,
 };
 use super::data::non_empty_path;
-use super::data::session::{ApiIdentity, api_identity, needs_player_info};
+use super::data::session::{
+    ApiIdentity, api_identity, needs_player_info, needs_player_info_after_geo,
+};
 use super::data::shop::{
     StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay, StoreSummary, format_whole_number,
 };
@@ -3217,6 +3219,30 @@ fn userinfo_finds_the_region_when_there_is_no_id_token() {
 
     assert!(needs_player_info(true, None, &session));
     assert!(needs_player_info(false, Some(ValorantRegion::Na), &session));
+}
+
+#[test]
+fn userinfo_finds_the_region_when_riot_geo_fails() {
+    assert!(needs_player_info_after_geo(None, false, None));
+}
+
+#[test]
+fn userinfo_is_not_asked_again_after_riot_geo_fails() {
+    assert!(!needs_player_info_after_geo(None, true, None));
+}
+
+#[test]
+fn userinfo_is_skipped_when_riot_geo_finds_the_region_or_one_is_saved() {
+    assert!(!needs_player_info_after_geo(
+        None,
+        false,
+        Some(ValorantRegion::Eu)
+    ));
+    assert!(!needs_player_info_after_geo(
+        Some(ValorantRegion::Na),
+        false,
+        None
+    ));
 }
 
 #[test]

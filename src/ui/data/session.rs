@@ -1,6 +1,8 @@
 use super::*;
 
-use super::launch_flow::{resolve_session_region, resolve_session_shard};
+use super::launch_flow::{
+    region_from_player_affinities, resolve_session_region, resolve_session_shard,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct ApiIdentity {
@@ -56,7 +58,9 @@ pub(in crate::ui) async fn resolve_session(
     let api_session = active_api_session(api, account).await?;
     let session = api_session.session;
     let token_subject = crate::riot::auth::jwt_subject(&session.access_token);
-    let player_info = if needs_player_info(token_subject.is_some(), account.region, &session) {
+    let player_info_requested =
+        needs_player_info(token_subject.is_some(), account.region, &session);
+    let mut player_info = if player_info_requested {
         api.player_info(&session.access_token).await.ok()
     } else {
         None
@@ -68,12 +72,20 @@ pub(in crate::ui) async fn resolve_session(
         token_subject.as_deref(),
         account.shard,
     )?;
-    let looked_up_region = match account.region {
+    let mut looked_up_region = match account.region {
         Some(_) => None,
         None => resolve_session_region(api, &session, player_info.as_ref())
             .await
             .ok(),
     };
+    if needs_player_info_after_geo(account.region, player_info_requested, looked_up_region) {
+        player_info = api.player_info(&session.access_token).await.ok();
+        if let Some(info) = &player_info {
+            // Its `sub` goes through the same PUUID check.
+            identity = api_identity(account, Some(info), token_subject.as_deref(), account.shard)?;
+            looked_up_region = region_from_player_affinities(info);
+        }
+    }
     let region = account.region.or(looked_up_region);
     // Only a region looked up now is saved, so a request that started before Refresh cleared
     // the saved region can't write the old one back.
@@ -103,6 +115,16 @@ pub(in crate::ui) fn needs_player_info(
         .as_ref()
         .is_some_and(|token| !token.trim().is_empty());
     !token_has_subject || (saved_region.is_none() && !has_id_token)
+}
+
+/// Whether to ask userinfo for the region after all: none is saved, the lookup (Riot Geo) found
+/// none, and userinfo hasn't been asked yet.
+pub(in crate::ui) fn needs_player_info_after_geo(
+    saved_region: Option<ValorantRegion>,
+    player_info_requested: bool,
+    looked_up_region: Option<ValorantRegion>,
+) -> bool {
+    saved_region.is_none() && !player_info_requested && looked_up_region.is_none()
 }
 
 /// The Riot account an API session acts as. Fails when the session belongs to a different Riot
