@@ -16,14 +16,12 @@ pub(in crate::ui) async fn resolve_credentials(
     account: &AccountProfile,
     client_version: String,
 ) -> Result<ResolvedApiCredentials, String> {
-    let api_session = active_api_session(api, account).await?;
-    let mut session = api_session.session;
-    let token_subject = crate::riot::auth::jwt_subject(&session.access_token);
-    let player_info = if needs_player_info(token_subject.is_some(), account.region, &session) {
-        api.player_info(&session.access_token).await.ok()
-    } else {
-        None
-    };
+    let ResolvedSession {
+        mut session,
+        launcher_session,
+        identity,
+        region,
+    } = resolve_session(api, account).await?;
 
     let entitlements_token = entitlement_token(api, &session).await?;
     if session
@@ -33,6 +31,36 @@ pub(in crate::ui) async fn resolve_credentials(
     {
         session.entitlements_token = Some(entitlements_token.clone());
     }
+
+    Ok(ResolvedApiCredentials {
+        credentials: ApiCredentials {
+            access_token: session.access_token.clone(),
+            entitlements_token,
+            client_version,
+            shard: identity.shard,
+            puuid: identity.puuid.clone(),
+        },
+        region,
+        session,
+        launcher_session,
+        identity,
+    })
+}
+
+/// An account's API session with its PUUID-checked identity and region, without the
+/// entitlements token that only game API requests need.
+pub(in crate::ui) async fn resolve_session(
+    api: &RiotApi,
+    account: &AccountProfile,
+) -> Result<ResolvedSession, String> {
+    let api_session = active_api_session(api, account).await?;
+    let session = api_session.session;
+    let token_subject = crate::riot::auth::jwt_subject(&session.access_token);
+    let player_info = if needs_player_info(token_subject.is_some(), account.region, &session) {
+        api.player_info(&session.access_token).await.ok()
+    } else {
+        None
+    };
 
     let mut identity = api_identity(
         account,
@@ -55,14 +83,7 @@ pub(in crate::ui) async fn resolve_credentials(
         None => resolve_session_shard(api, &session, player_info.as_ref(), account.shard).await,
     };
 
-    Ok(ResolvedApiCredentials {
-        credentials: ApiCredentials {
-            access_token: session.access_token.clone(),
-            entitlements_token,
-            client_version,
-            shard: identity.shard,
-            puuid: identity.puuid.clone(),
-        },
+    Ok(ResolvedSession {
         region,
         session,
         launcher_session: api_session.launcher_session,
@@ -120,6 +141,14 @@ pub(in crate::ui) fn api_identity(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct ResolvedApiCredentials {
     pub(in crate::ui) credentials: ApiCredentials,
+    pub(in crate::ui) region: Option<ValorantRegion>,
+    pub(in crate::ui) session: AuthSession,
+    pub(in crate::ui) launcher_session: Option<LauncherSessionBackup>,
+    pub(in crate::ui) identity: ApiIdentity,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::ui) struct ResolvedSession {
     pub(in crate::ui) region: Option<ValorantRegion>,
     pub(in crate::ui) session: AuthSession,
     pub(in crate::ui) launcher_session: Option<LauncherSessionBackup>,

@@ -1,6 +1,6 @@
 use time::OffsetDateTime;
 
-use super::session::{ApiIdentity, resolve_credentials};
+use super::session::{ApiIdentity, resolve_session};
 use super::*;
 use crate::game_settings::{
     GameSettingsProfile, GameSettingsProfileMetadata, GameSettingsProfilePurpose,
@@ -250,17 +250,16 @@ async fn resolve_settings_context(
     api: &RiotApi,
     account: &AccountProfile,
 ) -> Result<SettingsContext, String> {
-    // Player preferences don't send the client version. resolve_credentials checks that the
-    // session belongs to this account, since settings are read and written through it.
-    let resolved = resolve_credentials(api, account, String::new())
-        .await
-        .map_err(|error| {
-            if error.contains("needs an imported Riot token or a captured launcher session") {
-                "Account needs a captured launcher session or imported Riot token".to_string()
-            } else {
-                error
-            }
-        })?;
+    // Player preferences need neither the client version nor an entitlements token.
+    // resolve_session checks that the session belongs to this account, since settings are read
+    // and written through it.
+    let resolved = resolve_session(api, account).await.map_err(|error| {
+        if error.contains("needs an imported Riot token or a captured launcher session") {
+            "Account needs a captured launcher session or imported Riot token".to_string()
+        } else {
+            error
+        }
+    })?;
     let region = resolved
         .region
         .ok_or_else(|| "Could not resolve Riot player preferences region".to_string())?;
