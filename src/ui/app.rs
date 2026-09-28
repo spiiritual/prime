@@ -1097,10 +1097,7 @@ impl PrimeApp {
             Message::AccountAvailabilityTimerTick(now) => {
                 self.now = now;
 
-                if self.active_tab != Tab::Accounts
-                    || self.account_availability_loading
-                    || self.launch_preflight_account.is_some()
-                {
+                if self.active_tab != Tab::Accounts || self.availability_poll_blocked() {
                     return Task::none();
                 }
 
@@ -1119,10 +1116,7 @@ impl PrimeApp {
                     self.now = iced::time::Instant::now();
                 }
 
-                if restored
-                    && self.active_tab == Tab::Accounts
-                    && !self.account_availability_loading
-                    && self.launch_preflight_account.is_none()
+                if restored && self.active_tab == Tab::Accounts && !self.availability_poll_blocked()
                 {
                     return self.fetch_account_availabilities_task();
                 }
@@ -2437,7 +2431,7 @@ impl PrimeApp {
             } else {
                 self.fetch_account_ranks_task_for(vec![account.clone()], false)
             },
-            if self.account_availability_loading || self.launch_preflight_account.is_some() {
+            if self.availability_poll_blocked() {
                 Task::none()
             } else {
                 self.fetch_account_availabilities_task_for(vec![account])
@@ -2456,8 +2450,7 @@ impl PrimeApp {
                 };
                 let reload_details =
                     self.account_ranks_loading.is_empty() && !fresh(self.account_details_loaded_at);
-                let reload_availability = !self.account_availability_loading
-                    && self.launch_preflight_account.is_none()
+                let reload_availability = !self.availability_poll_blocked()
                     && !fresh(self.account_availability_loaded_at);
 
                 Task::batch([
@@ -2496,6 +2489,15 @@ impl PrimeApp {
             }
             _ => Task::none(),
         }
+    }
+
+    /// Whether an availability poll must not start: one is running, or a Launch or settings check
+    /// or a settings apply is signing in with the same refresh token.
+    fn availability_poll_blocked(&self) -> bool {
+        self.account_availability_loading
+            || self.launch_preflight_account.is_some()
+            || self.settings_check.is_some()
+            || self.settings_applying_account.is_some()
     }
 
     fn fetch_account_availabilities_task(&mut self) -> Task<Message> {
