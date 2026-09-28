@@ -38,7 +38,7 @@ use super::{
     AccountsTab, AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, LoginCapture,
     LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange,
     PendingSettingsCheck, PresetNamePrompt, PresetNameTarget, PrimeApp, SettingsChange, Tab,
-    TabScrollOffsets, ViewRequest,
+    TabScrollOffsets, ViewRequest, background_refresh_active,
 };
 
 impl PrimeApp {
@@ -1097,7 +1097,8 @@ impl PrimeApp {
             Message::AccountAvailabilityTimerTick(now) => {
                 self.now = now;
 
-                if self.active_tab != Tab::Accounts || self.availability_poll_blocked() {
+                let polling = self.active_tab == Tab::Accounts || background_refresh_active(self);
+                if !polling || self.availability_poll_blocked() {
                     return Task::none();
                 }
 
@@ -1110,18 +1111,58 @@ impl PrimeApp {
             Message::WindowResized(size) => {
                 // Windows reports a minimized window as resized to zero.
                 let minimized = size.width <= 0.0 || size.height <= 0.0;
-                let restored = self.window_minimized && !minimized;
+                if self.window_minimized && !minimized {
+                    return self.window_shown();
+                }
                 self.window_minimized = minimized;
-                if restored {
-                    self.now = iced::time::Instant::now();
-                }
-
-                if restored && self.active_tab == Tab::Accounts && !self.availability_poll_blocked()
-                {
-                    return self.fetch_account_availabilities_task();
-                }
 
                 Task::none()
+            }
+            Message::CloseRequested(id) => {
+                if !self.state.minimize_on_close {
+                    return iced::exit();
+                }
+
+                // Hidden, the window leaves the taskbar and lives on as the tray icon.
+                match super::tray::show() {
+                    Ok(()) => {
+                        // Hiding sends no resize, so nothing else marks the window as out of sight.
+                        self.window_minimized = true;
+                        window::set_mode(id, window::Mode::Hidden)
+                    }
+                    Err(error) => {
+                        self.set_status(format!("{error}; minimized to the taskbar instead"));
+                        window::minimize(id, true)
+                    }
+                }
+            }
+            Message::Tray(super::tray::TrayAction::Open) => {
+                super::tray::remove();
+                let shown = self.window_shown();
+                Task::batch([
+                    window::latest().then(|id| {
+                        id.map_or_else(Task::none, |id| {
+                            Task::batch([
+                                window::set_mode(id, window::Mode::Windowed),
+                                window::minimize(id, false),
+                                window::gain_focus(id),
+                            ])
+                        })
+                    }),
+                    shown,
+                ])
+            }
+            Message::Tray(super::tray::TrayAction::Quit) => {
+                super::tray::remove();
+                iced::exit()
+            }
+            Message::MinimizeOnCloseToggled(enabled) => {
+                // Loading accounts.json would undo a change made before it arrives.
+                if !self.accounts_loaded {
+                    return Task::none();
+                }
+                self.state.minimize_on_close = enabled;
+                self.save_task()
             }
             Message::AccountAvailabilitiesLoaded(result) => {
                 self.account_availability_loading = false;
@@ -2489,6 +2530,22 @@ impl PrimeApp {
             }
             _ => Task::none(),
         }
+    }
+
+    /// The window is back on screen after being minimized or hidden: catch up the clock and the
+    /// availability poll that paused.
+    fn window_shown(&mut self) -> Task<Message> {
+        if !self.window_minimized {
+            return Task::none();
+        }
+        self.window_minimized = false;
+        self.now = iced::time::Instant::now();
+
+        if self.active_tab == Tab::Accounts && !self.availability_poll_blocked() {
+            return self.fetch_account_availabilities_task();
+        }
+
+        Task::none()
     }
 
     /// Whether an availability poll must not start: one is running, or a Launch check or settings

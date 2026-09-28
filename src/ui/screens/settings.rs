@@ -1,4 +1,4 @@
-use iced::widget::{button, column, row, text, text_input};
+use iced::widget::{button, checkbox, column, row, text, text_input};
 use iced::{Element, Length, alignment};
 
 use crate::ui::data::format_bytes;
@@ -8,6 +8,7 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     column![
         text(format!("Profile storage: {}", app.repo.path().display())),
         riot_client_path_controls(app),
+        minimize_on_close_controls(app),
         client_version_controls(app),
         text(format!(
             "Image cache: {}",
@@ -45,6 +46,20 @@ fn riot_client_path_controls(app: &PrimeApp) -> Element<'_, Message> {
         .on_input(Message::RiotClientPathChanged)
         .on_submit(Message::SaveSettings),
         save
+    ]
+    .spacing(8)
+    .into()
+}
+
+fn minimize_on_close_controls(app: &PrimeApp) -> Element<'_, Message> {
+    column![
+        checkbox(app.state.minimize_on_close)
+            .label("Keep Prime in the system tray when closed")
+            .on_toggle(Message::MinimizeOnCloseToggled),
+        text(
+            "Keeps Prime running so it refreshes every account's sign-in in the background. Click the tray icon to open it again, or right-click it to quit."
+        )
+        .size(13)
     ]
     .spacing(8)
     .into()

@@ -4077,6 +4077,41 @@ fn availability_polling_resumes_when_the_window_is_restored() {
 }
 
 #[test]
+fn minimized_polling_only_runs_when_minimize_on_close_is_chosen() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.state
+        .push_account(AccountProfile::new("Main", None, Shard::Na).expect("account"));
+    app.client_version_input = "release-1".to_string();
+    app.active_tab = super::Tab::Shop;
+    app.window_minimized = true;
+    let tick = || Message::AccountAvailabilityTimerTick(iced::time::Instant::now());
+    assert!(app.state.minimize_on_close, "on by default");
+
+    let _ = app.update(Message::MinimizeOnCloseToggled(false));
+
+    assert_eq!(app.update(tick()).units(), 0);
+    assert!(!app.account_availability_loading);
+
+    let _ = app.update(Message::MinimizeOnCloseToggled(true));
+    assert!(app.state.minimize_on_close);
+    let _ = app.update(tick());
+    assert!(app.account_availability_loading);
+}
+
+#[test]
+fn minimize_on_close_is_not_changed_before_accounts_load() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.accounts_loaded = false;
+    let _ = app.update(Message::MinimizeOnCloseToggled(false));
+    assert!(
+        app.state.minimize_on_close,
+        "ignored until accounts.json loads"
+    );
+}
+
+#[test]
 fn availability_checks_keep_the_sessions_they_refresh() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
@@ -5598,4 +5633,9 @@ fn escape_does_not_close_an_import_that_is_running() {
     let _ = app.update(Message::EscapePressed);
 
     assert!(app.show_import_account_prompt);
+}
+
+#[test]
+fn window_icon_decodes() {
+    assert!(iced::window::icon::from_file_data(include_bytes!("../../assets/icon.png"), None).is_ok());
 }

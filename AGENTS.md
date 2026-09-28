@@ -35,8 +35,10 @@ art, rarity colours and discounts. The wallet balance shows in the header.
 Loadout tab: equipped gun skins in the in-game collection order, and a Battle Pass sub-tab with tier
 progress and rewards.
 
-Settings tab: Riot Client path, client version (fetched at startup), image cache size and clearing, app
-updates, and a Riot redirect-token import as an advanced fallback for API access.
+Settings tab: Riot Client path, "keep in the system tray when closed" (on by default; while minimized or in the tray it
+polls every 30 minutes so sessions keep refreshing; the tray menu quits), client version
+(fetched at startup), image cache size and clearing, app updates, and a Riot redirect-token import as an
+advanced fallback for API access.
 
 Updates: Velopack checks the GitHub releases of `spiiritual/prime`. `PRIME_UPDATE_SOURCE` and
 `PRIME_UPDATE_CHANNEL` override the source and channel.

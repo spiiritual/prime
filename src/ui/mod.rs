@@ -3,6 +3,7 @@ mod components;
 mod data;
 mod screens;
 mod shell;
+mod tray;
 #[cfg(test)]
 mod tests;
 
@@ -34,6 +35,9 @@ use data::shop::{StoreSummary, StorefrontResult};
 const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
 const LAUNCH_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const ACCOUNT_AVAILABILITY_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+/// While minimized with "minimize on close" on, a slow poll keeps every account's session in use
+/// so its refresh token doesn't sit idle. Access tokens last an hour, so each poll re-signs in.
+const BACKGROUND_SESSION_REFRESH_INTERVAL: Duration = Duration::from_secs(30 * 60);
 /// Opening the Accounts tab reloads every account's details only when they are older than this.
 const ACCOUNTS_TAB_RELOAD_AFTER: Duration = Duration::from_secs(60);
 const STATUS_FLASH_DURATION: Duration = Duration::from_secs(4);
@@ -60,6 +64,8 @@ pub fn run() -> iced::Result {
             min_size: Some(Size::new(1280.0, 840.0)),
             max_size: Some(Size::new(1280.0, 840.0)),
             resizable: false,
+            exit_on_close_request: false,
+            icon: window::icon::from_file_data(include_bytes!("../../assets/icon.png"), None).ok(),
             ..window::Settings::default()
         })
         .run()
@@ -77,6 +83,8 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
     let mut subscriptions = vec![
         iced::window::resize_events().map(|(_, size)| Message::WindowResized(size)),
         iced::keyboard::listen().filter_map(escape_key_message),
+        window::close_requests().map(Message::CloseRequested),
+        tray::actions().map(Message::Tray),
     ];
 
     if countdown_timer_active(app) {
@@ -89,7 +97,8 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
             .push(iced::time::every(STATUS_FLASH_TICK_INTERVAL).map(Message::StatusTimerTick));
     }
 
-    if loading_indicator_active(app) {
+    // Nobody sees the spinner while minimized, and a stuck progress status would keep it ticking.
+    if loading_indicator_active(app) && !app.window_minimized {
         subscriptions.push(iced::time::every(LOADING_TICK_INTERVAL).map(|_| Message::LoadingTick));
     }
 
@@ -99,15 +108,27 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
         );
     }
 
-    // Availability polling makes requests for every account, so it pauses while nobody can see it.
-    if app.active_tab == Tab::Accounts && !app.state.accounts.is_empty() && !app.window_minimized {
-        subscriptions.push(
-            iced::time::every(ACCOUNT_AVAILABILITY_REFRESH_INTERVAL)
-                .map(Message::AccountAvailabilityTimerTick),
-        );
+    // Availability polling makes requests for every account, so it pauses while nobody can see it,
+    // unless the user chose to keep Prime running in the background, where it polls slowly.
+    if !app.state.accounts.is_empty() {
+        let interval = if background_refresh_active(app) {
+            Some(BACKGROUND_SESSION_REFRESH_INTERVAL)
+        } else if app.active_tab == Tab::Accounts && !app.window_minimized {
+            Some(ACCOUNT_AVAILABILITY_REFRESH_INTERVAL)
+        } else {
+            None
+        };
+        if let Some(interval) = interval {
+            subscriptions
+                .push(iced::time::every(interval).map(Message::AccountAvailabilityTimerTick));
+        }
     }
 
     Subscription::batch(subscriptions)
+}
+
+fn background_refresh_active(app: &PrimeApp) -> bool {
+    app.state.minimize_on_close && app.window_minimized
 }
 
 fn loading_indicator_active(app: &PrimeApp) -> bool {
@@ -769,6 +790,10 @@ enum Message {
     },
     AccountAvailabilityTimerTick(iced::time::Instant),
     WindowResized(iced::Size),
+    /// The window's close button, Alt+F4 or the taskbar's Close window.
+    CloseRequested(window::Id),
+    Tray(tray::TrayAction),
+    MinimizeOnCloseToggled(bool),
     StatusTimerTick(iced::time::Instant),
     AccountAvailabilitiesLoaded(AccountAvailabilityRefresh),
     GameSettingsProfilesLoaded(Result<Vec<GameSettingsProfileMetadata>, String>),

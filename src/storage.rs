@@ -19,6 +19,17 @@ pub struct StoredState {
     pub accounts: Vec<AccountProfile>,
     pub selected_account: Option<AccountId>,
     pub riot_client_path: Option<PathBuf>,
+    /// Closing the window minimizes Prime so it keeps refreshing sessions in the background.
+    /// On unless the user turns it off in Settings; only the off choice is written.
+    #[serde(
+        default = "minimize_on_close_default",
+        skip_serializing_if = "Clone::clone"
+    )]
+    pub minimize_on_close: bool,
+}
+
+fn minimize_on_close_default() -> bool {
+    true
 }
 
 impl Default for StoredState {
@@ -28,6 +39,7 @@ impl Default for StoredState {
             accounts: Vec::new(),
             selected_account: None,
             riot_client_path: None,
+            minimize_on_close: minimize_on_close_default(),
         }
     }
 }
@@ -338,6 +350,23 @@ mod tests {
         assert_eq!(loaded.selected_account, Some(id));
         assert_eq!(loaded.accounts[0].display_name, "Main");
         assert_eq!(loaded.accounts[0].account_level, Some(123));
+    }
+
+    #[test]
+    fn minimize_on_close_defaults_on_and_only_off_is_saved() {
+        let dir = tempdir().expect("temp dir");
+        let repo = AccountRepository::new(dir.path().join("accounts.json"));
+        let mut state = StoredState::default();
+        assert!(state.minimize_on_close);
+
+        repo.save(&state).expect("save");
+        let saved = fs::read_to_string(repo.path()).expect("read");
+        assert!(!saved.contains("minimize_on_close"));
+        assert!(repo.load().expect("load").minimize_on_close);
+
+        state.minimize_on_close = false;
+        repo.save(&state).expect("save");
+        assert!(!repo.load().expect("load").minimize_on_close);
     }
 
     #[test]
