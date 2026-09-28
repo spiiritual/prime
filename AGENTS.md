@@ -88,7 +88,12 @@ Local data: `%APPDATA%\spiiritual\prime\config\` holds `accounts.json`, `launche
   entitlement tokens are saved back to the account.
 - Signing the account out anywhere revokes its saved refresh token (`invalid_grant`), and only a
   re-capture fixes it. Signing in or launching the game elsewhere does not revoke it.
-- Resolve the shard through Riot Geo when an ID token is available. A stale shard gives storefront 404s.
+- Each account's region is saved after the first Riot Geo lookup and reused; the shard comes from
+  it. Refreshing an account forgets the region so the next request looks it up again. A stale
+  region gives storefront 404s.
+- Identity comes from the access token's subject; `userinfo` is only called by account refresh
+  and capture, when a token has no subject, or when no region is saved and there is no ID token for
+  Riot Geo.
 - The client version comes from the public Valorant version endpoint. Shop and Loadout need it.
 - Skin, bundle, currency and weapon names come from the public content API at valorant-api.com.
 - Featured bundles are told apart by store bundle ID, even when two resolve to the same content bundle.
