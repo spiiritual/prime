@@ -277,6 +277,36 @@ pub(in crate::ui) async fn cache_rank_icons(
         .await)
 }
 
+/// A player card's art in the image cache: the square small art for avatars and the wide art for
+/// the Accounts banner. Either is `None` when it could not be downloaded.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(in crate::ui) struct PlayerCardArt {
+    pub(in crate::ui) small: Option<PathBuf>,
+    pub(in crate::ui) wide: Option<PathBuf>,
+}
+
+/// Caches a player card's art. valorant-api.com serves each card's `smallArt` and `wideArt` at
+/// fixed media URLs, so this skips downloading the whole player card catalog, and a card already
+/// cached needs no request at all.
+pub(in crate::ui) async fn cache_player_card_art(
+    image_cache: ImageCache,
+    card_id: String,
+) -> PlayerCardArt {
+    // The ID comes from Riot; anything that isn't a UUID has no art to fetch.
+    if card_id.is_empty() || !card_id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        return PlayerCardArt::default();
+    }
+    let url =
+        |kind: &str| format!("https://media.valorant-api.com/playercards/{card_id}/{kind}.png");
+    let (small_url, wide_url) = (url("smallart"), url("wideart"));
+    let (small, wide) = iced::futures::join!(
+        cached_icon(&image_cache, "playercards", &card_id, Some(&small_url)),
+        cached_icon(&image_cache, "playercards-wide", &card_id, Some(&wide_url)),
+    );
+
+    PlayerCardArt { small, wide }
+}
+
 pub(in crate::ui) async fn fetch_current_client_version() -> Result<String, String> {
     ValorantContentApi::new()
         .map_err(|error| error.to_string())?

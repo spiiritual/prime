@@ -405,6 +405,9 @@ pub struct AccountProfile {
     pub account_level: Option<i64>,
     #[serde(default)]
     pub region: Option<ValorantRegion>,
+    /// The equipped player card, saved whenever the account's loadout loads, for its avatar.
+    #[serde(default)]
+    pub player_card_id: Option<String>,
     #[serde(rename = "last_refreshed_at_unix", default, skip_serializing)]
     #[serde(deserialize_with = "discard_legacy_field")]
     // Compatibility: older profiles saved a refresh time; "Login saved" uses the capture time.
@@ -456,6 +459,7 @@ impl AccountProfile {
             penalty_status: AccountPenaltyStatus::default(),
             account_level: None,
             region: None,
+            player_card_id: None,
             legacy_last_refreshed_at_unix: (),
             legacy_username: (),
         })

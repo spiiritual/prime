@@ -26,7 +26,9 @@ use super::data::game_settings::{
     apply_game_settings_profile, delete_game_settings_profile, load_game_settings_profiles,
     rename_game_settings_profile, restore_original_game_settings, save_game_settings_profile,
 };
-use super::data::image_assets::{cache_rank_icons, fetch_current_client_version};
+use super::data::image_assets::{
+    cache_player_card_art, cache_rank_icons, fetch_current_client_version,
+};
 use super::data::launch_flow::{
     PreviousAccountSync, check_riot_client_window_visible, finish_account_capture,
     finish_verified_launcher_session_login, launch_account, load_accounts, prepare_login_capture,
@@ -57,6 +59,8 @@ impl PrimeApp {
                 repo,
                 image_cache,
                 rank_icons: Default::default(),
+                player_card_art: Default::default(),
+                account_filter: String::new(),
                 image_viewer: None,
                 state: StoredState::default(),
                 accounts_loaded: false,
@@ -286,7 +290,7 @@ impl PrimeApp {
                     }
                 }
 
-                self.load_active_tab()
+                Task::batch([self.load_active_tab(), self.player_card_art_task()])
             }
             Message::Saved(result) => {
                 if let Err(error) = result {
@@ -1828,7 +1832,14 @@ impl PrimeApp {
                             )
                             .is_ok()
                             {
-                                return self.save_task();
+                                self.save_player_card(
+                                    result.account_id,
+                                    result.summary.player_card_id,
+                                );
+                                return Task::batch([
+                                    self.save_task(),
+                                    self.player_card_art_task(),
+                                ]);
                             }
 
                             return Task::none();
@@ -1847,6 +1858,11 @@ impl PrimeApp {
                             self.set_view_status(Status::error(error));
                             return Task::none();
                         }
+                        // Only once the session checked out as this account's own.
+                        self.save_player_card(
+                            result.account_id,
+                            result.summary.player_card_id.clone(),
+                        );
 
                         let gun_count = result.summary.gun_skins.len();
                         let battle_pass_status = if result.summary.battle_pass.is_some() {
@@ -1885,7 +1901,11 @@ impl PrimeApp {
                             self.loadout_summary = Some(result.summary);
                         }
 
-                        return Task::batch([self.save_task(), self.image_cache_size_task()]);
+                        return Task::batch([
+                            self.save_task(),
+                            self.image_cache_size_task(),
+                            self.player_card_art_task(),
+                        ]);
                     }
                     Err(error) => {
                         if is_current_request {
@@ -1980,6 +2000,14 @@ impl PrimeApp {
                 if let Ok(icons) = result {
                     self.rank_icons = icons;
                 }
+                Task::none()
+            }
+            Message::PlayerCardArtLoaded(card_id, art) => {
+                self.player_card_art.insert(card_id, art);
+                Task::none()
+            }
+            Message::AccountFilterChanged(filter) => {
+                self.account_filter = filter;
                 Task::none()
             }
             Message::ClearImageCache => self.clear_image_cache(),
@@ -2465,7 +2493,11 @@ impl PrimeApp {
                 self.set_status(Status::success("Cleared image cache"));
                 // The rank icon files were deleted with the rest.
                 self.rank_icons.clear();
-                return cache_rank_icons_task(&self.image_cache);
+                self.player_card_art.clear();
+                return Task::batch([
+                    cache_rank_icons_task(&self.image_cache),
+                    self.player_card_art_task(),
+                ]);
             }
             Err(error) => {
                 self.set_status(Status::error(format!(
@@ -2791,6 +2823,40 @@ impl PrimeApp {
             fetch_loadout(account, self.client_version_input.clone(), image_cache),
             move |result| Message::LoadoutLoaded(request.id, result),
         )
+    }
+
+    /// Remembers the player card an account's loadout reported, for its avatar.
+    fn save_player_card(&mut self, account_id: AccountId, card_id: Option<String>) {
+        if let Some(card_id) = card_id
+            && let Some(account) = self
+                .state
+                .accounts
+                .iter_mut()
+                .find(|account| account.id == account_id)
+        {
+            account.player_card_id = Some(card_id);
+        }
+    }
+
+    /// Caches the art of every account's player card that isn't cached or on its way yet.
+    fn player_card_art_task(&mut self) -> Task<Message> {
+        let mut tasks = Vec::new();
+        for account in &self.state.accounts {
+            let Some(card_id) = &account.player_card_id else {
+                continue;
+            };
+            if self.player_card_art.contains_key(card_id) {
+                continue;
+            }
+            self.player_card_art
+                .insert(card_id.clone(), Default::default());
+            let card_id = card_id.clone();
+            tasks.push(Task::perform(
+                cache_player_card_art(self.image_cache.clone(), card_id.clone()),
+                move |art| Message::PlayerCardArtLoaded(card_id.clone(), art),
+            ));
+        }
+        Task::batch(tasks)
     }
 
     fn next_view_request(&mut self, account_id: AccountId) -> ViewRequest {

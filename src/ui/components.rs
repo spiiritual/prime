@@ -462,6 +462,45 @@ fn preview_image_button_style(
     style
 }
 
+/// An account's avatar: its player card's small art once cached, or its initials until then.
+pub(super) fn account_avatar<'a>(
+    display_name: &str,
+    art: Option<&PathBuf>,
+    size: f32,
+    radius: f32,
+) -> Element<'a, Message> {
+    if let Some(path) = art {
+        return image(Handle::from_path(path.clone()))
+            .width(size)
+            .height(size)
+            .content_fit(ContentFit::Cover)
+            .border_radius(radius)
+            .into();
+    }
+
+    let initials: String = display_name
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .take(2)
+        .flat_map(char::to_uppercase)
+        .collect();
+
+    container(
+        text(initials)
+            .size(size * 0.36)
+            .font(theme::SEMIBOLD_FONT)
+            .color(theme::TEXT),
+    )
+    .center_x(size)
+    .center_y(size)
+    .style(move |_| {
+        container::Style::default()
+            .background(theme::LINE)
+            .border(iced::border::rounded(radius))
+    })
+    .into()
+}
+
 /// A page that couldn't load, centred in the space the page would fill: an icon, what failed,
 /// what to do, the actions, and the raw error for reference when the body doesn't give it.
 pub(super) fn unavailable_state<'a>(
@@ -626,21 +665,6 @@ gradientTransform="translate({center_x} {center_y}) scale({scale_x} {scale_y}) t
             .into()
     })
     .into()
-}
-
-/// One button of a row of sub-tabs, such as Loadout's Skins and Battle Pass.
-pub(super) fn sub_tab_button(
-    label: String,
-    is_selected: bool,
-    on_press: Message,
-) -> Element<'static, Message> {
-    button(text(label).size(14))
-        .padding([12, 16])
-        .width(Length::Fill)
-        .height(46)
-        .style(move |theme, status| theme::choice_style(theme, status, is_selected))
-        .on_press_maybe((!is_selected).then_some(on_press))
-        .into()
 }
 
 pub(super) fn loading_indicator(frame: usize) -> Element<'static, Message> {

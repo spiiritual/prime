@@ -287,6 +287,16 @@ pub(super) enum Icon {
     TriangleAlert,
     Users,
     X,
+    Ellipsis,
+    Lock,
+    LogIn,
+    OctagonAlert,
+    Save,
+    Search,
+    ShieldCheck,
+    ShieldOff,
+    SlidersHorizontal,
+    Upload,
 }
 
 impl Icon {
@@ -325,6 +335,16 @@ impl Icon {
             Icon::TriangleAlert => include_bytes!("../../assets/icons/triangle-alert.svg"),
             Icon::Users => include_bytes!("../../assets/icons/users.svg"),
             Icon::X => include_bytes!("../../assets/icons/x.svg"),
+            Icon::Ellipsis => include_bytes!("../../assets/icons/ellipsis.svg"),
+            Icon::Lock => include_bytes!("../../assets/icons/lock.svg"),
+            Icon::LogIn => include_bytes!("../../assets/icons/log-in.svg"),
+            Icon::OctagonAlert => include_bytes!("../../assets/icons/octagon-alert.svg"),
+            Icon::Save => include_bytes!("../../assets/icons/save.svg"),
+            Icon::Search => include_bytes!("../../assets/icons/search.svg"),
+            Icon::ShieldCheck => include_bytes!("../../assets/icons/shield-check.svg"),
+            Icon::ShieldOff => include_bytes!("../../assets/icons/shield-off.svg"),
+            Icon::SlidersHorizontal => include_bytes!("../../assets/icons/sliders-horizontal.svg"),
+            Icon::Upload => include_bytes!("../../assets/icons/upload.svg"),
         }
     }
 }
