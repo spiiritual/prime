@@ -8,8 +8,8 @@ use crate::account::AccountProfile;
 use crate::game_settings::{GameSettingsProfileMetadata, GameSettingsProfilePurpose};
 
 use super::components::{
-    anchored_popover, balances_unavailable, compact_loading_indicator, currency_balance_display,
-    loading_indicator, wallet_skeleton,
+    account_avatar, anchored_popover, balances_unavailable, compact_loading_indicator,
+    currency_balance_display, loading_indicator, wallet_skeleton,
 };
 use super::theme::{self, button, text};
 use super::{
@@ -240,18 +240,28 @@ impl PrimeApp {
         let is_open = self.account_switcher_open;
         let display_name = account
             .map(|account| account.display_name.as_str())
-            .unwrap_or("No profile");
+            .unwrap_or("No account");
         let avatar = match account {
-            Some(account) => account_avatar(&account.display_name, 34.0, 8.0),
+            Some(account) => account_avatar(
+                &account.display_name,
+                self.player_card_art_path(account),
+                34.0,
+                8.0,
+            ),
             None => container(theme::icon(theme::Icon::Users, 17.0, theme::MUTED))
                 .center_x(34)
                 .center_y(34)
                 .style(|_| filled(theme::LINE).border(iced::border::rounded(8)))
                 .into(),
         };
-        let detail = account
-            .map(account_detail_label)
-            .unwrap_or_else(|| "Add or select an account".to_string());
+        let detail = account.map(account_detail_label).unwrap_or_else(|| {
+            if self.state.accounts.is_empty() {
+                "Add one to get started"
+            } else {
+                "Select an account"
+            }
+            .to_string()
+        });
 
         let content = row![
             avatar,
@@ -307,6 +317,7 @@ impl PrimeApp {
                 account,
                 is_selected,
                 self.rank_icon(account),
+                self.player_card_art_path(account),
             ));
         }
 
@@ -351,6 +362,10 @@ impl PrimeApp {
         let body = screens::tab(self, self.active_tab);
         if screens::fills_page(self, active_tab) {
             let body = container(body).padding(inset);
+            // The first-account prompt is the whole page, without a title.
+            if active_tab == Tab::Accounts {
+                return body.into();
+            }
             return column![self.main_header(), body]
                 .spacing(self.header_gap())
                 .into();
@@ -395,6 +410,7 @@ impl PrimeApp {
 
         let trailing = match &self.store_summary {
             _ if self.active_tab == Tab::Loadout => Some(screens::loadout_sub_tabs(self)),
+            _ if self.active_tab == Tab::Accounts => Some(screens::accounts_header_actions(self)),
             _ if self.active_tab != Tab::Shop => None,
             Some(summary) => Some(currency_balance_display(summary)),
             None if self.store_request.is_some() => Some(wallet_skeleton()),
@@ -455,8 +471,24 @@ impl PrimeApp {
         .into()
     }
 
+    /// The account's player card art for its avatar, once cached.
+    pub(super) fn player_card_art_path(&self, account: &AccountProfile) -> Option<&PathBuf> {
+        self.player_card_art
+            .get(account.player_card_id.as_ref()?)?
+            .small
+            .as_ref()
+    }
+
+    /// The wide art of the account's player card, for the Accounts banner.
+    pub(super) fn player_card_wide_art_path(&self, account: &AccountProfile) -> Option<&PathBuf> {
+        self.player_card_art
+            .get(account.player_card_id.as_ref()?)?
+            .wide
+            .as_ref()
+    }
+
     /// The icon for the account's rank, or the Unranked one once it's known to have none.
-    fn rank_icon(&self, account: &AccountProfile) -> Option<&PathBuf> {
+    pub(super) fn rank_icon(&self, account: &AccountProfile) -> Option<&PathBuf> {
         let tier = match &account.competitive_rank {
             Some(rank) => rank.tier,
             None if self.unranked_accounts.contains(&account.id) => 0,
@@ -520,6 +552,7 @@ fn account_switcher_menu_item<'a>(
     account: &'a AccountProfile,
     is_selected: bool,
     rank_icon: Option<&PathBuf>,
+    avatar_art: Option<&PathBuf>,
 ) -> Element<'a, Message> {
     let tag = account
         .tag_line
@@ -549,7 +582,7 @@ fn account_switcher_menu_item<'a>(
     }
 
     let mut content = row![
-        account_avatar(&account.display_name, 28.0, 7.0),
+        account_avatar(&account.display_name, avatar_art, 28.0, 7.0),
         column![name, text(session).size(11).color(session_color)]
             .spacing(1)
             .width(Length::Fill)
@@ -589,27 +622,6 @@ fn menu_action(
     .width(Length::Fill)
     .style(|_, status| menu_item_style(status, false))
     .on_press(message)
-    .into()
-}
-
-/// A square with the account's initials, standing in for its player card.
-fn account_avatar(display_name: &str, size: f32, radius: f32) -> Element<'static, Message> {
-    let initials: String = display_name
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .take(2)
-        .flat_map(char::to_uppercase)
-        .collect();
-
-    container(
-        text(initials)
-            .size(size * 0.36)
-            .font(theme::SEMIBOLD_FONT)
-            .color(theme::TEXT),
-    )
-    .center_x(size)
-    .center_y(size)
-    .style(move |_| filled(theme::LINE).border(iced::border::rounded(radius)))
     .into()
 }
 
@@ -667,7 +679,7 @@ fn status_toast_style(theme: &Theme, kind: StatusKind) -> iced::widget::containe
     style
 }
 
-fn popover_style(_: &Theme) -> iced::widget::container::Style {
+pub(super) fn popover_style(_: &Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
         background: Some(theme::RAISED.into()),
         text_color: Some(theme::TEXT),
@@ -914,7 +926,7 @@ fn identity_card<'a>(
 ) -> Element<'a, Message> {
     container(
         row![
-            account_avatar(avatar_name, 36.0, 9.0),
+            account_avatar(avatar_name, None, 36.0, 9.0),
             column![
                 text(name).size(14).font(theme::SEMIBOLD_FONT),
                 text(detail).size(12).font(detail_font).color(theme::MUTED)

@@ -28,6 +28,7 @@ use data::account_details::{
 use data::game_settings::{
     AppliedGameSettingsResult, RestoredGameSettingsResult, SavedGameSettingsResult,
 };
+use data::image_assets::PlayerCardArt;
 use data::launch_flow::CapturedAccountDraft;
 use data::launch_flow::{LaunchAccountResult, LoadedAccounts, SHOP_RESET_CHECK_INTERVAL};
 use data::loadout::{LoadoutResult, LoadoutSummary};
@@ -267,6 +268,11 @@ struct PrimeApp {
     image_cache: ImageCache,
     /// Cached rank icons by competitive tier, loaded once at startup.
     rank_icons: HashMap<i64, PathBuf>,
+    /// Cached player card art by card ID. An entry is added when its download starts, so each card
+    /// is requested once; art that failed stays empty and avatars show initials.
+    player_card_art: HashMap<String, PlayerCardArt>,
+    /// What the Accounts list is filtered by.
+    account_filter: String,
     image_viewer: Option<ImageViewerImage>,
     state: StoredState,
     /// False until accounts.json loads successfully; saving is refused until then so an empty
@@ -891,6 +897,8 @@ enum Message {
     ExplorerOpened(Result<(), String>),
     ImageCacheSizeLoaded(Result<CacheUsage, String>),
     RankIconsLoaded(Result<HashMap<i64, PathBuf>, String>),
+    PlayerCardArtLoaded(String, PlayerCardArt),
+    AccountFilterChanged(String),
     ClearImageCache,
     ImageCacheCleared(Result<(), String>),
     LaunchAccount(AccountId),

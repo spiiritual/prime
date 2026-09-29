@@ -29,8 +29,14 @@ pub(super) fn fills_page(app: &PrimeApp, tab: Tab) -> bool {
     match tab {
         Tab::Shop => shop::fills_page(app),
         Tab::Loadout => loadout::fills_page(app),
-        Tab::Accounts | Tab::Settings => false,
+        Tab::Accounts => accounts::fills_page(app),
+        Tab::Settings => false,
     }
+}
+
+/// Import, Add current and Add account, beside the Accounts title.
+pub(super) fn accounts_header_actions(app: &PrimeApp) -> Element<'_, Message> {
+    accounts::header_actions(app)
 }
 
 /// Loadout's Skins and Battle Pass switch, which sits beside the page title.

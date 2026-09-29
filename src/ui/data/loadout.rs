@@ -19,6 +19,8 @@ pub(in crate::ui) struct LoadoutResult {
 pub(in crate::ui) struct LoadoutSummary {
     /// `None` when Riot reported no usable level (0 or hidden), so a known level is kept.
     pub(in crate::ui) account_level: Option<i64>,
+    /// The equipped player card's ID, when the loadout loaded.
+    pub(in crate::ui) player_card_id: Option<String>,
     pub(in crate::ui) gun_skins: Vec<LoadoutGunDisplay>,
     pub(in crate::ui) loadout_error: Option<String>,
     pub(in crate::ui) battle_pass: Option<BattlePassProgressDisplay>,
@@ -67,6 +69,8 @@ impl LoadoutSummary {
         Self {
             account_level: known_account_level(account_level)
                 .or_else(|| known_account_level(Some(response.identity.account_level))),
+            player_card_id: Some(response.identity.player_card_id)
+                .filter(|id| !id.trim().is_empty()),
             gun_skins,
             loadout_error: None,
             battle_pass: None,
@@ -79,6 +83,7 @@ impl LoadoutSummary {
     pub(in crate::ui) fn without_loadout(error: String, account_level: Option<i64>) -> Self {
         Self {
             account_level: known_account_level(account_level),
+            player_card_id: None,
             gun_skins: Vec::new(),
             loadout_error: Some(error),
             battle_pass: None,

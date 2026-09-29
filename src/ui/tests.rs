@@ -166,13 +166,6 @@ fn account_activity_classification_treats_errors_as_unknown() {
         ),
         AccountActivity::Unknown("activity check failed".to_string())
     );
-    assert_eq!(
-        AccountAvailability::from(AccountActivity::Unknown(
-            "activity check failed".to_string()
-        ))
-        .label(),
-        "Unknown (activity check failed)"
-    );
 }
 
 #[test]
@@ -3876,11 +3869,105 @@ fn launching_another_account_reloads_the_open_tab_for_it() {
 fn loaded_loadout() -> LoadoutSummary {
     LoadoutSummary {
         account_level: None,
+        player_card_id: None,
         gun_skins: Vec::new(),
         loadout_error: None,
         battle_pass: None,
         battle_pass_error: None,
     }
+}
+
+fn loadout_result_with_card(account_id: AccountId, puuid: &str, card: &str) -> LoadoutResult {
+    LoadoutResult {
+        account_id,
+        summary: LoadoutSummary {
+            player_card_id: Some(card.to_string()),
+            ..loaded_loadout()
+        },
+        session: AuthSession::new("access", None, None, "Bearer", Some(3600), 100),
+        launcher_session: None,
+        identity: ApiIdentity {
+            puuid: puuid.to_string(),
+            game_name: None,
+            tag_line: None,
+            shard: Shard::Na,
+            region: None,
+        },
+    }
+}
+
+fn player_card_of(app: &PrimeApp, account_id: AccountId) -> Option<&str> {
+    app.state
+        .accounts
+        .iter()
+        .find(|account| account.id == account_id)
+        .and_then(|account| account.player_card_id.as_deref())
+}
+
+#[test]
+fn a_loaded_loadout_saves_the_player_card_of_its_own_account_only() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, main, alt) = two_account_app(dir.path());
+    app.image_cache = crate::image_cache::ImageCache::new(dir.path().join("cache"));
+    app.state.accounts[0].puuid = Some("puuid-main".to_string());
+    app.state.accounts[1].puuid = Some("puuid-alt".to_string());
+    app.loadout_request = Some(super::ViewRequest {
+        id: 1,
+        account_id: main.id,
+    });
+
+    let task = app.update(Message::LoadoutLoaded(
+        1,
+        Ok(loadout_result_with_card(main.id, "puuid-main", "card-main")),
+    ));
+
+    assert_eq!(player_card_of(&app, main.id), Some("card-main"));
+    assert_eq!(player_card_of(&app, alt.id), None);
+    // The art is requested once, and saving the profile is too.
+    assert!(app.player_card_art.contains_key("card-main"));
+    assert!(task.units() >= 2);
+
+    // A late reply whose session turns out to be another Riot account's changes nothing.
+    let _ = app.update(Message::LoadoutLoaded(
+        2,
+        Ok(loadout_result_with_card(alt.id, "puuid-main", "card-main")),
+    ));
+
+    assert_eq!(player_card_of(&app, alt.id), None);
+}
+
+#[test]
+fn an_avatar_uses_its_player_card_art_once_cached_and_initials_otherwise() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, main, _) = two_account_app(dir.path());
+    let art = dir.path().join("card.png");
+    let account = |app: &PrimeApp| app.state.accounts[0].clone();
+
+    assert_eq!(app.player_card_art_path(&account(&app)), None);
+
+    app.state.accounts[0].player_card_id = Some("card-main".to_string());
+    assert_eq!(
+        app.player_card_art_path(&account(&app)),
+        None,
+        "not cached yet"
+    );
+
+    let _ = app.update(Message::PlayerCardArtLoaded(
+        "card-main".to_string(),
+        super::data::image_assets::PlayerCardArt {
+            small: Some(art.clone()),
+            wide: None,
+        },
+    ));
+    assert_eq!(app.player_card_art_path(&account(&app)), Some(&art));
+    assert_eq!(app.state.accounts[0].id, main.id);
+
+    // Art that failed to download leaves the initials.
+    let _ = app.update(Message::PlayerCardArtLoaded(
+        "card-main".to_string(),
+        Default::default(),
+    ));
+    assert_eq!(app.player_card_art_path(&account(&app)), None);
 }
 
 fn battle_pass_display() -> BattlePassProgressDisplay {

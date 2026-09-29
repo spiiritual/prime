@@ -91,14 +91,6 @@ impl AccountAvailability {
         }
     }
 
-    pub(in crate::ui) fn label(&self) -> String {
-        match self {
-            Self::Available => "Available".to_string(),
-            Self::Unavailable { reason } => format!("Unavailable ({reason})"),
-            Self::Unknown { reason } => format!("Unknown ({reason})"),
-        }
-    }
-
     pub(in crate::ui) fn unavailable_reason(&self) -> Option<&str> {
         match self {
             Self::Unavailable { reason } => Some(reason),
