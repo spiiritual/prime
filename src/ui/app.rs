@@ -25,7 +25,7 @@ use super::data::game_settings::{
     apply_game_settings_profile, delete_game_settings_profile, load_game_settings_profiles,
     rename_game_settings_profile, restore_original_game_settings, save_game_settings_profile,
 };
-use super::data::image_assets::fetch_current_client_version;
+use super::data::image_assets::{cache_rank_icons, fetch_current_client_version};
 use super::data::launch_flow::{
     PreviousAccountSync, check_riot_client_window_visible, finish_account_capture,
     finish_verified_launcher_session_login, launch_account, load_accounts, prepare_login_capture,
@@ -48,11 +48,13 @@ impl PrimeApp {
         let load_repo = repo.clone();
         let profile_dir = repo.settings_profiles_dir();
         let cache_for_size = image_cache.clone();
+        let image_cache_for_ranks = image_cache.clone();
 
         (
             Self {
                 repo,
                 image_cache,
+                rank_icons: Default::default(),
                 image_viewer: None,
                 state: StoredState::default(),
                 accounts_loaded: false,
@@ -127,6 +129,7 @@ impl PrimeApp {
                     Task::none()
                 },
                 fetch_client_version_task(false),
+                cache_rank_icons_task(&image_cache_for_ranks),
                 Task::perform(check_for_update(), |result| Message::AppUpdateChecked {
                     user_requested: false,
                     result: result.map_err(|error| error.to_string()),
@@ -1870,6 +1873,13 @@ impl PrimeApp {
                 self.save_task()
             }
             Message::ImageCacheSizeLoaded(result) => self.handle_image_cache_size_loaded(result),
+            Message::RankIconsLoaded(result) => {
+                // Without icons the switcher just leaves them out, so a failure isn't reported.
+                if let Ok(icons) = result {
+                    self.rank_icons = icons;
+                }
+                Task::none()
+            }
             Message::ClearImageCache => self.clear_image_cache(),
             Message::ImageCacheCleared(result) => self.handle_image_cache_cleared(result),
             Message::LaunchAccount(id) => {
@@ -2324,6 +2334,9 @@ impl PrimeApp {
             Ok(()) => {
                 self.image_cache_size_bytes = 0;
                 self.set_status("Cleared image cache");
+                // The rank icon files were deleted with the rest.
+                self.rank_icons.clear();
+                return cache_rank_icons_task(&self.image_cache);
             }
             Err(error) => {
                 self.set_status(format!("Could not clear image cache: {error}"));
@@ -3389,6 +3402,13 @@ fn fetch_client_version_task(user_requested: bool) -> Task<Message> {
             result,
         }
     })
+}
+
+fn cache_rank_icons_task(image_cache: &ImageCache) -> Task<Message> {
+    Task::perform(
+        cache_rank_icons(image_cache.clone()),
+        Message::RankIconsLoaded,
+    )
 }
 
 fn check_capture_prompt_game_task() -> Task<Message> {

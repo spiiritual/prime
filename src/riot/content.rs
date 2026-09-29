@@ -17,6 +17,7 @@ pub const PLAYER_TITLES_URL: &str = "https://valorant-api.com/v1/playertitles";
 pub const FLEX_URL: &str = "https://valorant-api.com/v1/flex";
 pub const CONTRACTS_URL: &str = "https://valorant-api.com/v1/contracts";
 pub const VERSION_URL: &str = "https://valorant-api.com/v1/version";
+pub const COMPETITIVE_TIERS_URL: &str = "https://valorant-api.com/v1/competitivetiers";
 
 #[derive(Clone)]
 pub struct ValorantContentApi {
@@ -91,6 +92,14 @@ impl ValorantContentApi {
             .content_data::<ValorantVersion>(VERSION_URL)
             .await?
             .riot_client_version)
+    }
+
+    /// Each competitive tier's small icon URL, keyed by tier number (0 is Unranked).
+    pub async fn rank_icon_urls(&self) -> Result<HashMap<i64, String>, ContentError> {
+        Ok(rank_icon_urls(
+            self.content_data::<Vec<CompetitiveTierTable>>(COMPETITIVE_TIERS_URL)
+                .await?,
+        ))
     }
 
     async fn content_data<T>(&self, url: &str) -> Result<T, ContentError>
@@ -897,6 +906,33 @@ pub struct Flex {
     pub display_icon: Option<String>,
 }
 
+/// The API lists one tier table per ranked era, oldest first; the last one is current.
+fn rank_icon_urls(tables: Vec<CompetitiveTierTable>) -> HashMap<i64, String> {
+    tables
+        .into_iter()
+        .last()
+        .map(|table| {
+            table
+                .tiers
+                .into_iter()
+                .filter_map(|tier| Some((tier.tier, tier.small_icon?)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct CompetitiveTierTable {
+    pub tiers: Vec<CompetitiveTier>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct CompetitiveTier {
+    pub tier: i64,
+    #[serde(rename = "smallIcon")]
+    pub small_icon: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct PlayerCard {
     pub uuid: String,
@@ -1000,6 +1036,25 @@ pub enum ContentError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rank_icon_urls_use_the_current_tier_table() {
+        let tables: Vec<CompetitiveTierTable> = serde_json::from_value(serde_json::json!([
+            {"tiers": [{"tier": 0, "smallIcon": "old/0.png"}]},
+            {"tiers": [
+                {"tier": 0, "smallIcon": "new/0.png"},
+                {"tier": 1, "smallIcon": null},
+                {"tier": 19, "smallIcon": "new/19.png"}
+            ]}
+        ]))
+        .unwrap();
+
+        let urls = rank_icon_urls(tables);
+
+        assert_eq!(urls.len(), 2);
+        assert_eq!(urls[&0], "new/0.png");
+        assert_eq!(urls[&19], "new/19.png");
+    }
 
     #[test]
     fn resolves_skin_level_and_chroma_ids_to_display_names() {

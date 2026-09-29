@@ -270,6 +270,8 @@ fn status_message_is_error(status: &str) -> bool {
 struct PrimeApp {
     repo: AccountRepository,
     image_cache: ImageCache,
+    /// Cached rank icons by competitive tier, loaded once at startup.
+    rank_icons: HashMap<i64, PathBuf>,
     image_viewer: Option<ImageViewerImage>,
     state: StoredState,
     /// False until accounts.json loads successfully; saving is refused until then so an empty
@@ -850,6 +852,7 @@ enum Message {
     RiotClientPathChanged(String),
     SaveSettings,
     ImageCacheSizeLoaded(Result<u64, String>),
+    RankIconsLoaded(Result<HashMap<i64, PathBuf>, String>),
     ClearImageCache,
     ImageCacheCleared(Result<(), String>),
     LaunchAccount(AccountId),

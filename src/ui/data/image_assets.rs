@@ -1,5 +1,6 @@
 use super::*;
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -252,6 +253,28 @@ pub(in crate::ui) async fn fetch_loadout_metadata() -> LoadoutCatalogs {
         weapon_content,
         battle_pass,
     }
+}
+
+/// Downloads every rank's icon into the image cache, keyed by tier. Icons that fail are left out.
+pub(in crate::ui) async fn cache_rank_icons(
+    image_cache: ImageCache,
+) -> Result<HashMap<i64, PathBuf>, String> {
+    let urls = ValorantContentApi::new()
+        .map_err(|error| error.to_string())?
+        .rank_icon_urls()
+        .await
+        .map_err(|error| error.to_string())?;
+    let image_cache = &image_cache;
+
+    Ok(stream::iter(urls)
+        .map(|(tier, url)| async move {
+            let path = cached_icon(image_cache, "ranks", &tier.to_string(), Some(&url)).await;
+            path.map(|path| (tier, path))
+        })
+        .buffer_unordered(ICON_DOWNLOADS_AT_ONCE)
+        .filter_map(std::future::ready)
+        .collect()
+        .await)
 }
 
 pub(in crate::ui) async fn fetch_current_client_version() -> Result<String, String> {

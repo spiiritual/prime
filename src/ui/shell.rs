@@ -4,6 +4,7 @@ use iced::widget::{
     column, container, image, opaque, row, scrollable, space, stack, text, text_input,
 };
 use iced::{Color, ContentFit, Element, Length, Padding, Theme, alignment};
+use std::path::PathBuf;
 
 use crate::account::AccountProfile;
 use crate::game_settings::{GameSettingsProfileMetadata, GameSettingsProfilePurpose};
@@ -266,7 +267,11 @@ impl PrimeApp {
 
         for account in &self.state.accounts {
             let is_selected = self.state.selected_account == Some(account.id);
-            menu = menu.push(account_switcher_menu_item(account, is_selected));
+            menu = menu.push(account_switcher_menu_item(
+                account,
+                is_selected,
+                self.rank_icon(account),
+            ));
         }
 
         menu = menu
@@ -379,6 +384,16 @@ impl PrimeApp {
         .into()
     }
 
+    /// The icon for the account's rank, or the Unranked one once it's known to have none.
+    fn rank_icon(&self, account: &AccountProfile) -> Option<&PathBuf> {
+        let tier = match &account.competitive_rank {
+            Some(rank) => rank.tier,
+            None if self.unranked_accounts.contains(&account.id) => 0,
+            None => return None,
+        };
+        self.rank_icons.get(&tier)
+    }
+
     fn tab_button(&self, tab: Tab) -> Element<'_, Message> {
         let is_selected = self.active_tab == tab;
         let icon = match tab {
@@ -427,7 +442,11 @@ impl PrimeApp {
     }
 }
 
-fn account_switcher_menu_item(account: &AccountProfile, is_selected: bool) -> Element<'_, Message> {
+fn account_switcher_menu_item<'a>(
+    account: &'a AccountProfile,
+    is_selected: bool,
+    rank_icon: Option<&PathBuf>,
+) -> Element<'a, Message> {
     let tag = account
         .tag_line
         .as_deref()
@@ -464,6 +483,9 @@ fn account_switcher_menu_item(account: &AccountProfile, is_selected: bool) -> El
     ]
     .spacing(10)
     .align_y(alignment::Vertical::Center);
+    if let Some(path) = rank_icon {
+        content = content.push(image(Handle::from_path(path)).width(18).height(18));
+    }
     if is_selected {
         content = content.push(theme::icon(theme::Icon::Check, 15.0, theme::ACCENT));
     }
