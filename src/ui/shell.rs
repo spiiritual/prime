@@ -339,29 +339,23 @@ impl PrimeApp {
 
     fn main_panel(&self) -> Element<'_, Message> {
         let active_tab = self.active_tab;
-        let status_visible = status_bar_visible(self);
+        // The right inset leaves room for the scrollbar. The bottom one stays the same while a toast
+        // shows, so a toast never changes the page's height or brings up a scrollbar; toasts go
+        // away on their own or with their close button.
+        let inset = Padding {
+            top: 0.0,
+            right: 18.0,
+            bottom: 28.0,
+            left: 0.0,
+        };
         let body = screens::tab(self, self.active_tab);
         if screens::fills_page(self, active_tab) {
-            // The same inset as the scrolling page, so both centre on the same space.
-            let body = container(body).padding(Padding {
-                top: 0.0,
-                right: 18.0,
-                bottom: 28.0,
-                left: 0.0,
-            });
+            let body = container(body).padding(inset);
             return column![self.main_header(), body]
                 .spacing(self.header_gap())
                 .into();
         }
-        let scroll_body = container(body)
-            .padding(Padding {
-                top: 0.0,
-                right: 18.0,
-                // Room to scroll the last content above the status toast.
-                bottom: if status_visible { 90.0 } else { 28.0 },
-                left: 0.0,
-            })
-            .width(Length::Fill);
+        let scroll_body = container(body).padding(inset).width(Length::Fill);
 
         let page: Element<_> = scrollable(scroll_body)
             .id(MAIN_PANEL_SCROLLABLE_ID)
