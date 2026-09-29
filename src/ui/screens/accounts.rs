@@ -159,7 +159,14 @@ fn hero<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, Messa
         );
     }
 
+    let rank_loading = app.account_ranks_loading.contains(&account.id);
     let rank: Element<_> = match (account.competitive_rank.as_ref(), app.rank_icon(account)) {
+        (None, _) if rank_loading => {
+            row![skeleton(18, 18.0, 9.0, 1.0), skeleton(70, 14.0, 4.0, 1.0)]
+                .spacing(6)
+                .align_y(alignment::Vertical::Center)
+                .into()
+        }
         (Some(rank), icon) => row![rank_icon(icon, 18.0)]
             .push(meta_value(&rank.rank_name).color(rank_color(rank)))
             .spacing(6)
@@ -175,6 +182,7 @@ fn hero<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, Messa
         Some(level) => mono(level.to_string(), 14)
             .font(theme::MONO_SEMIBOLD_FONT)
             .into(),
+        None if rank_loading => skeleton(28, 14.0, 4.0, 1.0),
         None => mono("—", 14)
             .font(theme::MONO_SEMIBOLD_FONT)
             .color(theme::MUTED)
@@ -929,7 +937,17 @@ fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Me
     let account_id = account.id;
     let capture_idle = !app.launcher_capture_in_progress && !app.launch_in_progress();
 
-    let mut menu = column![
+    let mut menu = column![].spacing(1).width(Length::Fill);
+    // Without a login, the row's own button is Capture login, so selecting lives here.
+    if !account.has_launcher_session() && app.state.selected_account != Some(account_id) {
+        menu = menu.push(menu_item(
+            Icon::Check,
+            "Select",
+            false,
+            (!app.launch_in_progress()).then_some(Message::SelectAccount(account_id)),
+        ));
+    }
+    menu = menu.extend([
         menu_item(
             Icon::LogIn,
             "Re-capture login",
@@ -943,9 +961,7 @@ fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Me
             (!app.profile_identity_refreshing.contains(&account_id))
                 .then_some(Message::RefreshProfileIdentity(account_id)),
         ),
-    ]
-    .spacing(1)
-    .width(Length::Fill);
+    ]);
 
     if app.settings_cloning {
         let settings_idle = !app.settings_work_in_progress();
