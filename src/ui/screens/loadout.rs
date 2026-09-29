@@ -42,6 +42,8 @@ const PASS_BAR_END: Color = iced::color!(0xF5955B);
 const REWARDS_PER_ROW: usize = 6;
 const REWARD_ART_HEIGHT: f32 = 150.0;
 const REWARD_ART_BACKGROUND: Color = iced::color!(0x0F1217);
+/// The design's 20% green over the art background, made opaque so bright art can't wash it out.
+const EARNED_BADGE: Color = iced::color!(0x1B372A);
 const FEATURED_REWARD_BACKGROUND: Color = iced::color!(0x2A2214);
 const FEATURED_REWARD_BORDER: Color = iced::color!(0xE8BE55, 0x77 as f32 / 255.0);
 
@@ -566,10 +568,7 @@ fn reward_card(reward: &BattlePassRewardDisplay, earned: bool) -> Element<'_, Me
                     .center_y(20)
                     .style(|_| {
                         container::Style::default()
-                            .background(Color {
-                                a: 0.2,
-                                ..theme::OK
-                            })
+                            .background(EARNED_BADGE)
                             .border(iced::border::rounded(10))
                     }),
             )
