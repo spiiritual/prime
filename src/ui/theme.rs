@@ -104,9 +104,9 @@ pub(super) fn button_style(_: &Theme, status: Status) -> Style {
 /// Ignores `Disabled`, because the selected choice is usually the one that can't be pressed.
 pub(super) fn choice_style(_: &Theme, status: Status, selected: bool) -> Style {
     let (background, text_color) = if selected {
-        (Some(LINE.into()), TEXT)
-    } else if matches!(status, Status::Hovered | Status::Pressed) {
         (Some(RAISED.into()), TEXT)
+    } else if matches!(status, Status::Hovered | Status::Pressed) {
+        (Some(Color { a: 0.5, ..RAISED }.into()), TEXT)
     } else {
         (None, MUTED)
     };

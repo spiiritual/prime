@@ -24,6 +24,7 @@ const ACCOUNT_SWITCHER_WIDTH: f32 = SIDEBAR_WIDTH - 32.0;
 const ACCOUNT_SWITCHER_MENU_TOP_OFFSET: f32 = 60.0;
 const ACCOUNT_SWITCHER_MENU_WIDTH: f32 = 280.0;
 const POPOVER_BORDER: Color = iced::color!(0x2E3542);
+const MENU_ITEM_SELECTED: Color = iced::color!(0x262C38);
 const STATUS_TOAST_MAX_WIDTH: f32 = 640.0;
 const UPDATE_CHANGELOG_MAX_HEIGHT: f32 = 260.0;
 
@@ -592,14 +593,19 @@ fn menu_item_style(
     status: iced::widget::button::Status,
     is_selected: bool,
 ) -> iced::widget::button::Style {
-    let highlighted = is_selected
-        || matches!(
-            status,
-            iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
-        );
+    let background = if is_selected {
+        Some(MENU_ITEM_SELECTED.into())
+    } else if matches!(
+        status,
+        iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+    ) {
+        Some(theme::LINE.into())
+    } else {
+        None
+    };
 
     iced::widget::button::Style {
-        background: highlighted.then_some(theme::LINE.into()),
+        background,
         text_color: theme::TEXT,
         border: iced::border::rounded(7),
         ..Default::default()
