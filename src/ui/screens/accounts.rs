@@ -214,30 +214,22 @@ fn hero<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, Messa
     .spacing(14)
     .width(Length::Fill);
 
-    let (note_icon, note_color, note) = if login_captured {
-        (Icon::ShieldCheck, theme::OK, "Launcher session captured")
-    } else {
-        (
-            Icon::ShieldOff,
-            theme::GOLD,
-            "Capture this account's login to launch",
-        )
-    };
-    let launch = column![
-        launch_button(app, account),
-        row![
-            theme::icon(note_icon, 13.0, note_color),
-            text(note).size(12).color(if login_captured {
-                theme::MUTED
-            } else {
-                theme::GOLD
-            })
-        ]
-        .spacing(6)
-        .align_y(alignment::Vertical::Center),
-    ]
-    .spacing(10)
-    .align_x(alignment::Horizontal::Right);
+    // Launch speaks for itself; only a missing login needs a note, saying why it can't launch.
+    let mut launch = column![launch_button(app, account)]
+        .spacing(10)
+        .align_x(alignment::Horizontal::Right);
+    if !login_captured {
+        launch = launch.push(
+            row![
+                theme::icon(Icon::ShieldOff, 13.0, theme::GOLD),
+                text("Capture this account's login to launch")
+                    .size(12)
+                    .color(theme::GOLD),
+            ]
+            .spacing(6)
+            .align_y(alignment::Vertical::Center),
+        );
+    }
 
     let content = row![identity, launch]
         .spacing(20)
