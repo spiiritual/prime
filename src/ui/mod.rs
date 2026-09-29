@@ -3,9 +3,9 @@ mod components;
 mod data;
 mod screens;
 mod shell;
-mod tray;
 #[cfg(test)]
 mod tests;
+mod tray;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -14,7 +14,7 @@ use std::time::Duration;
 use iced::widget::operation::AbsoluteOffset;
 use iced::{Size, Subscription, Theme, window};
 
-use crate::account::{AccountId, Shard};
+use crate::account::AccountId;
 use crate::image_cache::ImageCache;
 use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{AvailableUpdate, UpdateCheckOutcome};
@@ -247,7 +247,6 @@ fn status_message_is_error(status: &str) -> bool {
         "Select an account before",
         "Account profile no longer exists",
         "display name cannot be empty",
-        "unknown Valorant shard",
     ];
 
     ERROR_PREFIXES
@@ -273,8 +272,6 @@ struct PrimeApp {
     active_loadout_tab: LoadoutTab,
     tab_scroll_offsets: TabScrollOffsets,
     new_display_name: String,
-    new_username: String,
-    new_shard: Shard,
     redirect_input: String,
     client_version_input: String,
     riot_client_path_input: String,
@@ -727,8 +724,6 @@ enum Message {
     EscapePressed,
     SelectAccount(AccountId),
     NewDisplayNameChanged(String),
-    NewUsernameChanged(String),
-    NewShardSelected(Shard),
     SaveSettingsOnAddToggled(bool),
     AddAccount,
     AddCurrentAccount,

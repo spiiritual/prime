@@ -1,6 +1,5 @@
 use std::fmt;
 use std::path::PathBuf;
-use std::str::FromStr;
 
 use serde::{Deserialize, Deserializer, Serialize, de::IgnoredAny};
 use thiserror::Error;
@@ -41,8 +40,6 @@ pub enum Shard {
 }
 
 impl Shard {
-    pub const ALL: [Shard; 5] = [Shard::Na, Shard::Eu, Shard::Ap, Shard::Kr, Shard::Pbe];
-
     pub fn as_str(self) -> &'static str {
         match self {
             Shard::Na => "na",
@@ -68,21 +65,6 @@ impl Shard {
 impl fmt::Display for Shard {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for Shard {
-    type Err = AccountValidationError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "na" => Ok(Shard::Na),
-            "eu" => Ok(Shard::Eu),
-            "ap" => Ok(Shard::Ap),
-            "kr" => Ok(Shard::Kr),
-            "pbe" => Ok(Shard::Pbe),
-            other => Err(AccountValidationError::UnknownShard(other.to_string())),
-        }
     }
 }
 
@@ -216,21 +198,19 @@ pub struct CompetitiveRank {
     pub tier: i64,
     pub rank_name: String,
     pub ranked_rating: i64,
-    pub season_id: Option<String>,
+    #[serde(rename = "season_id", default, skip_serializing)]
+    #[serde(deserialize_with = "discard_legacy_field")]
+    // Compatibility: older files saved the rank's season, which nothing read.
+    pub legacy_season_id: (),
 }
 
 impl CompetitiveRank {
-    pub fn new(
-        tier: i64,
-        rank_name: impl Into<String>,
-        ranked_rating: i64,
-        season_id: Option<String>,
-    ) -> Self {
+    pub fn new(tier: i64, rank_name: impl Into<String>, ranked_rating: i64) -> Self {
         Self {
             tier,
             rank_name: rank_name.into(),
             ranked_rating,
-            season_id,
+            legacy_season_id: (),
         }
     }
 
@@ -411,7 +391,6 @@ fn format_penalty_duration(seconds: i64) -> String {
 pub struct AccountProfile {
     pub id: AccountId,
     pub display_name: String,
-    pub username: Option<String>,
     pub puuid: Option<String>,
     pub game_name: Option<String>,
     pub tag_line: Option<String>,
@@ -426,10 +405,23 @@ pub struct AccountProfile {
     pub account_level: Option<i64>,
     #[serde(default)]
     pub region: Option<ValorantRegion>,
-    #[serde(default)]
-    #[serde(skip_serializing)]
-    // Compatibility: accepted for old in-memory/test profiles, but never written.
-    pub last_refreshed_at_unix: Option<i64>,
+    #[serde(rename = "last_refreshed_at_unix", default, skip_serializing)]
+    #[serde(deserialize_with = "discard_legacy_field")]
+    // Compatibility: older profiles saved a refresh time; "Login saved" uses the capture time.
+    pub legacy_last_refreshed_at_unix: (),
+    #[serde(rename = "username", default, skip_serializing)]
+    #[serde(deserialize_with = "discard_legacy_field")]
+    // Compatibility: older profiles saved an optional Riot sign-in name; it is read and dropped.
+    pub legacy_username: (),
+}
+
+/// Reads and drops a field older files may still contain.
+fn discard_legacy_field<'de, D>(deserializer: D) -> Result<(), D::Error>
+where
+    D: Deserializer<'de>,
+{
+    IgnoredAny::deserialize(deserializer)?;
+    Ok(())
 }
 
 fn discard_cached_penalty_status<'de, D>(deserializer: D) -> Result<AccountPenaltyStatus, D::Error>
@@ -443,7 +435,6 @@ where
 impl AccountProfile {
     pub fn new(
         display_name: impl Into<String>,
-        username: Option<String>,
         shard: Shard,
     ) -> Result<Self, AccountValidationError> {
         let display_name = display_name.into().trim().to_string();
@@ -455,7 +446,6 @@ impl AccountProfile {
         Ok(Self {
             id: AccountId::new(),
             display_name,
-            username: username.and_then(non_empty_string),
             puuid: None,
             game_name: None,
             tag_line: None,
@@ -466,7 +456,8 @@ impl AccountProfile {
             penalty_status: AccountPenaltyStatus::default(),
             account_level: None,
             region: None,
-            last_refreshed_at_unix: None,
+            legacy_last_refreshed_at_unix: (),
+            legacy_username: (),
         })
     }
 
@@ -482,8 +473,6 @@ impl AccountProfile {
     pub fn summary(&self) -> String {
         if let Some(riot_id) = self.riot_id() {
             format!("{} ({riot_id}, {})", self.display_name, self.shard)
-        } else if let Some(username) = &self.username {
-            format!("{} ({username}, {})", self.display_name, self.shard)
         } else {
             format!("{} ({})", self.display_name, self.shard)
         }
@@ -577,8 +566,6 @@ fn non_empty_string(value: String) -> Option<String> {
 pub enum AccountValidationError {
     #[error("display name cannot be empty")]
     EmptyDisplayName,
-    #[error("unknown Valorant shard `{0}`")]
-    UnknownShard(String),
 }
 
 #[derive(Debug, Error, Eq, PartialEq)]
@@ -598,7 +585,7 @@ mod tests {
 
     #[test]
     fn rejects_empty_display_name() {
-        let err = AccountProfile::new("  ", None, Shard::Na).unwrap_err();
+        let err = AccountProfile::new("  ", Shard::Na).unwrap_err();
 
         assert_eq!(err, AccountValidationError::EmptyDisplayName);
     }
@@ -606,7 +593,7 @@ mod tests {
     #[test]
     fn a_profile_saved_without_a_region_still_loads() {
         let mut value =
-            serde_json::to_value(AccountProfile::new("Main", None, Shard::Na).expect("account"))
+            serde_json::to_value(AccountProfile::new("Main", Shard::Na).expect("account"))
                 .expect("serialize");
         value.as_object_mut().expect("object").remove("region");
 
@@ -617,7 +604,7 @@ mod tests {
 
     #[test]
     fn a_saved_region_round_trips() {
-        let mut profile = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let mut profile = AccountProfile::new("Main", Shard::Na).expect("account");
         profile.region = Some(ValorantRegion::Latam);
 
         let json = serde_json::to_string(&profile).expect("serialize");
@@ -628,11 +615,19 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_optional_username() {
-        let account = AccountProfile::new("Main", Some(" player ".to_string()), Shard::Eu)
-            .expect("valid account");
+    fn a_profile_saved_with_a_username_still_loads_and_drops_it() {
+        let mut value =
+            serde_json::to_value(AccountProfile::new("Main", Shard::Na).expect("account"))
+                .expect("serialize");
+        value
+            .as_object_mut()
+            .expect("object")
+            .insert("username".to_string(), serde_json::json!("player"));
 
-        assert_eq!(account.username.as_deref(), Some("player"));
+        let profile: AccountProfile = serde_json::from_value(value).expect("loads");
+        let json = serde_json::to_string(&profile).expect("serialize");
+
+        assert!(!json.contains("username"), "{json}");
     }
 
     #[test]
@@ -693,7 +688,7 @@ mod tests {
 
     #[test]
     fn attach_launcher_session_sets_missing_puuid() {
-        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
         let backup = LauncherSessionBackup {
             data_dir: PathBuf::from("backup"),
             captured_at_unix: 100,
@@ -710,7 +705,7 @@ mod tests {
 
     #[test]
     fn attach_launcher_session_rejects_wrong_puuid() {
-        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
         account.puuid = Some("puuid-a".to_string());
         let backup = LauncherSessionBackup {
             data_dir: PathBuf::from("backup"),
@@ -734,7 +729,7 @@ mod tests {
 
     #[test]
     fn apply_riot_identity_sets_riot_id() {
-        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
 
         account
             .apply_riot_identity("puuid-a", "Player", "NA1")
@@ -746,7 +741,7 @@ mod tests {
 
     #[test]
     fn puuid_check_accepts_the_same_account_and_rejects_another() {
-        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
         assert!(account.check_puuid("anything").is_ok());
 
         account.puuid = Some("puuid-a".to_string());
@@ -760,7 +755,7 @@ mod tests {
 
     #[test]
     fn apply_riot_identity_rejects_wrong_puuid() {
-        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
         account.puuid = Some("puuid-a".to_string());
 
         let err = account
@@ -774,14 +769,14 @@ mod tests {
 
     #[test]
     fn competitive_rank_formats_rank_and_rr() {
-        let rank = CompetitiveRank::new(15, "Gold 1", 42, Some("season".to_string()));
+        let rank = CompetitiveRank::new(15, "Gold 1", 42);
 
         assert_eq!(rank.label(), "Gold 1 - 42 RR");
     }
 
     #[test]
     fn new_account_has_unchecked_penalty_status() {
-        let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let account = AccountProfile::new("Main", Shard::Na).expect("account");
 
         assert_eq!(account.penalty_status, AccountPenaltyStatus::Unchecked);
         assert!(!account.penalty_status.is_penalized());

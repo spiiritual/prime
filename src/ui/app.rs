@@ -3,7 +3,7 @@ use iced::{Task, window};
 
 use crate::account::{
     AccountId, AccountPenaltyStatus, AccountProfile, AuthSession, CompetitiveRank,
-    LauncherSessionBackup, Shard,
+    LauncherSessionBackup,
 };
 use crate::account_transfer::{export_account, import_account};
 use crate::image_cache::ImageCache;
@@ -61,8 +61,6 @@ impl PrimeApp {
                 active_loadout_tab: LoadoutTab::Skins,
                 tab_scroll_offsets: TabScrollOffsets::default(),
                 new_display_name: String::new(),
-                new_username: String::new(),
-                new_shard: Shard::Na,
                 redirect_input: String::new(),
                 client_version_input: String::new(),
                 riot_client_path_input: String::new(),
@@ -345,14 +343,6 @@ impl PrimeApp {
                 self.new_display_name = value;
                 Task::none()
             }
-            Message::NewUsernameChanged(value) => {
-                self.new_username = value;
-                Task::none()
-            }
-            Message::NewShardSelected(shard) => {
-                self.new_shard = shard;
-                Task::none()
-            }
             Message::SaveSettingsOnAddToggled(save) => {
                 self.save_settings_on_add = save;
                 Task::none()
@@ -380,7 +370,6 @@ impl PrimeApp {
                 let discarded = self.discard_pending_account();
                 self.close_account_surfaces();
                 self.new_display_name.clear();
-                self.new_username.clear();
                 self.set_status(if discarded {
                     "Discarded the unsaved captured account; capturing the Riot account currently signed in"
                 } else {
@@ -402,7 +391,6 @@ impl PrimeApp {
                 let discarded = self.discard_pending_account();
                 self.close_account_surfaces();
                 self.new_display_name.clear();
-                self.new_username.clear();
                 self.set_status(format!(
                     "{}Opening Riot Client. When it appears, sign in normally with \"Stay signed in\" ticked.",
                     if discarded {
@@ -440,7 +428,6 @@ impl PrimeApp {
                             .game_name
                             .clone()
                             .unwrap_or_else(|| "New account".to_string());
-                        self.new_shard = draft.shard;
                         self.set_status("Captured login. Confirm the account details to save it.");
                         self.pending_account = Some(draft);
                         Task::batch([
@@ -471,7 +458,6 @@ impl PrimeApp {
                                 })
                                 .map(|account| account.id)
                         {
-                            self.new_shard = draft.shard;
                             return Task::batch([
                                 self.update_existing_captured_account(existing_id, draft),
                                 alert_and_focus_latest_window(),
@@ -482,7 +468,6 @@ impl PrimeApp {
                             .game_name
                             .clone()
                             .unwrap_or_else(|| "New account".to_string());
-                        self.new_shard = draft.shard;
                         self.set_status("Captured current Riot account. Confirm the account details to save it.");
                         self.pending_account = Some(draft);
                         Task::batch([
@@ -529,7 +514,6 @@ impl PrimeApp {
                 self.pending_account = None;
                 self.close_account_surfaces();
                 self.new_display_name.clear();
-                self.new_username.clear();
                 self.set_status("Discarded captured account draft");
                 Task::none()
             }
@@ -2869,14 +2853,9 @@ impl PrimeApp {
             return self.update_existing_captured_account(existing_id, draft);
         }
 
-        match AccountProfile::new(
-            self.new_display_name.clone(),
-            Some(self.new_username.clone()),
-            self.new_shard,
-        ) {
+        match AccountProfile::new(self.new_display_name.clone(), draft.shard) {
             Ok(mut account) => {
                 account.id = draft.account_id;
-                account.shard = self.new_shard;
                 account.session = draft.session;
 
                 if let Err(error) = account.attach_launcher_session(draft.backup) {
@@ -2899,7 +2878,6 @@ impl PrimeApp {
                 self.clear_selected_account_views();
                 self.pending_account = None;
                 self.new_display_name.clear();
-                self.new_username.clear();
                 return Task::batch([self.save_task(), self.load_account_tab(draft.account_id)]);
             }
             Err(error) => {
@@ -2969,12 +2947,7 @@ impl PrimeApp {
             return Task::none();
         };
 
-        account.shard = self.new_shard;
-        // The Riot username is the sign-in name, which a capture can't read; keep the saved one
-        // unless a new one was typed.
-        if let Some(username) = non_empty_account_field(self.new_username.clone()) {
-            account.username = Some(username);
-        }
+        account.shard = draft.shard;
         account.session = draft.session;
 
         if let Err(error) = account.attach_launcher_session(backup) {
@@ -2994,7 +2967,6 @@ impl PrimeApp {
         self.state.select_account(account_id);
         self.pending_account = None;
         self.new_display_name.clear();
-        self.new_username.clear();
         self.clear_selected_account_views();
         self.set_status(format!(
             "Duplicate account: Prime did not add a new profile because this Riot account is already in Prime; updated and selected {summary}"
@@ -3453,16 +3425,6 @@ fn redirect_session_for_account(
     }
 
     Ok(tokens.into_session())
-}
-
-fn non_empty_account_field(value: String) -> Option<String> {
-    let trimmed = value.trim();
-
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
 }
 
 /// The name a new preset starts with.

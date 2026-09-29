@@ -140,17 +140,12 @@ pub(in crate::ui) fn competitive_rank_from_mmr(
     let competitive = response.queue_skills.competitive.as_ref()?;
     let seasons = &competitive.seasonal_info_by_season_id;
 
-    if let Some((season_id, season)) =
-        response
-            .latest_competitive_update
-            .as_ref()
-            .and_then(|update| {
-                seasons
-                    .get(&update.season_id)
-                    .map(|season| (update.season_id.as_str(), season))
-            })
+    if let Some(season) = response
+        .latest_competitive_update
+        .as_ref()
+        .and_then(|update| seasons.get(&update.season_id))
     {
-        return Some(competitive_rank_from_season(season_id, season));
+        return Some(competitive_rank_from_season(season));
     }
 
     if let Some(update) = response
@@ -162,14 +157,13 @@ pub(in crate::ui) fn competitive_rank_from_mmr(
             update.tier_after_update,
             rank_name_for_competitive_tier(update.tier_after_update),
             update.ranked_rating_after_update,
-            non_empty_string(update.season_id.clone()),
         ));
     }
 
     seasons
-        .iter()
-        .find(|(_, season)| season_has_rank_data(season))
-        .map(|(season_id, season)| competitive_rank_from_season(season_id, season))
+        .values()
+        .find(|season| season_has_rank_data(season))
+        .map(competitive_rank_from_season)
 }
 
 pub(in crate::ui) fn penalty_status_from_response(
@@ -295,16 +289,11 @@ fn parse_penalty_expiry(expiry: &str) -> Option<OffsetDateTime> {
     OffsetDateTime::parse(expiry.trim(), &Rfc3339).ok()
 }
 
-fn competitive_rank_from_season(season_id: &str, season: &MmrSeasonInfo) -> CompetitiveRank {
+fn competitive_rank_from_season(season: &MmrSeasonInfo) -> CompetitiveRank {
     CompetitiveRank::new(
         season.competitive_tier,
         rank_name_for_competitive_tier(season.competitive_tier),
         season.ranked_rating,
-        non_empty_string(if season.season_id.is_empty() {
-            season_id.to_string()
-        } else {
-            season.season_id.clone()
-        }),
     )
 }
 

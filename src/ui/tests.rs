@@ -964,15 +964,10 @@ fn expiry_timestamp(value: &str) -> i64 {
 
 #[test]
 fn account_detail_update_keeps_rank_and_level_when_penalty_fails() {
-    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
     let update = apply_account_detail_results(
         &mut account,
-        Ok(Some(CompetitiveRank::new(
-            15,
-            "Platinum 1",
-            42,
-            Some("season".to_string()),
-        ))),
+        Ok(Some(CompetitiveRank::new(15, "Platinum 1", 42))),
         Ok(123),
         Err("penalty endpoint unavailable".to_string()),
     );
@@ -2188,7 +2183,7 @@ fn loading_accounts_removes_unreferenced_backup_slots() {
 fn login_capture_is_refused_while_an_account_is_launching() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let account = AccountProfile::new("Main", Shard::Na).expect("account");
     app.state.push_account(account.clone());
     app.launching_account = Some(account.id);
 
@@ -2212,7 +2207,7 @@ fn login_capture_is_refused_while_an_account_is_launching() {
 fn launch_is_refused_while_a_login_capture_runs() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let account = AccountProfile::new("Main", Shard::Na).expect("account");
     app.state.push_account(account.clone());
     app.launcher_capture_in_progress = true;
 
@@ -2229,7 +2224,7 @@ fn launch_without_a_captured_login_is_refused_before_switching() {
     let mut app = test_app(dir.path());
     let backup_root = app.repo.launcher_backups_dir();
     let selected = account_with_backup(&backup_root, "Main", "settings");
-    let uncaptured = AccountProfile::new("Alt", None, Shard::Na).expect("alt");
+    let uncaptured = AccountProfile::new("Alt", Shard::Na).expect("alt");
     app.state.push_account(selected.clone());
     app.state.push_account(uncaptured.clone());
     app.state.select_account(selected.id);
@@ -2303,7 +2298,7 @@ fn finished_launch_ignores_a_previous_login_for_a_replaced_slot() {
 fn a_finished_launch_check_leaves_a_dialog_opened_meanwhile() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let account = AccountProfile::new("Main", Shard::Na).expect("account");
     app.state.push_account(account.clone());
     app.launch_preflight_account = Some(account.id);
     let _ = app.update(Message::OpenImportAccount);
@@ -2326,7 +2321,7 @@ fn a_finished_launch_check_leaves_a_dialog_opened_meanwhile() {
 fn closing_the_import_prompt_forgets_the_pasted_export() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let account = AccountProfile::new("Main", Shard::Na).expect("account");
     app.state.push_account(account.clone());
     let _ = app.update(Message::OpenImportAccount);
     let _ = app.update(Message::ImportAccountInputChanged("export".to_string()));
@@ -2342,7 +2337,7 @@ fn closing_the_import_prompt_forgets_the_pasted_export() {
 fn launch_warns_before_closing_a_running_game() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let account = AccountProfile::new("Main", Shard::Na).expect("account");
     app.state.push_account(account.clone());
     app.launch_preflight_account = Some(account.id);
 
@@ -2367,7 +2362,7 @@ fn launch_warns_before_closing_a_running_game() {
 fn a_dialog_opening_closes_the_popovers() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let account = AccountProfile::new("Main", Shard::Na).expect("account");
     app.state.push_account(account.clone());
     app.launch_preflight_account = Some(account.id);
     app.account_switcher_open = true;
@@ -2390,7 +2385,7 @@ fn a_dialog_opening_closes_the_popovers() {
 fn clicking_outside_a_popover_closes_it() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let account = AccountProfile::new("Main", Shard::Na).expect("account");
     app.state.push_account(account.clone());
     app.account_switcher_open = true;
     app.open_account_menu = Some(account.id);
@@ -2405,7 +2400,7 @@ fn clicking_outside_a_popover_closes_it() {
 fn launch_starts_when_no_game_is_running() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
     let backup_root = app.repo.launcher_backups_dir();
     account = {
         let with_backup = account_with_backup(&backup_root, "Main", "settings");
@@ -2433,7 +2428,7 @@ fn launch_starts_when_no_game_is_running() {
 fn recapture_asks_for_confirmation_before_starting() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let account = AccountProfile::new("Main", Shard::Na).expect("account");
     app.state.push_account(account.clone());
 
     let _ = app.update(Message::RequestLauncherSessionLogin(account.id));
@@ -2471,7 +2466,7 @@ fn add_account_prompt_warns_when_valorant_is_running() {
 fn recapture_prompt_warns_when_valorant_is_running() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let account = AccountProfile::new("Main", Shard::Na).expect("account");
     app.state.push_account(account.clone());
 
     let task = app.update(Message::RequestLauncherSessionLogin(account.id));
@@ -2651,7 +2646,7 @@ fn accounts_are_saved_after_a_successful_load() {
 }
 
 fn account_with_backup(backup_root: &Path, name: &str, settings: &str) -> AccountProfile {
-    let mut account = AccountProfile::new(name, None, Shard::Na).expect("account");
+    let mut account = AccountProfile::new(name, Shard::Na).expect("account");
     let data_dir = backup_root.join(account.id.to_string()).join("Data");
     fs::create_dir_all(&data_dir).expect("backup data dir");
     fs::write(data_dir.join("RiotGamesPrivateSettings.yaml"), settings).expect("settings");
@@ -2779,8 +2774,6 @@ fn current_account_capture_success_populates_confirmation_fields() {
     assert_eq!(app.launcher_capture_kind, None);
     assert_eq!(app.pending_account, Some(draft));
     assert_eq!(app.new_display_name, "Player");
-    assert_eq!(app.new_username, "");
-    assert_eq!(app.new_shard, Shard::Na);
     assert_eq!(
         app.status,
         "Captured current Riot account. Confirm the account details to save it."
@@ -2874,7 +2867,7 @@ fn duplicate_current_account_capture_updates_existing_profile_without_confirmati
     let mut app = test_app(dir.path());
     app.client_version_input = "release-10.10-shipping-1-1234567".to_string();
     let backup_root = app.repo.launcher_backups_dir();
-    let mut existing = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let mut existing = AccountProfile::new("Main", Shard::Na).expect("account");
     existing
         .apply_riot_identity("puuid-a", "OldName", "OLD")
         .expect("identity");
@@ -2905,7 +2898,6 @@ fn duplicate_current_account_capture_updates_existing_profile_without_confirmati
         app.state.accounts[0].riot_id().as_deref(),
         Some("Player#NA1")
     );
-    assert_eq!(app.state.accounts[0].username, None);
     assert_eq!(app.state.accounts[0].shard, Shard::Eu);
     assert!(app.state.accounts[0].session.is_some());
     assert_eq!(
@@ -2927,27 +2919,6 @@ fn duplicate_current_account_capture_updates_existing_profile_without_confirmati
     );
     assert!(!app.status.starts_with("Loading account details"));
     assert!(status_message_is_error(&app.status));
-}
-
-#[test]
-fn recapturing_an_existing_account_keeps_its_riot_username() {
-    let dir = tempdir().expect("temp dir");
-    let mut app = test_app(dir.path());
-    let backup_root = app.repo.launcher_backups_dir();
-    let mut existing =
-        AccountProfile::new("Main", Some("login-name".to_string()), Shard::Na).expect("account");
-    existing
-        .apply_riot_identity("puuid-a", "Player", "NA1")
-        .expect("identity");
-    app.state.push_account(existing);
-    let draft = captured_account_draft(&backup_root, "puuid-a", "Player", "NA1", Shard::Na);
-
-    let _ = app.update(Message::CurrentAccountCaptureFinished(Ok(draft)));
-
-    assert_eq!(
-        app.state.accounts[0].username.as_deref(),
-        Some("login-name")
-    );
 }
 
 #[test]
@@ -3046,7 +3017,7 @@ fn redirect_url_for_subject(subject: &str) -> String {
 
 fn app_with_puuid_account(dir: &Path, puuid: &str) -> PrimeApp {
     let mut app = test_app(dir);
-    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
     account.puuid = Some(puuid.to_string());
     let account_id = account.id;
     app.state.push_account(account);
@@ -3105,7 +3076,7 @@ fn token_import_accepts_the_accounts_own_token() {
 #[test]
 fn cache_account_api_context_leaves_the_account_alone_for_another_riot_account() {
     let mut state = StoredState::default();
-    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
     account.puuid = Some("puuid-a".to_string());
     let account_id = account.id;
     state.push_account(account);
@@ -3141,7 +3112,7 @@ fn player_info(puuid: &str) -> crate::riot::models::PlayerInfoResponse {
 
 #[test]
 fn api_identity_refuses_a_session_for_another_riot_account() {
-    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
     account.puuid = Some("puuid-a".to_string());
 
     let error = api_identity(&account, Some(&player_info("puuid-b")), None, Shard::Na)
@@ -3152,7 +3123,7 @@ fn api_identity_refuses_a_session_for_another_riot_account() {
 
 #[test]
 fn api_identity_uses_the_signed_in_riot_account() {
-    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
     account.puuid = Some("puuid-a".to_string());
 
     let identity =
@@ -3165,7 +3136,7 @@ fn api_identity_uses_the_signed_in_riot_account() {
 
 #[test]
 fn api_identity_falls_back_to_the_saved_puuid_without_player_info() {
-    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
     account.puuid = Some("puuid-a".to_string());
 
     let identity = api_identity(&account, None, None, Shard::Na).expect("identity");
@@ -3177,7 +3148,7 @@ fn api_identity_falls_back_to_the_saved_puuid_without_player_info() {
 #[test]
 fn api_identity_takes_the_puuid_from_the_token_subject() {
     // No saved PUUID and no launcher backup, so only the subject can supply it.
-    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let account = AccountProfile::new("Main", Shard::Na).expect("account");
 
     let identity = api_identity(&account, None, Some("puuid-a"), Shard::Na).expect("identity");
 
@@ -3247,7 +3218,7 @@ fn userinfo_is_skipped_when_riot_geo_finds_the_region_or_one_is_saved() {
 
 #[test]
 fn api_identity_refuses_a_token_for_another_riot_account() {
-    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
     account.puuid = Some("puuid-a".to_string());
 
     assert!(api_identity(&account, None, Some("puuid-b"), Shard::Na).is_err());
@@ -3255,7 +3226,7 @@ fn api_identity_refuses_a_token_for_another_riot_account() {
 
 #[test]
 fn api_identity_without_a_token_subject_uses_the_saved_puuid() {
-    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
     account.puuid = Some("puuid-a".to_string());
 
     let identity = api_identity(&account, None, None, Shard::Na).expect("identity");
@@ -3266,7 +3237,7 @@ fn api_identity_without_a_token_subject_uses_the_saved_puuid() {
 #[test]
 fn caching_an_api_context_saves_the_region() {
     let mut state = StoredState::default();
-    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
     account.puuid = Some("puuid-a".to_string());
     let account_id = account.id;
     state.push_account(account);
@@ -3293,7 +3264,7 @@ fn caching_an_api_context_saves_the_region() {
 fn refreshing_a_profile_forgets_its_saved_region() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
     account.puuid = Some("puuid-a".to_string());
     account.region = Some(ValorantRegion::Na);
     let account_id = account.id;
@@ -3318,7 +3289,7 @@ fn refreshing_a_profile_forgets_its_saved_region() {
 fn a_stored_token_for_another_riot_account_is_not_used() {
     let tokens = crate::riot::auth::parse_redirect_tokens(&redirect_url_for_subject("puuid-b"))
         .expect("tokens");
-    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
     account.puuid = Some("puuid-a".to_string());
     account.session = Some(tokens.into_session());
     let api = crate::riot::client::RiotApi::new().expect("api");
@@ -3332,7 +3303,7 @@ fn a_stored_token_for_another_riot_account_is_not_used() {
 #[test]
 fn cache_account_api_context_updates_matching_account() {
     let mut state = StoredState::default();
-    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let account = AccountProfile::new("Main", Shard::Na).expect("account");
     let account_id = account.id;
     state.push_account(account);
     let session = AuthSession::new(
@@ -3368,7 +3339,7 @@ fn cache_account_api_context_updates_matching_account() {
 #[test]
 fn cache_account_api_context_updates_refreshed_launcher_session() {
     let mut state = StoredState::default();
-    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
     let account_id = account.id;
     account.launcher_session = Some(LauncherSessionBackup {
         data_dir: "old-backup".into(),
@@ -3426,8 +3397,8 @@ fn availability_refresh(
 fn selecting_an_account_refreshes_it_without_a_full_reload() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    let main = AccountProfile::new("Main", None, Shard::Na).expect("main");
-    let alt = AccountProfile::new("Alt", None, Shard::Na).expect("alt");
+    let main = AccountProfile::new("Main", Shard::Na).expect("main");
+    let alt = AccountProfile::new("Alt", Shard::Na).expect("alt");
     app.state.push_account(main);
     app.state.push_account(alt.clone());
     app.client_version_input = "release-1".to_string();
@@ -3441,7 +3412,7 @@ fn selecting_an_account_refreshes_it_without_a_full_reload() {
 
 fn accounts_tab_app(dir: &Path) -> (PrimeApp, AccountProfile) {
     let mut app = test_app(dir);
-    let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
     account.puuid = Some("puuid-a".to_string());
     app.state.push_account(account.clone());
     app.state.select_account(account.id);
@@ -3502,7 +3473,7 @@ fn a_profile_refresh_is_not_started_twice() {
 fn import_result_is_not_replaced_by_a_details_reload() {
     let dir = tempdir().expect("temp dir");
     let (mut app, _) = accounts_tab_app(dir.path());
-    let imported = AccountProfile::new("Alt", None, Shard::Na).expect("alt");
+    let imported = AccountProfile::new("Alt", Shard::Na).expect("alt");
 
     let _ = app.update(Message::AccountImported(Ok(
         crate::account_transfer::ImportedAccount {
@@ -3569,8 +3540,8 @@ fn reopening_accounts_soon_after_a_load_does_not_refetch() {
 
 fn two_account_app(dir: &Path) -> (PrimeApp, AccountProfile, AccountProfile) {
     let mut app = test_app(dir);
-    let main = AccountProfile::new("Main", None, Shard::Na).expect("main");
-    let alt = AccountProfile::new("Alt", None, Shard::Na).expect("alt");
+    let main = AccountProfile::new("Main", Shard::Na).expect("main");
+    let alt = AccountProfile::new("Alt", Shard::Na).expect("alt");
     app.state.push_account(main.clone());
     app.state.push_account(alt.clone());
     app.state.select_account(main.id);
@@ -4064,7 +4035,7 @@ fn availability_polling_resumes_when_the_window_is_restored() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
     app.state
-        .push_account(AccountProfile::new("Main", None, Shard::Na).expect("account"));
+        .push_account(AccountProfile::new("Main", Shard::Na).expect("account"));
     app.client_version_input = "release-1".to_string();
 
     let _ = app.update(Message::WindowResized(iced::Size::new(0.0, 0.0)));
@@ -4081,7 +4052,7 @@ fn minimized_polling_only_runs_when_minimize_on_close_is_chosen() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
     app.state
-        .push_account(AccountProfile::new("Main", None, Shard::Na).expect("account"));
+        .push_account(AccountProfile::new("Main", Shard::Na).expect("account"));
     app.client_version_input = "release-1".to_string();
     app.active_tab = super::Tab::Shop;
     app.window_minimized = true;
@@ -4211,7 +4182,7 @@ fn settings_saved(account_id: AccountId, profile: GameSettingsProfileMetadata) -
 fn settings_app(dir: &Path) -> (PrimeApp, AccountId) {
     let mut app = test_app(dir);
     app.settings_cloning = true;
-    let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+    let account = AccountProfile::new("Main", Shard::Na).expect("account");
     let account_id = account.id;
     app.state.push_account(account);
     (app, account_id)
@@ -5637,5 +5608,7 @@ fn escape_does_not_close_an_import_that_is_running() {
 
 #[test]
 fn window_icon_decodes() {
-    assert!(iced::window::icon::from_file_data(include_bytes!("../../assets/icon.png"), None).is_ok());
+    assert!(
+        iced::window::icon::from_file_data(include_bytes!("../../assets/icon.png"), None).is_ok()
+    );
 }

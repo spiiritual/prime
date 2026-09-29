@@ -568,8 +568,7 @@ mod tests {
         )
         .expect("state file");
 
-        let mut account =
-            AccountProfile::new("Main", Some("player".to_string()), Shard::Na).expect("account");
+        let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
         account.puuid = Some("puuid".to_string());
         account.session = Some(AuthSession::new(
             "access",
@@ -620,7 +619,7 @@ mod tests {
 
     #[test]
     fn import_assigns_new_id_when_exported_id_exists() {
-        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
         let backup_source = tempdir().expect("backup source");
         fs::write(
             backup_source.path().join(PRIVATE_SETTINGS_FILE),
@@ -635,7 +634,7 @@ mod tests {
 
         let encoded = export_account(&account).expect("export");
         let import_root = tempdir().expect("import root");
-        let mut other = AccountProfile::new("Other", None, Shard::Na).expect("other");
+        let mut other = AccountProfile::new("Other", Shard::Na).expect("other");
         other.id = account.id;
         other.puuid = Some("other-puuid".to_string());
         let imported = import_account(&encoded, import_root.path(), &[other]).expect("import");
@@ -657,7 +656,7 @@ mod tests {
     }
 
     fn export_with_settings(puuid: &str, settings: &str) -> String {
-        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
         account.launcher_session = Some(LauncherSessionBackup {
             data_dir: PathBuf::from("Data"),
             captured_at_unix: 100,
@@ -716,7 +715,7 @@ mod tests {
 
     #[test]
     fn import_rejects_an_account_that_is_already_saved() {
-        let mut existing = AccountProfile::new("Saved Main", None, Shard::Na).expect("existing");
+        let mut existing = AccountProfile::new("Saved Main", Shard::Na).expect("existing");
         existing.puuid = Some("PUUID".to_string());
         let import_root = tempdir().expect("import root");
 
@@ -741,7 +740,7 @@ mod tests {
 
     #[test]
     fn import_rejects_launcher_path_traversal() {
-        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
         account.launcher_session = Some(LauncherSessionBackup {
             data_dir: PathBuf::from("Data"),
             captured_at_unix: 100,
@@ -776,7 +775,7 @@ mod tests {
 
     #[test]
     fn import_rejects_launcher_files_without_metadata_before_writing() {
-        let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let account = AccountProfile::new("Main", Shard::Na).expect("account");
         let account_id = account.id;
         let package = AccountExportPackage {
             version: EXPORT_VERSION,
@@ -807,7 +806,7 @@ mod tests {
 
     #[test]
     fn import_rejects_launcher_files_missing_private_settings_before_writing() {
-        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
         let account_id = account.id;
         account.launcher_session = Some(LauncherSessionBackup {
             data_dir: PathBuf::from("Data"),
@@ -845,7 +844,7 @@ mod tests {
 
     #[test]
     fn import_rejects_too_many_launcher_files() {
-        let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let account = AccountProfile::new("Main", Shard::Na).expect("account");
         let package = AccountExportPackage {
             version: EXPORT_VERSION,
             account,
@@ -873,7 +872,7 @@ mod tests {
 
     #[test]
     fn export_rejects_incomplete_launcher_session() {
-        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
         let missing = tempdir().expect("missing");
         account.launcher_session = Some(LauncherSessionBackup {
             data_dir: missing.path().join("Data"),

@@ -273,7 +273,7 @@ pub enum StorageError {
 mod tests {
     use tempfile::tempdir;
 
-    use crate::account::{AccountPenaltyStatus, AccountProfile, Shard};
+    use crate::account::{AccountPenaltyStatus, AccountProfile, CompetitiveRank, Shard};
 
     use super::*;
 
@@ -282,9 +282,9 @@ mod tests {
         let dir = tempdir().expect("temp dir");
         let repo = AccountRepository::new(dir.path().join("accounts.json"));
         let mut older = StoredState::default();
-        older.push_account(AccountProfile::new("Older", None, Shard::Na).expect("account"));
+        older.push_account(AccountProfile::new("Older", Shard::Na).expect("account"));
         let mut newer = older.clone();
-        newer.push_account(AccountProfile::new("Newer", None, Shard::Na).expect("account"));
+        newer.push_account(AccountProfile::new("Newer", Shard::Na).expect("account"));
         let older_snapshot = repo.snapshot(&older);
         let newer_snapshot = repo.snapshot(&newer);
 
@@ -303,7 +303,7 @@ mod tests {
                 let mut state = StoredState::default();
                 for account in 0..=index {
                     state.push_account(
-                        AccountProfile::new(format!("Account {account}"), None, Shard::Na)
+                        AccountProfile::new(format!("Account {account}"), Shard::Na)
                             .expect("account"),
                     );
                 }
@@ -336,8 +336,7 @@ mod tests {
     fn round_trips_accounts() {
         let dir = tempdir().expect("temp dir");
         let repo = AccountRepository::new(dir.path().join("accounts.json"));
-        let mut account =
-            AccountProfile::new("Main", Some("player".to_string()), Shard::Na).expect("account");
+        let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
         account.account_level = Some(123);
         let mut state = StoredState::default();
         let id = account.id;
@@ -370,25 +369,59 @@ mod tests {
     }
 
     #[test]
-    fn save_drops_legacy_last_refreshed_time() {
+    fn legacy_fields_load_and_are_dropped_on_save() {
+        let account = AccountProfile::new("Main", Shard::Na).expect("account");
+        let raw = serde_json::json!({
+            "version": 1,
+            "accounts": [{
+                "id": account.id,
+                "display_name": "Main",
+                "username": "player",
+                "puuid": null,
+                "game_name": null,
+                "tag_line": null,
+                "shard": "na",
+                "session": null,
+                "launcher_session": null,
+                "competitive_rank": {
+                    "tier": 15,
+                    "rank_name": "Gold 1",
+                    "ranked_rating": 42,
+                    "season_id": "season-a"
+                },
+                "account_level": null,
+                "last_refreshed_at_unix": 1_800_000_000
+            }],
+            "selected_account": account.id,
+            "riot_client_path": null
+        });
         let dir = tempdir().expect("temp dir");
-        let repo = AccountRepository::new(dir.path().join("accounts.json"));
-        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
-        account.last_refreshed_at_unix = Some(1_800_000_000);
-        let mut state = StoredState::default();
-        state.push_account(account);
+        let path = dir.path().join("accounts.json");
+        fs::write(&path, serde_json::to_string_pretty(&raw).unwrap()).expect("write");
+        let repo = AccountRepository::new(path);
 
-        repo.save(&state).expect("save");
+        let loaded = repo.load().expect("load");
+        repo.save(&loaded).expect("save");
         let saved = fs::read_to_string(repo.path()).expect("saved json");
 
-        assert!(!saved.contains("last_refreshed_at_unix"));
+        assert_eq!(
+            loaded.accounts[0]
+                .competitive_rank
+                .as_ref()
+                .map(CompetitiveRank::label)
+                .as_deref(),
+            Some("Gold 1 - 42 RR")
+        );
+        for key in ["username", "season_id", "last_refreshed_at_unix"] {
+            assert!(!saved.contains(key), "{key} in {saved}");
+        }
     }
 
     #[test]
     fn save_drops_runtime_penalty_status() {
         let dir = tempdir().expect("temp dir");
         let repo = AccountRepository::new(dir.path().join("accounts.json"));
-        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
         account.penalty_status = AccountPenaltyStatus::penalized(Some("Premier comms".to_string()));
         let mut state = StoredState::default();
         state.push_account(account);
@@ -402,8 +435,7 @@ mod tests {
 
     #[test]
     fn load_ignores_cached_penalty_status() {
-        let account =
-            AccountProfile::new("Main", Some("player".to_string()), Shard::Na).expect("account");
+        let account = AccountProfile::new("Main", Shard::Na).expect("account");
         let raw = serde_json::json!({
             "version": 1,
             "accounts": [{
@@ -449,7 +481,7 @@ mod tests {
     fn load_accepts_utf8_bom() {
         let dir = tempdir().expect("temp dir");
         let path = dir.path().join("accounts.json");
-        let account = AccountProfile::new("Main", None, Shard::Na).expect("account");
+        let account = AccountProfile::new("Main", Shard::Na).expect("account");
         let mut state = StoredState::default();
         state.push_account(account);
         let json = serde_json::to_string_pretty(&state).expect("state json");
@@ -464,8 +496,7 @@ mod tests {
 
     #[test]
     fn rejects_legacy_accounts_with_region_and_notes() {
-        let account =
-            AccountProfile::new("Main", Some("player".to_string()), Shard::Na).expect("account");
+        let account = AccountProfile::new("Main", Shard::Na).expect("account");
         let raw = serde_json::json!({
             "version": 1,
             "accounts": [{
@@ -508,8 +539,8 @@ mod tests {
 
     #[test]
     fn rejects_selected_account_when_profile_is_missing() {
-        let first = AccountProfile::new("First", None, Shard::Na).expect("first");
-        let missing = AccountProfile::new("Missing", None, Shard::Na).expect("missing");
+        let first = AccountProfile::new("First", Shard::Na).expect("first");
+        let missing = AccountProfile::new("Missing", Shard::Na).expect("missing");
         let raw = serde_json::json!({
             "version": 1,
             "accounts": [first],

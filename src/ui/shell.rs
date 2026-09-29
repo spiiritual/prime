@@ -348,7 +348,6 @@ fn account_switcher_menu_item(account: &AccountProfile, is_selected: bool) -> El
 fn account_detail_label(account: &AccountProfile) -> String {
     account
         .riot_id()
-        .or_else(|| account.username.clone())
         .map(|identity| format!("{identity} | {}", account.shard))
         .unwrap_or_else(|| account.shard.to_string())
 }

@@ -1,10 +1,8 @@
-use iced::widget::{
-    button, checkbox, column, container, pick_list, row, space, text, text_input, tooltip,
-};
+use iced::widget::{button, checkbox, column, container, row, space, text, text_input, tooltip};
 use iced::{Color, Element, Length, Padding, Theme, alignment};
 use time::{OffsetDateTime, UtcOffset};
 
-use crate::account::{AccountId, AccountProfile, CompetitiveRank, Shard};
+use crate::account::{AccountId, AccountProfile, CompetitiveRank};
 
 use crate::ui::components::{anchored_popover, compact_loading_indicator, sub_tab_button};
 use crate::ui::data::account_details::AccountAvailability;
@@ -108,22 +106,10 @@ fn accounts_tab(app: &PrimeApp) -> Element<'_, Message> {
                             .unwrap_or_else(|| "not captured".to_string()),
                         draft.puuid
                     )),
-                    row![
-                        text_input("Display name", &app.new_display_name)
-                            .on_input(Message::NewDisplayNameChanged)
-                            .on_submit(Message::ConfirmCapturedAccount)
-                            .width(Length::Fill),
-                        text_input("Riot username (optional)", &app.new_username)
-                            .on_input(Message::NewUsernameChanged)
-                            .on_submit(Message::ConfirmCapturedAccount)
-                            .width(Length::Fill),
-                        pick_list(
-                            Shard::ALL.as_slice(),
-                            Some(app.new_shard),
-                            Message::NewShardSelected
-                        )
-                    ]
-                    .spacing(10),
+                    text_input("Display name", &app.new_display_name)
+                        .on_input(Message::NewDisplayNameChanged)
+                        .on_submit(Message::ConfirmCapturedAccount)
+                        .width(Length::Fill),
                     save_settings_on_add_checkbox(app),
                     row![
                         button("Save account").on_press(Message::ConfirmCapturedAccount),
@@ -731,6 +717,7 @@ fn account_menu_button_style(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account::Shard;
 
     #[test]
     fn formats_last_refreshed_time() {
@@ -754,8 +741,7 @@ mod tests {
 
     #[test]
     fn last_refreshed_uses_launcher_capture_time() {
-        let mut account = AccountProfile::new("Main", None, Shard::Na).expect("account");
-        account.last_refreshed_at_unix = Some(50);
+        let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
         account.launcher_session = Some(crate::account::LauncherSessionBackup {
             data_dir: std::path::PathBuf::from("backup"),
             captured_at_unix: 100,
