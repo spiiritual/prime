@@ -20,6 +20,9 @@ use crate::ui::{AccountsTab, LauncherCaptureKind, Message, PrimeApp};
 const HERO_HEIGHT: f32 = 208.0;
 const HERO_BASE: Color = iced::color!(0x141821);
 const HERO_SCRIM: Color = iced::color!(0x0E1016);
+/// Riot's wide player card art is 452x128. Fitting it to the banner's height instead of its width
+/// stretches it about 1.6x rather than 2.2x, which keeps it noticeably sharper.
+const WIDE_ART_WIDTH: f32 = (HERO_HEIGHT - 2.0) * 452.0 / 128.0;
 const TAB_STRIP_HEIGHT: f32 = 36.0;
 const RANK_COLUMN_WIDTH: f32 = 130.0;
 const LEVEL_COLUMN_WIDTH: f32 = 64.0;
@@ -251,13 +254,39 @@ fn hero<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, Messa
                 .border(iced::border::rounded(14)))
     ];
     if let Some(path) = app.player_card_wide_art_path(account) {
+        // Pinned to the right, with its left edge faded into the banner. The art is rounded like the
+        // banner, inside its border; its left corners sit under the opaque start of the fade.
+        let fade = Linear::new(Radians(FRAC_PI_2))
+            .add_stop(0.0, HERO_BASE)
+            .add_stop(
+                0.4,
+                Color {
+                    a: 0.0,
+                    ..HERO_BASE
+                },
+            );
         layers = layers.push(
-            image(Handle::from_path(path.clone()))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .content_fit(ContentFit::Cover)
-                .opacity(0.9)
-                .border_radius(14),
+            container(
+                stack![
+                    image(Handle::from_path(path.clone()))
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .content_fit(ContentFit::Cover)
+                        .opacity(0.9)
+                        .border_radius(13),
+                    container(space())
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .style(move |_| container::Style::default().background(fade)),
+                ]
+                .width(WIDE_ART_WIDTH)
+                .height(Length::Fill),
+            )
+            // Inside the banner's 1px border, so the art doesn't bleed around it.
+            .padding(1)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(alignment::Horizontal::Right),
         );
     }
     layers
