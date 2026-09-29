@@ -291,6 +291,7 @@ impl WeaponCatalog {
                         display_icon: weapon.display_icon,
                         viewer_icon: None,
                         category: weapon.category,
+                        default_skin_uuid: weapon.default_skin_uuid,
                     },
                 )
             })
@@ -315,6 +316,8 @@ pub struct ResolvedWeapon {
     pub viewer_icon: Option<String>,
     /// Riot's equippable category, such as `EEquippableCategory::Sidearm`.
     pub category: Option<String>,
+    /// The skin every account has on this weapon before buying one.
+    pub default_skin_uuid: Option<String>,
 }
 
 impl ResolvedWeapon {
@@ -325,6 +328,7 @@ impl ResolvedWeapon {
             display_icon: None,
             viewer_icon: None,
             category: None,
+            default_skin_uuid: None,
         }
     }
 }
@@ -736,6 +740,8 @@ pub struct Weapon {
     pub display_icon: Option<String>,
     #[serde(default)]
     pub category: Option<String>,
+    #[serde(default, rename = "defaultSkinUuid")]
+    pub default_skin_uuid: Option<String>,
     #[serde(default)]
     pub skins: Vec<WeaponSkin>,
 }
@@ -1278,6 +1284,7 @@ mod tests {
             display_name: "Vandal".to_string(),
             display_icon: Some("weapon-icon".to_string()),
             category: None,
+            default_skin_uuid: None,
             skins: vec![],
         }]);
 

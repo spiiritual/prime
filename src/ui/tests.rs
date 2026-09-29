@@ -1084,6 +1084,7 @@ fn loadout_summary_resolves_skin_names() {
         display_name: "Vandal".to_string(),
         display_icon: None,
         category: Some("EEquippableCategory::Rifle".to_string()),
+        default_skin_uuid: None,
         skins: vec![],
     }]);
 
@@ -1094,6 +1095,29 @@ fn loadout_summary_resolves_skin_names() {
         "Vandal: Prime Vandal - Level 3"
     );
     assert_eq!(summary.gun_skins[0].weapon.category, "Rifles");
+    // A skin with no tier, like a battle pass skin, is still one the account got.
+    assert!(!summary.gun_skins[0].default_skin);
+}
+
+#[test]
+fn a_weapons_own_default_skin_is_marked_default() {
+    let weapons = WeaponCatalog::from_weapons(vec![crate::riot::content::Weapon {
+        uuid: "weapon".to_string(),
+        display_name: "Vandal".to_string(),
+        display_icon: None,
+        category: None,
+        default_skin_uuid: Some("STANDARD-SKIN".to_string()),
+        skins: vec![],
+    }]);
+
+    let summary = LoadoutSummary::from_response(
+        single_gun_loadout("standard-skin", "level", "chroma"),
+        &SkinCatalog::default(),
+        &weapons,
+        None,
+    );
+
+    assert!(summary.gun_skins[0].default_skin);
 }
 
 fn single_gun_loadout(skin_id: &str, level_id: &str, chroma_id: &str) -> PlayerLoadoutResponse {
@@ -1126,6 +1150,7 @@ fn weapon_catalog(name: &str) -> WeaponCatalog {
         display_name: name.to_string(),
         display_icon: None,
         category: Some("EEquippableCategory::Rifle".to_string()),
+        default_skin_uuid: None,
         skins: vec![],
     }])
 }
@@ -1393,6 +1418,7 @@ fn loadout_summary_prefers_current_chroma_render() {
         display_name: "Vandal".to_string(),
         display_icon: Some("weapon-icon".to_string()),
         category: Some("EEquippableCategory::Rifle".to_string()),
+        default_skin_uuid: None,
         skins: vec![],
     }]);
 
@@ -3873,6 +3899,7 @@ fn battle_pass_display() -> BattlePassProgressDisplay {
         earned_rewards: Vec::new(),
         unearned_rewards: Vec::new(),
         locked_paid_rewards: Vec::new(),
+        paid_pass_owned: false,
         loaded_at: iced::time::Instant::now(),
     }
 }
@@ -3881,10 +3908,8 @@ fn battle_pass_display() -> BattlePassProgressDisplay {
 fn only_the_loadout_sub_tab_that_failed_or_is_empty_fills_the_page() {
     let dir = tempdir().expect("temp dir");
     let (mut app, _, _) = two_account_app(dir.path());
-    app.loadout_summary = Some(LoadoutSummary {
-        battle_pass_error: Some(super::data::loadout::NO_BATTLE_PASS_PROGRESS.to_string()),
-        ..loaded_loadout()
-    });
+    // No battle pass progress this act: the loadout loaded and the battle pass is simply absent.
+    app.loadout_summary = Some(loaded_loadout());
 
     app.active_loadout_tab = super::LoadoutTab::Skins;
     assert!(!super::screens::fills_page(&app, super::Tab::Loadout));
@@ -3914,7 +3939,7 @@ fn a_failed_battle_pass_does_not_hide_the_loadout() {
 fn a_failed_loadout_does_not_hide_the_battle_pass() {
     let summary = combine_loadout_sections(
         Err("weapon content unavailable".to_string()),
-        Ok(battle_pass_display()),
+        Ok(Some(battle_pass_display())),
         Some(12),
     )
     .expect("battle pass");
@@ -3938,6 +3963,16 @@ fn when_loadout_and_battle_pass_both_fail_both_errors_are_reported() {
 
     assert!(error.contains("loadout 404"), "{error}");
     assert!(error.contains("contracts 500"), "{error}");
+}
+
+#[test]
+fn a_failed_loadout_with_no_battle_pass_progress_is_only_a_loadout_error() {
+    let summary = combine_loadout_sections(Err("loadout 500".to_string()), Ok(None), None)
+        .expect("no progress isn't a failure");
+
+    assert_eq!(summary.loadout_error.as_deref(), Some("loadout 500"));
+    assert_eq!(summary.battle_pass, None);
+    assert_eq!(summary.battle_pass_error, None);
 }
 
 #[test]

@@ -6,10 +6,6 @@ use super::shop::{
     RADIANITE_POINTS_UUID, format_whole_number, remaining_seconds_at, shop_currency_name,
 };
 
-/// The battle pass error for an account with no contract progress this act, which the Battle Pass
-/// tab shows as empty rather than failed.
-pub(in crate::ui) const NO_BATTLE_PASS_PROGRESS: &str = "No active battle pass progress found";
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct LoadoutResult {
     pub(in crate::ui) account_id: AccountId,
@@ -40,7 +36,12 @@ impl LoadoutSummary {
             .guns
             .into_iter()
             .map(|gun| {
-                let weapon = WeaponDisplay::from(weapons.resolve(&gun.id));
+                let weapon = weapons.resolve(&gun.id);
+                let default_skin = weapon
+                    .default_skin_uuid
+                    .as_deref()
+                    .is_some_and(|id| id.eq_ignore_ascii_case(&gun.skin_id));
+                let weapon = WeaponDisplay::from(weapon);
                 let base_skin = skins.resolve(&gun.skin_id);
                 let skin_level = skins.resolve(&gun.skin_level_id).level_label;
                 let chroma = skins.resolve(&gun.chroma_id).chroma_label;
@@ -57,6 +58,7 @@ impl LoadoutSummary {
                     skin_name: base_skin.display_name,
                     skin_level,
                     chroma,
+                    default_skin,
                 }
             })
             .collect::<Vec<_>>();
@@ -119,6 +121,7 @@ pub(in crate::ui) struct BattlePassProgressDisplay {
     pub(in crate::ui) earned_rewards: Vec<BattlePassRewardDisplay>,
     pub(in crate::ui) unearned_rewards: Vec<BattlePassRewardDisplay>,
     pub(in crate::ui) locked_paid_rewards: Vec<BattlePassRewardDisplay>,
+    pub(in crate::ui) paid_pass_owned: bool,
     pub(in crate::ui) loaded_at: iced::time::Instant,
 }
 
@@ -173,9 +176,8 @@ impl BattlePassProgressDisplay {
         }
     }
 
-    /// Paid rewards are only held back as locked when the premium pass isn't owned.
     pub(in crate::ui) fn pass_label(&self) -> &'static str {
-        if self.locked_paid_rewards.is_empty() {
+        if self.paid_pass_owned {
             "Premium"
         } else {
             "Free"
@@ -325,6 +327,7 @@ fn battle_pass_progress_from_responses_at(
         earned_rewards,
         unearned_rewards,
         locked_paid_rewards,
+        paid_pass_owned,
         loaded_at: context.loaded_at,
     })
 }
@@ -628,6 +631,8 @@ pub(in crate::ui) struct LoadoutGunDisplay {
     pub(in crate::ui) skin_level: Option<String>,
     /// The equipped variant, when it isn't the skin's base look.
     pub(in crate::ui) chroma: Option<String>,
+    /// Whether this is the weapon's standard skin rather than one the account got.
+    pub(in crate::ui) default_skin: bool,
 }
 
 impl LoadoutGunDisplay {
@@ -778,10 +783,11 @@ pub(in crate::ui) async fn fetch_loadout(
 }
 
 /// The loadout and battle pass are separate sub-tabs, so one failing doesn't hide the other.
-/// Only when both fail is the load an error, and it names both failures.
+/// Only when both fail is the load an error, and it names both failures. A battle pass of
+/// `Ok(None)` means the account has no progress this act, which isn't a failure.
 pub(in crate::ui) fn combine_loadout_sections(
     loadout: Result<LoadoutSummary, String>,
-    battle_pass: Result<BattlePassProgressDisplay, String>,
+    battle_pass: Result<Option<BattlePassProgressDisplay>, String>,
     account_level: Option<i64>,
 ) -> Result<LoadoutSummary, String> {
     let mut summary = match (loadout, &battle_pass) {
@@ -793,7 +799,7 @@ pub(in crate::ui) fn combine_loadout_sections(
     };
     match battle_pass {
         Ok(progress) => {
-            summary.battle_pass = Some(progress);
+            summary.battle_pass = progress;
             summary.battle_pass_error = None;
         }
         Err(error) => {
@@ -813,7 +819,7 @@ async fn fetch_battle_pass_progress(
     api: &RiotApi,
     credentials: &ApiCredentials,
     metadata: &LoadoutMetadata,
-) -> Result<BattlePassProgressDisplay, String> {
+) -> Result<Option<BattlePassProgressDisplay>, String> {
     let contracts = api
         .contracts(credentials)
         .await
@@ -823,15 +829,14 @@ async fn fetch_battle_pass_progress(
         .await
         .map_err(|error| error.to_string())?;
 
-    battle_pass_progress_from_responses(
+    Ok(battle_pass_progress_from_responses(
         &contracts,
         &metadata.contracts,
         Some(&content),
         &metadata.weapon_content.skins,
         &metadata.accessories,
         &metadata.currencies,
-    )
-    .ok_or_else(|| NO_BATTLE_PASS_PROGRESS.to_string())
+    ))
 }
 
 pub(in crate::ui) fn resolve_current_skin(

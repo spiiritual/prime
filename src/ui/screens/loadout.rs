@@ -8,7 +8,6 @@ use crate::ui::components::{
 };
 use crate::ui::data::loadout::{
     BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutGunDisplay, LoadoutSummary,
-    NO_BATTLE_PASS_PROGRESS,
 };
 use crate::ui::data::shop::{RarityTier, format_time_left};
 use crate::ui::theme::{self, Icon, button, text};
@@ -155,11 +154,10 @@ fn page_state(app: &PrimeApp) -> Element<'_, Message> {
             )
         }
         LoadoutTab::BattlePass => {
-            let error = app.loadout_error.as_deref().or_else(|| {
-                summary
-                    .and_then(|summary| summary.battle_pass_error.as_deref())
-                    .filter(|error| *error != NO_BATTLE_PASS_PROGRESS)
-            });
+            let error = app
+                .loadout_error
+                .as_deref()
+                .or_else(|| summary.and_then(|summary| summary.battle_pass_error.as_deref()));
             match error {
                 Some(error) => unavailable_state(
                     Icon::Ticket,
@@ -243,20 +241,20 @@ fn skin_tile(gun: &LoadoutGunDisplay) -> Element<'_, Message> {
             TILE_IMAGE_HEIGHT,
             gun.skin_detail_label(),
             art,
-            if tier.is_some() {
-                1.0
-            } else {
+            if gun.default_skin {
                 DEFAULT_SKIN_OPACITY
+            } else {
+                1.0
             },
         ),
         one_line(
             text(skin_name(gun))
                 .size(11)
                 .font(theme::SEMIBOLD_FONT)
-                .color(if tier.is_some() {
-                    theme::TEXT
-                } else {
+                .color(if gun.default_skin {
                     theme::MUTED
+                } else {
+                    theme::TEXT
                 }),
         ),
         one_line(
