@@ -304,7 +304,20 @@ pub(in crate::ui) async fn cache_player_card_art(
         cached_icon(&image_cache, "playercards-wide", &card_id, Some(&wide_url)),
     );
 
-    PlayerCardArt { small, wide }
+    PlayerCardArt {
+        small,
+        wide: wide.and_then(|path| blurred_copy(&path)),
+    }
+}
+
+/// The wide art is 452x128 and the banner shows it upscaled, so a slight blur makes the softness
+/// look intentional. The blurred copy is saved next to the original and made once.
+fn blurred_copy(path: &std::path::Path) -> Option<PathBuf> {
+    let blurred = path.with_extension("blur.png");
+    if !blurred.exists() {
+        image::open(path).ok()?.blur(1.2).save(&blurred).ok()?;
+    }
+    Some(blurred)
 }
 
 pub(in crate::ui) async fn fetch_current_client_version() -> Result<String, String> {
@@ -322,6 +335,22 @@ mod tests {
     use iced::futures::executor::block_on;
 
     use super::*;
+
+    #[test]
+    fn wide_art_is_blurred_once_into_a_sibling_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let art = dir.path().join("card.png");
+        image::RgbaImage::new(8, 4).save(&art).expect("save art");
+
+        let blurred = blurred_copy(&art).expect("blurred copy");
+
+        assert_eq!(blurred, dir.path().join("card.blur.png"));
+        assert_eq!(
+            image::image_dimensions(&blurred).expect("read blurred"),
+            (8, 4)
+        );
+        assert_eq!(blurred_copy(&art), Some(blurred));
+    }
 
     fn failed_fetch() -> ContentError {
         let error = reqwest::Client::new()

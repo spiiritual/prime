@@ -3397,6 +3397,7 @@ dependencies = [
  "directories",
  "flate2",
  "iced",
+ "image",
  "reqwest",
  "serde",
  "serde_json",
