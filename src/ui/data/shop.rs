@@ -365,16 +365,6 @@ pub(in crate::ui) struct CurrencyBalanceDisplay {
     pub(in crate::ui) currency: CurrencyDisplay,
 }
 
-impl CurrencyBalanceDisplay {
-    pub(in crate::ui) fn label(&self) -> String {
-        format!(
-            "{} {}",
-            format_whole_number(self.amount),
-            self.currency.display_name
-        )
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct CurrencyDisplay {
     pub(in crate::ui) uuid: String,

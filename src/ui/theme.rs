@@ -28,6 +28,18 @@ pub(super) const FONTS: [&[u8]; 3] = [
 ];
 
 pub(super) const BODY_FONT: Font = Font::with_name("Inter");
+pub(super) const MEDIUM_FONT: Font = Font {
+    weight: font::Weight::Medium,
+    ..BODY_FONT
+};
+pub(super) const SEMIBOLD_FONT: Font = Font {
+    weight: font::Weight::Semibold,
+    ..BODY_FONT
+};
+pub(super) const BOLD_FONT: Font = Font {
+    weight: font::Weight::Bold,
+    ..BODY_FONT
+};
 pub(super) const DISPLAY_FONT: Font = Font {
     weight: font::Weight::Bold,
     ..Font::with_name("Space Grotesk")
@@ -112,28 +124,52 @@ pub(super) fn choice_style(_: &Theme, status: Status, selected: bool) -> Style {
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Icon {
-    Users,
+    /// Prime's own mark, not a Lucide icon.
+    Logo,
+    Check,
+    ChevronsUpDown,
+    Info,
+    Plus,
+    Settings,
+    Settings2,
     ShoppingBag,
     Swords,
-    Settings,
+    TriangleAlert,
+    Users,
 }
 
 impl Icon {
     fn svg(self) -> &'static [u8] {
         match self {
-            Icon::Users => include_bytes!("../../assets/icons/users.svg"),
+            Icon::Logo => include_bytes!("../../assets/logo.svg"),
+            Icon::Check => include_bytes!("../../assets/icons/check.svg"),
+            Icon::ChevronsUpDown => include_bytes!("../../assets/icons/chevrons-up-down.svg"),
+            Icon::Info => include_bytes!("../../assets/icons/info.svg"),
+            Icon::Plus => include_bytes!("../../assets/icons/plus.svg"),
+            Icon::Settings => include_bytes!("../../assets/icons/settings.svg"),
+            Icon::Settings2 => include_bytes!("../../assets/icons/settings-2.svg"),
             Icon::ShoppingBag => include_bytes!("../../assets/icons/shopping-bag.svg"),
             Icon::Swords => include_bytes!("../../assets/icons/swords.svg"),
-            Icon::Settings => include_bytes!("../../assets/icons/settings.svg"),
+            Icon::TriangleAlert => include_bytes!("../../assets/icons/triangle-alert.svg"),
+            Icon::Users => include_bytes!("../../assets/icons/users.svg"),
         }
     }
 }
 
 /// A Lucide icon drawn in one colour.
 pub(super) fn icon<'a>(icon: Icon, size: f32, color: Color) -> Element<'a, Message> {
+    sized_icon(icon, size, size, color)
+}
+
+pub(super) fn sized_icon<'a>(
+    icon: Icon,
+    width: f32,
+    height: f32,
+    color: Color,
+) -> Element<'a, Message> {
     svg(svg::Handle::from_memory(icon.svg()))
-        .width(size)
-        .height(size)
+        .width(width)
+        .height(height)
         .style(move |_, _| svg::Style { color: Some(color) })
         .into()
 }

@@ -1,4 +1,5 @@
 use iced::widget::image::Handle;
+use iced::widget::text::Wrapping;
 use iced::widget::{
     column, container, image, opaque, row, scrollable, space, stack, text, text_input,
 };
@@ -14,12 +15,15 @@ use super::{
     PendingSettingsChange, PresetNamePrompt, PresetNameTarget, PrimeApp, SettingsChange, Tab,
     UnavailableLaunchWarning, screens,
 };
-use super::{status_bar_visible, status_spinner_active};
+use super::{status_bar_visible, status_message_is_error, status_spinner_active};
 
-const SIDEBAR_WIDTH: f32 = 210.0;
-const SIDEBAR_PADDING: u16 = 16;
-const ACCOUNT_SWITCHER_MENU_TOP_OFFSET: f32 = 62.0;
-const ACCOUNT_SWITCHER_MENU_WIDTH: f32 = SIDEBAR_WIDTH - (SIDEBAR_PADDING as f32 * 2.0);
+/// Without its one-pixel border line.
+const SIDEBAR_WIDTH: f32 = 231.0;
+const ACCOUNT_SWITCHER_WIDTH: f32 = SIDEBAR_WIDTH - 32.0;
+const ACCOUNT_SWITCHER_MENU_TOP_OFFSET: f32 = 60.0;
+const ACCOUNT_SWITCHER_MENU_WIDTH: f32 = 280.0;
+const POPOVER_BORDER: Color = iced::color!(0x2E3542);
+const STATUS_TOAST_MAX_WIDTH: f32 = 640.0;
 const UPDATE_CHANGELOG_MAX_HEIGHT: f32 = 260.0;
 
 impl PrimeApp {
@@ -27,16 +31,16 @@ impl PrimeApp {
         let content = row![
             self.sidebar(),
             container(self.main_panel())
-                .padding(22)
+                .padding(Padding {
+                    top: 28.0,
+                    right: 18.0,
+                    bottom: 0.0,
+                    left: 36.0,
+                })
                 .width(Length::Fill)
                 .height(Length::Fill)
         ]
         .height(Length::Fill);
-
-        let content = container(content)
-            .padding(Padding::ZERO.right(14))
-            .width(Length::Fill)
-            .height(Length::Fill);
 
         let pending_delete_account = self.confirm_delete_account.and_then(|account_id| {
             self.state
@@ -144,23 +148,43 @@ impl PrimeApp {
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
-        let accounts = column![text("Prime").size(26), self.account_switcher()].spacing(8);
+        let brand = row![
+            theme::sized_icon(theme::Icon::Logo, 30.0, 28.0, theme::TEXT),
+            text("prime").size(20).font(theme::DISPLAY_FONT)
+        ]
+        .spacing(6)
+        .padding([0, 8])
+        .align_y(alignment::Vertical::Center);
 
-        let tabs = column![
-            text("Navigate").size(16),
+        let nav = column![
             self.tab_button(Tab::Accounts),
             self.tab_button(Tab::Shop),
             self.tab_button(Tab::Loadout),
             self.tab_button(Tab::Settings),
         ]
-        .spacing(8);
+        .spacing(2);
 
-        container(scrollable(column![accounts, tabs].spacing(16)))
-            .padding(SIDEBAR_PADDING)
-            .width(SIDEBAR_WIDTH)
-            .height(Length::Fill)
-            .style(|_| iced::widget::container::Style::default().background(theme::SURFACE))
-            .into()
+        let version = text(format!("v{}", env!("CARGO_PKG_VERSION")))
+            .size(11)
+            .font(theme::MONO_FONT)
+            .color(theme::FAINT);
+
+        let sidebar = container(
+            column![
+                brand,
+                self.account_switcher(),
+                nav,
+                space().height(Length::Fill),
+                container(version).padding([0, 8])
+            ]
+            .spacing(28),
+        )
+        .padding([24, 16])
+        .width(SIDEBAR_WIDTH)
+        .height(Length::Fill)
+        .style(|_| filled(theme::SURFACE));
+
+        row![sidebar, rule(theme::LINE)].into()
     }
 
     fn account_switcher(&self) -> Element<'_, Message> {
@@ -169,7 +193,8 @@ impl PrimeApp {
             self.account_switcher_menu(),
             self.account_switcher_open,
             ACCOUNT_SWITCHER_MENU_TOP_OFFSET,
-            0.0,
+            // Negative, so the wider menu lines up with the badge's left edge.
+            ACCOUNT_SWITCHER_WIDTH - ACCOUNT_SWITCHER_MENU_WIDTH,
         )
     }
 
@@ -177,31 +202,43 @@ impl PrimeApp {
         let account = self.state.selected_account();
         let is_open = self.account_switcher_open;
         let display_name = account
-            .map(|account| account.display_name.clone())
-            .unwrap_or_else(|| "No profile".to_string());
+            .map(|account| account.display_name.as_str())
+            .unwrap_or("No profile");
+        let avatar = match account {
+            Some(account) => account_avatar(&account.display_name, 34.0, 8.0),
+            None => container(theme::icon(theme::Icon::Users, 17.0, theme::MUTED))
+                .center_x(34)
+                .center_y(34)
+                .style(|_| filled(theme::LINE).border(iced::border::rounded(8)))
+                .into(),
+        };
         let detail = account
             .map(account_detail_label)
             .unwrap_or_else(|| "Add or select an account".to_string());
 
-        let content = container(
-            row![
-                column![
-                    text(display_name).size(15).width(Length::Fill),
-                    text(detail).size(12).width(Length::Fill)
-                ]
-                .spacing(2)
-                .width(Length::Fill),
-                text(if self.account_switcher_open { "^" } else { "v" }).size(13)
+        let content = row![
+            avatar,
+            column![
+                text(display_name)
+                    .size(13)
+                    .font(theme::SEMIBOLD_FONT)
+                    .wrapping(Wrapping::None),
+                text(detail)
+                    .size(11)
+                    .color(theme::MUTED)
+                    .wrapping(Wrapping::None)
             ]
-            .spacing(8)
-            .align_y(alignment::Vertical::Center),
-        )
-        .padding([9, 10])
-        .width(Length::Fill);
+            .spacing(2)
+            .width(Length::Fill)
+            .clip(true),
+            theme::icon(theme::Icon::ChevronsUpDown, 16.0, theme::MUTED)
+        ]
+        .spacing(10)
+        .align_y(alignment::Vertical::Center);
 
         button(content)
-            .padding(0)
-            .width(Length::Fill)
+            .padding(10)
+            .width(ACCOUNT_SWITCHER_WIDTH)
             .style(move |theme, status| account_badge_button_style(theme, status, is_open))
             .on_press_maybe(
                 (!self.state.accounts.is_empty()).then_some(Message::ToggleAccountSwitcher),
@@ -210,104 +247,136 @@ impl PrimeApp {
     }
 
     fn account_switcher_menu(&self) -> Element<'_, Message> {
-        let mut accounts = column![].spacing(6).width(Length::Fill);
-
-        if self.state.accounts.is_empty() {
-            accounts = accounts.push(text("No profiles yet").size(13));
-        }
+        let mut menu = column![
+            container(
+                text("SWITCH ACCOUNT")
+                    .size(10)
+                    .font(theme::BOLD_FONT)
+                    .color(theme::FAINT)
+            )
+            .padding(Padding {
+                top: 6.0,
+                right: 10.0,
+                bottom: 8.0,
+                left: 10.0,
+            })
+        ]
+        .spacing(1)
+        .width(Length::Fill);
 
         for account in &self.state.accounts {
             let is_selected = self.state.selected_account == Some(account.id);
-            accounts = accounts.push(account_switcher_menu_item(account, is_selected));
+            menu = menu.push(account_switcher_menu_item(account, is_selected));
         }
 
-        container(accounts)
-            .padding(8)
-            .width(ACCOUNT_SWITCHER_MENU_WIDTH)
-            .style(iced::widget::container::bordered_box)
-            .into()
+        menu = menu
+            .push(
+                container(space())
+                    .width(Length::Fill)
+                    .height(1)
+                    .style(|_| filled(theme::LINE)),
+            )
+            .push(menu_action(
+                theme::Icon::Plus,
+                "Add account",
+                Message::AddAccount,
+            ))
+            .push(menu_action(
+                theme::Icon::Settings2,
+                "Manage accounts",
+                Message::TabSelected(Tab::Accounts),
+            ));
+
+        // Opaque, so clicks on its gaps don't reach the page it overhangs.
+        opaque(
+            container(menu)
+                .padding(6)
+                .width(ACCOUNT_SWITCHER_MENU_WIDTH)
+                .style(popover_style),
+        )
     }
 
     fn main_panel(&self) -> Element<'_, Message> {
         let active_tab = self.active_tab;
+        let status_visible = status_bar_visible(self);
         let body = screens::tab(self, self.active_tab);
         let scroll_body = container(body)
-            .padding(Padding::ZERO.right(18))
+            .padding(Padding {
+                top: 0.0,
+                right: 18.0,
+                // Room to scroll the last content above the status toast.
+                bottom: if status_visible { 90.0 } else { 28.0 },
+                left: 0.0,
+            })
             .width(Length::Fill);
 
-        let mut panel = column![
+        let panel = column![
             self.main_header(),
-            container(
-                scrollable(scroll_body)
-                    .id(MAIN_PANEL_SCROLLABLE_ID)
-                    .on_scroll(move |viewport| Message::MainPanelScrolled {
-                        tab: active_tab,
-                        offset: viewport.absolute_offset(),
-                    })
-            )
-            .padding(16)
-            .width(Length::Fill)
-            .height(Length::Fill)
+            scrollable(scroll_body)
+                .id(MAIN_PANEL_SCROLLABLE_ID)
+                .on_scroll(move |viewport| Message::MainPanelScrolled {
+                    tab: active_tab,
+                    offset: viewport.absolute_offset(),
+                })
+                .height(Length::Fill)
         ]
-        .spacing(12);
+        .spacing(22);
 
-        if status_bar_visible(self) {
-            panel = panel.push(self.status_bar());
+        if status_visible {
+            stack![
+                panel,
+                container(self.status_toast())
+                    .padding(Padding::ZERO.bottom(24))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_y(alignment::Vertical::Bottom)
+            ]
+            .into()
+        } else {
+            panel.into()
         }
-
-        panel.into()
     }
 
     fn main_header(&self) -> Element<'_, Message> {
         let title = text(self.active_tab.to_string())
-            .size(30)
+            .size(28)
             .font(theme::DISPLAY_FONT);
 
-        let header: Element<_> = if self.active_tab == Tab::Shop {
-            row![
+        let header: Element<_> = match (&self.store_summary, self.active_tab) {
+            (Some(summary), Tab::Shop) => row![
                 container(title).width(Length::Fill),
-                self.shop_header_currency()
+                currency_balance_display(summary)
             ]
             .spacing(12)
             .align_y(alignment::Vertical::Center)
-            .into()
-        } else {
-            title.into()
+            .into(),
+            _ => title.into(),
         };
 
         container(header)
-            .padding(14)
+            .padding(Padding::ZERO.right(18))
             .width(Length::Fill)
-            .style(iced::widget::container::bordered_box)
             .into()
     }
 
-    fn shop_header_currency(&self) -> Element<'_, Message> {
-        if let Some(summary) = &self.store_summary {
-            currency_balance_display(summary)
+    fn status_toast(&self) -> Element<'_, Message> {
+        let lead = if status_spinner_active(self) {
+            loading_indicator(self.loading_frame)
+        } else if status_message_is_error(&self.status) {
+            theme::icon(theme::Icon::TriangleAlert, 15.0, theme::ACCENT)
         } else {
-            text("").into()
-        }
-    }
-
-    fn status_bar(&self) -> Element<'_, Message> {
-        let status: Element<_> = if status_spinner_active(self) {
-            row![
-                loading_indicator(self.loading_frame),
-                text(&self.status).width(Length::Fill)
-            ]
-            .spacing(10)
-            .align_y(alignment::Vertical::Center)
-            .into()
-        } else {
-            text(&self.status).into()
+            theme::icon(theme::Icon::Info, 15.0, theme::MUTED)
         };
 
-        container(status)
-            .padding(10)
-            .width(Length::Fill)
-            .style(iced::widget::container::bordered_box)
-            .into()
+        container(
+            row![lead, text(&self.status).size(12)]
+                .spacing(10)
+                .align_y(alignment::Vertical::Center),
+        )
+        .padding([10, 14])
+        .max_width(STATUS_TOAST_MAX_WIDTH)
+        .style(popover_style)
+        .into()
     }
 
     fn tab_button(&self, tab: Tab) -> Element<'_, Message> {
@@ -318,50 +387,201 @@ impl PrimeApp {
             Tab::Loadout => theme::Icon::Swords,
             Tab::Settings => theme::Icon::Settings,
         };
-        let color = if is_selected {
-            theme::TEXT
+        let (color, font) = if is_selected {
+            (theme::TEXT, theme::SEMIBOLD_FONT)
         } else {
-            theme::MUTED
+            (theme::MUTED, theme::MEDIUM_FONT)
         };
+        let indicator = container(space()).width(3).height(16).style(move |_| {
+            let style = filled(if is_selected {
+                theme::ACCENT
+            } else {
+                Color::TRANSPARENT
+            });
+            style.border(iced::border::rounded(2))
+        });
 
         button(
-            row![theme::icon(icon, 17.0, color), text(tab.to_string())]
-                .spacing(10)
-                .align_y(alignment::Vertical::Center),
+            row![
+                indicator,
+                row![
+                    theme::icon(icon, 17.0, color),
+                    text(tab.to_string()).size(14).font(font)
+                ]
+                .spacing(12)
+                .align_y(alignment::Vertical::Center)
+            ]
+            .spacing(9)
+            .align_y(alignment::Vertical::Center),
         )
+        .padding(Padding {
+            top: 9.0,
+            right: 12.0,
+            bottom: 9.0,
+            left: 0.0,
+        })
         .width(Length::Fill)
-        .style(move |theme, status| sidebar_tab_button_style(theme, status, is_selected))
+        .style(move |theme, status| theme::choice_style(theme, status, is_selected))
         .on_press_maybe((!is_selected).then_some(Message::TabSelected(tab)))
         .into()
     }
 }
 
 fn account_switcher_menu_item(account: &AccountProfile, is_selected: bool) -> Element<'_, Message> {
-    let prefix = if is_selected { "> " } else { "" };
-    let display_name = format!("{prefix}{}", account.display_name);
+    let tag = account
+        .tag_line
+        .as_deref()
+        .map(|tag_line| format!("#{tag_line}"));
+    let (session, session_color) = if account.has_launcher_session() {
+        ("Session captured", theme::MUTED)
+    } else {
+        ("Login not captured", theme::GOLD)
+    };
 
-    let content = column![
-        text(display_name).size(14).width(Length::Fill),
-        text(account_detail_label(account))
-            .size(12)
-            .width(Length::Fill)
+    let mut name = row![
+        text(&account.display_name)
+            .size(13)
+            .font(theme::SEMIBOLD_FONT)
+            .color(theme::TEXT)
+            .wrapping(Wrapping::None)
     ]
-    .spacing(1)
-    .width(Length::Fill);
+    .spacing(5);
+    if let Some(tag) = tag {
+        name = name.push(
+            text(tag)
+                .size(13)
+                .color(theme::FAINT)
+                .wrapping(Wrapping::None),
+        );
+    }
+
+    let mut content = row![
+        account_avatar(&account.display_name, 28.0, 7.0),
+        column![name, text(session).size(11).color(session_color)]
+            .spacing(1)
+            .width(Length::Fill)
+            .clip(true)
+    ]
+    .spacing(10)
+    .align_y(alignment::Vertical::Center);
+    if is_selected {
+        content = content.push(theme::icon(theme::Icon::Check, 15.0, theme::ACCENT));
+    }
 
     button(content)
-        .padding([7, 8])
+        .padding([7, 10])
         .width(Length::Fill)
-        .style(move |theme, status| account_switcher_item_style(theme, status, is_selected))
+        .style(move |_, status| menu_item_style(status, is_selected))
         .on_press_maybe((!is_selected).then_some(Message::SelectAccount(account.id)))
         .into()
 }
 
+fn menu_action(
+    icon: theme::Icon,
+    label: &'static str,
+    message: Message,
+) -> Element<'static, Message> {
+    button(
+        row![
+            theme::icon(icon, 15.0, theme::MUTED),
+            text(label).size(13).color(theme::TEXT)
+        ]
+        .spacing(10)
+        .align_y(alignment::Vertical::Center),
+    )
+    .padding([8, 10])
+    .width(Length::Fill)
+    .style(|_, status| menu_item_style(status, false))
+    .on_press(message)
+    .into()
+}
+
+/// A square with the account's initials, standing in for its player card.
+fn account_avatar(display_name: &str, size: f32, radius: f32) -> Element<'static, Message> {
+    let initials: String = display_name
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .take(2)
+        .flat_map(char::to_uppercase)
+        .collect();
+
+    container(
+        text(initials)
+            .size(size * 0.36)
+            .font(theme::SEMIBOLD_FONT)
+            .color(theme::TEXT),
+    )
+    .center_x(size)
+    .center_y(size)
+    .style(move |_| filled(theme::LINE).border(iced::border::rounded(radius)))
+    .into()
+}
+
+/// The Riot tag and rank under an account's name, falling back to its shard.
 fn account_detail_label(account: &AccountProfile) -> String {
-    account
-        .riot_id()
-        .map(|identity| format!("{identity} | {}", account.shard))
-        .unwrap_or_else(|| account.shard.to_string())
+    let tag = account
+        .tag_line
+        .as_deref()
+        .map(|tag_line| format!("#{tag_line}"));
+    let rank = account
+        .competitive_rank
+        .as_ref()
+        .map(|rank| rank.rank_name.clone());
+
+    match (tag, rank) {
+        (Some(tag), Some(rank)) => format!("{tag} · {rank}"),
+        (Some(tag), None) => tag,
+        (None, Some(rank)) => rank,
+        (None, None) => account.shard.to_string(),
+    }
+}
+
+fn filled(color: Color) -> iced::widget::container::Style {
+    iced::widget::container::Style::default().background(color)
+}
+
+fn rule(color: Color) -> Element<'static, Message> {
+    container(space())
+        .width(1)
+        .height(Length::Fill)
+        .style(move |_| filled(color))
+        .into()
+}
+
+fn popover_style(_: &Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(theme::RAISED.into()),
+        text_color: Some(theme::TEXT),
+        border: iced::Border {
+            color: POPOVER_BORDER,
+            width: 1.0,
+            radius: 10.0.into(),
+        },
+        shadow: iced::Shadow {
+            color: Color::from_rgba8(0, 0, 0, 0.6),
+            offset: iced::Vector::new(0.0, 12.0),
+            blur_radius: 32.0,
+        },
+        ..Default::default()
+    }
+}
+
+fn menu_item_style(
+    status: iced::widget::button::Status,
+    is_selected: bool,
+) -> iced::widget::button::Style {
+    let highlighted = is_selected
+        || matches!(
+            status,
+            iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+        );
+
+    iced::widget::button::Style {
+        background: highlighted.then_some(theme::LINE.into()),
+        text_color: theme::TEXT,
+        border: iced::border::rounded(7),
+        ..Default::default()
+    }
 }
 
 fn account_badge_button_style(
@@ -375,23 +595,9 @@ fn account_badge_button_style(
         status
     };
 
-    theme::button_style(theme, status)
-}
-
-fn sidebar_tab_button_style(
-    theme: &Theme,
-    status: iced::widget::button::Status,
-    is_selected: bool,
-) -> iced::widget::button::Style {
-    theme::choice_style(theme, status, is_selected)
-}
-
-fn account_switcher_item_style(
-    theme: &Theme,
-    status: iced::widget::button::Status,
-    is_selected: bool,
-) -> iced::widget::button::Style {
-    theme::choice_style(theme, status, is_selected)
+    let mut style = theme::button_style(theme, status);
+    style.border.radius = 10.0.into();
+    style
 }
 
 fn add_account_prompt_overlay(

@@ -11,9 +11,11 @@ use iced::{
     alignment,
 };
 
-use super::data::shop::{CurrencyBalanceDisplay, StoreSummary};
+use super::data::shop::{CurrencyBalanceDisplay, StoreSummary, format_whole_number};
 use super::theme::{self, button};
 use super::{ImageViewerRequest, ImageViewerSource, Message, image_viewer_enabled};
+
+const RADIANITE_COLOR: Color = iced::color!(0x54D1C2);
 
 // Keeps popovers in the overlay layer so controls are not clipped by their parent card. A left
 // click outside both the popover and its anchor publishes `Message::DismissPopovers`; clicks on the
@@ -635,20 +637,52 @@ pub(super) fn currency_balance_display(summary: &StoreSummary) -> Element<'_, Me
 }
 
 fn currency_balance_row<'a>(balances: &'a [CurrencyBalanceDisplay]) -> Element<'a, Message> {
-    let mut row = iced::widget::Row::new().spacing(10);
+    let mut row = iced::widget::Row::new().spacing(4);
 
     for balance in balances {
         row = row.push(currency_balance_chip(balance));
     }
 
-    row.into()
+    container(row)
+        .padding(4)
+        .style(|theme| {
+            let mut style = iced::widget::container::bordered_box(theme);
+            style.border.radius = 10.0.into();
+            style
+        })
+        .into()
 }
 
 fn currency_balance_chip(balance: &CurrencyBalanceDisplay) -> Element<'_, Message> {
-    container(text(balance.label()).size(16))
-        .padding([6, 10])
-        .style(iced::widget::container::bordered_box)
-        .into()
+    // The wallet already names its currencies VP, Radianite and Kingdom Credits.
+    let (short_name, color) = match balance.currency.display_name.as_str() {
+        "VP" => ("VP", theme::ACCENT),
+        "Radianite" => ("RAD", RADIANITE_COLOR),
+        "Kingdom Credits" => ("KC", theme::GOLD),
+        other => (other, theme::MUTED),
+    };
+    let dot = container(space()).width(8).height(8).style(move |_| {
+        iced::widget::container::Style::default()
+            .background(color)
+            .border(iced::border::rounded(4))
+    });
+
+    container(
+        row![
+            dot,
+            text(format_whole_number(balance.amount))
+                .size(13)
+                .font(theme::MONO_FONT),
+            text(short_name)
+                .size(11)
+                .font(theme::SEMIBOLD_FONT)
+                .color(theme::FAINT)
+        ]
+        .spacing(8)
+        .align_y(alignment::Vertical::Center),
+    )
+    .padding([6, 12])
+    .into()
 }
 
 #[cfg(test)]

@@ -381,9 +381,9 @@ fn store_summary_orders_currency_balances() {
         summary
             .currency_balances
             .iter()
-            .map(|balance| balance.label())
+            .map(|balance| (balance.amount, balance.currency.display_name.as_str()))
             .collect::<Vec<_>>(),
-        ["1,250 VP", "40 Radianite", "9,000 Kingdom Credits"]
+        [(1250, "VP"), (40, "Radianite"), (9000, "Kingdom Credits")]
     );
 }
 
