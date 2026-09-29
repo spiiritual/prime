@@ -1,6 +1,6 @@
 use iced::widget::image::Handle;
 use iced::widget::{
-    button, column, container, image, opaque, row, scrollable, space, stack, text, text_input,
+    column, container, image, opaque, row, scrollable, space, stack, text, text_input,
 };
 use iced::{Color, ContentFit, Element, Length, Padding, Theme, alignment};
 
@@ -8,6 +8,7 @@ use crate::account::AccountProfile;
 use crate::game_settings::{GameSettingsProfileMetadata, GameSettingsProfilePurpose};
 
 use super::components::{anchored_popover, currency_balance_display, loading_indicator};
+use super::theme::{self, button};
 use super::{
     AccountExportOutput, ImageViewerImage, MAIN_PANEL_SCROLLABLE_ID, Message,
     PendingSettingsChange, PresetNamePrompt, PresetNameTarget, PrimeApp, SettingsChange, Tab,
@@ -158,7 +159,7 @@ impl PrimeApp {
             .padding(SIDEBAR_PADDING)
             .width(SIDEBAR_WIDTH)
             .height(Length::Fill)
-            .style(iced::widget::container::dark)
+            .style(|_| iced::widget::container::Style::default().background(theme::SURFACE))
             .into()
     }
 
@@ -247,7 +248,6 @@ impl PrimeApp {
             .padding(16)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(iced::widget::container::rounded_box)
         ]
         .spacing(12);
 
@@ -259,7 +259,9 @@ impl PrimeApp {
     }
 
     fn main_header(&self) -> Element<'_, Message> {
-        let title = text(self.active_tab.to_string()).size(30);
+        let title = text(self.active_tab.to_string())
+            .size(30)
+            .font(theme::DISPLAY_FONT);
 
         let header: Element<_> = if self.active_tab == Tab::Shop {
             row![
@@ -310,17 +312,27 @@ impl PrimeApp {
 
     fn tab_button(&self, tab: Tab) -> Element<'_, Message> {
         let is_selected = self.active_tab == tab;
-        let label = if is_selected {
-            format!("[{}]", tab)
+        let icon = match tab {
+            Tab::Accounts => theme::Icon::Users,
+            Tab::Shop => theme::Icon::ShoppingBag,
+            Tab::Loadout => theme::Icon::Swords,
+            Tab::Settings => theme::Icon::Settings,
+        };
+        let color = if is_selected {
+            theme::TEXT
         } else {
-            tab.to_string()
+            theme::MUTED
         };
 
-        button(text(label))
-            .width(Length::Fill)
-            .style(move |theme, status| sidebar_tab_button_style(theme, status, is_selected))
-            .on_press_maybe((!is_selected).then_some(Message::TabSelected(tab)))
-            .into()
+        button(
+            row![theme::icon(icon, 17.0, color), text(tab.to_string())]
+                .spacing(10)
+                .align_y(alignment::Vertical::Center),
+        )
+        .width(Length::Fill)
+        .style(move |theme, status| sidebar_tab_button_style(theme, status, is_selected))
+        .on_press_maybe((!is_selected).then_some(Message::TabSelected(tab)))
+        .into()
     }
 }
 
@@ -357,11 +369,13 @@ fn account_badge_button_style(
     status: iced::widget::button::Status,
     is_open: bool,
 ) -> iced::widget::button::Style {
-    if is_open {
-        iced::widget::button::secondary(theme, status)
+    let status = if is_open {
+        iced::widget::button::Status::Hovered
     } else {
-        iced::widget::button::primary(theme, status)
-    }
+        status
+    };
+
+    theme::button_style(theme, status)
 }
 
 fn sidebar_tab_button_style(
@@ -369,14 +383,7 @@ fn sidebar_tab_button_style(
     status: iced::widget::button::Status,
     is_selected: bool,
 ) -> iced::widget::button::Style {
-    if !is_selected {
-        return iced::widget::button::primary(theme, status);
-    }
-
-    let mut style = iced::widget::button::secondary(theme, iced::widget::button::Status::Disabled);
-    style.background = Some(Color::from_rgb8(68, 72, 78).into());
-    style.text_color = Color::from_rgb8(180, 184, 190);
-    style
+    theme::choice_style(theme, status, is_selected)
 }
 
 fn account_switcher_item_style(
@@ -384,14 +391,7 @@ fn account_switcher_item_style(
     status: iced::widget::button::Status,
     is_selected: bool,
 ) -> iced::widget::button::Style {
-    if !is_selected {
-        return iced::widget::button::primary(theme, status);
-    }
-
-    let mut style = iced::widget::button::secondary(theme, iced::widget::button::Status::Disabled);
-    style.background = Some(Color::from_rgb8(68, 72, 78).into());
-    style.text_color = Color::from_rgb8(180, 184, 190);
-    style
+    theme::choice_style(theme, status, is_selected)
 }
 
 fn add_account_prompt_overlay(
@@ -538,7 +538,7 @@ fn export_account_prompt_overlay(export: &AccountExportOutput) -> Element<'_, Me
                 ))
                 .size(14)
                 .width(Length::Fill)
-                .color(Color::from_rgb8(255, 112, 112))
+                .color(theme::ACCENT)
             ]
             .spacing(8)
             .width(Length::Fill),
@@ -767,7 +767,7 @@ fn confirmation_prompt_overlay<'a>(
     let prompt = container(
         column![
             column![text(title).size(20), text(details).size(14)]
-                .push(note.map(|note| text(note).size(14).color(screens::MUTED_TEXT)))
+                .push(note.map(|note| text(note).size(14).color(theme::MUTED)))
                 .spacing(8)
                 .width(Length::Fill),
             row![
@@ -848,7 +848,7 @@ fn running_game_warning() -> Element<'static, Message> {
     text("VALORANT is running. Continuing will close it, including any match in progress.")
         .size(14)
         .width(Length::Fill)
-        .color(Color::from_rgb8(255, 112, 112))
+        .color(theme::ACCENT)
         .into()
 }
 
@@ -983,10 +983,7 @@ fn image_viewer_overlay(
         .align_y(alignment::Vertical::Center)
         .into()
     } else if let Some(error) = &image_to_view.high_res_error {
-        text(error)
-            .size(13)
-            .color(Color::from_rgb8(255, 112, 112))
-            .into()
+        text(error).size(13).color(theme::ACCENT).into()
     } else {
         text("").into()
     };

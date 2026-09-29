@@ -5,13 +5,14 @@ use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget::Tree,
 };
 use iced::widget::image::Handle;
-use iced::widget::{Column, Row, button, column, container, image, responsive, row, space, text};
+use iced::widget::{Column, Row, column, container, image, responsive, row, space, text};
 use iced::{
     Color, ContentFit, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector,
     alignment,
 };
 
 use super::data::shop::{CurrencyBalanceDisplay, StoreSummary};
+use super::theme::{self, button};
 use super::{ImageViewerRequest, ImageViewerSource, Message, image_viewer_enabled};
 
 // Keeps popovers in the overlay layer so controls are not clipped by their parent card. A left
@@ -527,40 +528,13 @@ pub(super) fn sub_tab_button(
     is_selected: bool,
     on_press: Message,
 ) -> Element<'static, Message> {
-    let label = if is_selected {
-        format!("[{label}]")
-    } else {
-        label
-    };
-
     button(text(label).size(14))
         .padding([12, 16])
         .width(Length::Fill)
         .height(46)
-        .style(move |theme, status| sub_tab_button_style(theme, status, is_selected))
+        .style(move |theme, status| theme::choice_style(theme, status, is_selected))
         .on_press_maybe((!is_selected).then_some(on_press))
         .into()
-}
-
-fn sub_tab_button_style(
-    theme: &Theme,
-    status: iced::widget::button::Status,
-    is_selected: bool,
-) -> iced::widget::button::Style {
-    if !is_selected {
-        let mut style = iced::widget::button::primary(theme, status);
-        style.border.radius = iced::border::radius(4);
-        style.border.width = 1.0;
-        return style;
-    }
-
-    let mut style = iced::widget::button::secondary(theme, iced::widget::button::Status::Disabled);
-    style.background = Some(Color::from_rgb8(68, 72, 78).into());
-    style.text_color = Color::from_rgb8(180, 184, 190);
-    style.border.radius = iced::border::radius(4);
-    style.border.width = 1.0;
-    style.border.color = Color::from_rgb8(96, 102, 112);
-    style
 }
 
 pub(super) fn loading_indicator(frame: usize) -> Element<'static, Message> {

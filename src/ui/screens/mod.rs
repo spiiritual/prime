@@ -11,7 +11,7 @@ use super::{Message, PrimeApp, Tab};
 
 #[cfg(test)]
 pub(super) use accounts::missing_rank_label;
-pub(super) use game_settings::{MUTED_TEXT, original_settings};
+pub(super) use game_settings::original_settings;
 
 pub(super) fn tab(app: &PrimeApp, tab: Tab) -> Element<'_, Message> {
     match tab {

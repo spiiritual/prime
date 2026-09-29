@@ -9,6 +9,7 @@ use crate::ui::data::loadout::{
     BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutGunDisplay,
 };
 use crate::ui::data::shop::format_duration;
+use crate::ui::theme;
 use crate::ui::{LoadoutTab, Message, PrimeApp};
 
 const LOADOUT_CATEGORIES: [&str; 8] = [
@@ -413,8 +414,14 @@ fn battle_pass_reward_card_style(
     let mut style = iced::widget::container::bordered_box(theme);
 
     if highlighted {
-        style.background = Some(Color::from_rgba8(78, 58, 32, 0.72).into());
-        style.border.color = Color::from_rgb8(218, 154, 72);
+        style.background = Some(
+            Color {
+                a: 0.12,
+                ..theme::GOLD
+            }
+            .into(),
+        );
+        style.border.color = theme::GOLD;
     }
 
     style
@@ -422,15 +429,24 @@ fn battle_pass_reward_card_style(
 
 fn battle_pass_highlight_note_style(theme: &Theme) -> iced::widget::container::Style {
     let mut style = iced::widget::container::bordered_box(theme);
-    style.background = Some(Color::from_rgba8(78, 58, 32, 0.36).into());
-    style.border.color = Color::from_rgb8(150, 112, 67);
-    style.text_color = Some(Color::from_rgb8(224, 218, 208));
+    style.background = Some(
+        Color {
+            a: 0.06,
+            ..theme::GOLD
+        }
+        .into(),
+    );
+    style.border.color = Color {
+        a: 0.5,
+        ..theme::GOLD
+    };
+    style.text_color = Some(theme::TEXT);
     style
 }
 
 fn battle_pass_highlight_swatch_style(_: &Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
-        background: Some(Color::from_rgb8(218, 154, 72).into()),
+        background: Some(theme::GOLD.into()),
         border: iced::Border {
             radius: border::radius(3),
             ..Default::default()
@@ -441,7 +457,7 @@ fn battle_pass_highlight_swatch_style(_: &Theme) -> iced::widget::container::Sty
 
 fn battle_pass_section_divider_style(_: &Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
-        background: Some(Color::from_rgb8(88, 94, 104).into()),
+        background: Some(theme::LINE.into()),
         ..Default::default()
     }
 }

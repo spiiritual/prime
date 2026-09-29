@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use iced::widget::{Space, button, canvas, column, container, pick_list, row, text};
+use iced::widget::{Space, canvas, column, container, pick_list, row, text};
 use iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, alignment, border, mouse,
 };
@@ -13,6 +13,7 @@ use crate::game_settings::{
     GameSettingsProfileSummary, Rgba, Setting,
 };
 use crate::ui::components::compact_loading_indicator;
+use crate::ui::theme::{self, button};
 use crate::ui::{Message, PrimeApp, SettingsChange};
 
 use super::accounts::last_refreshed_label;
@@ -24,8 +25,6 @@ const CROSSHAIR_PREVIEW_SIZE: f32 = 88.0;
 /// Screen pixels per VALORANT crosshair unit, before shrinking a large crosshair to fit.
 const CROSSHAIR_PREVIEW_SCALE: f32 = 2.0;
 const SWATCH_SIZE: f32 = 12.0;
-pub(in crate::ui) const MUTED_TEXT: Color = Color::from_rgb(0.56, 0.59, 0.64);
-const BRIGHT_TEXT: Color = Color::from_rgb(0.86, 0.88, 0.91);
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     let mut sections = column![presets_section(app)]
@@ -84,7 +83,7 @@ fn presets_section(app: &PrimeApp) -> Element<'_, Message> {
             text("Presets").size(18),
             text("Saved VALORANT settings you can apply to any of your accounts.")
                 .size(13)
-                .color(MUTED_TEXT)
+                .color(theme::MUTED)
         ]
         .spacing(4)
         .width(Length::Fill)
@@ -110,7 +109,7 @@ fn presets_section(app: &PrimeApp) -> Element<'_, Message> {
         presets = presets.push(
             text("No presets yet. Pick an account above to save its settings as one.")
                 .size(13)
-                .color(MUTED_TEXT),
+                .color(theme::MUTED),
         );
     }
 
@@ -164,7 +163,7 @@ fn preset_card<'a>(
                 last_refreshed_label(Some(profile.captured_at_unix))
             ))
             .size(12)
-            .color(MUTED_TEXT)
+            .color(theme::MUTED)
         ]
         .spacing(2)
         .width(Length::Fill)
@@ -223,7 +222,7 @@ fn settings_details<'a>(
             } else {
                 text(summary.minimap.join(" · "))
                     .size(13)
-                    .color(BRIGHT_TEXT)
+                    .color(theme::TEXT)
                     .into()
             }
         ),
@@ -277,14 +276,14 @@ fn all_settings(summary: &GameSettingsProfileSummary) -> Element<'_, Message> {
             continue;
         }
 
-        let mut group = column![text(title.to_uppercase()).size(11).color(MUTED_TEXT)]
+        let mut group = column![text(title.to_uppercase()).size(11).color(theme::MUTED)]
             .spacing(4)
             .width(Length::Fill);
         for (label, value) in settings {
             group = group.push(
                 row![
                     text(label).size(13).width(Length::Fill),
-                    text(value).size(13).color(BRIGHT_TEXT)
+                    text(value).size(13).color(theme::TEXT)
                 ]
                 .spacing(12),
             );
@@ -306,7 +305,7 @@ fn detail_row<'a>(label: &'a str, value: Element<'a, Message>) -> Element<'a, Me
     row![
         text(label.to_uppercase())
             .size(11)
-            .color(MUTED_TEXT)
+            .color(theme::MUTED)
             .width(DETAIL_LABEL_WIDTH),
         value
     ]
@@ -316,7 +315,7 @@ fn detail_row<'a>(label: &'a str, value: Element<'a, Message>) -> Element<'a, Me
 }
 
 fn default_value() -> Element<'static, Message> {
-    text("Default").size(13).color(MUTED_TEXT).into()
+    text("Default").size(13).color(theme::MUTED).into()
 }
 
 fn sensitivity_value(summary: &GameSettingsProfileSummary) -> Element<'static, Message> {
@@ -349,7 +348,7 @@ fn crosshair_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message>
 
     let mut value = row![
         color_swatch(crosshair.color),
-        text(crosshair.color.label()).size(13).color(BRIGHT_TEXT)
+        text(crosshair.color.label()).size(13).color(theme::TEXT)
     ]
     .spacing(6)
     .align_y(alignment::Vertical::Center);
@@ -357,7 +356,7 @@ fn crosshair_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message>
     if let Some(name) = &crosshair.name {
         value = value
             .push(separator())
-            .push(text(name).size(13).color(BRIGHT_TEXT));
+            .push(text(name).size(13).color(theme::TEXT));
     }
 
     if summary.crosshair_profile_count > 1 {
@@ -367,7 +366,7 @@ fn crosshair_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message>
                 summary.crosshair_profile_count
             ))
             .size(13)
-            .color(MUTED_TEXT),
+            .color(theme::MUTED),
         );
     }
 
@@ -385,7 +384,7 @@ fn keybinds_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message> 
         value = value.push(
             row![
                 keycap(&keybind.key),
-                text(&keybind.action).size(13).color(BRIGHT_TEXT)
+                text(&keybind.action).size(13).color(theme::TEXT)
             ]
             .spacing(6)
             .align_y(alignment::Vertical::Center),
@@ -394,7 +393,7 @@ fn keybinds_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message> 
 
     let hidden = summary.keybinds.len().saturating_sub(SHORT_KEYBIND_LIMIT);
     if hidden > 0 {
-        value = value.push(text(format!("+{hidden} more")).size(13).color(MUTED_TEXT));
+        value = value.push(text(format!("+{hidden} more")).size(13).color(theme::MUTED));
     }
 
     value.into()
@@ -404,15 +403,15 @@ fn keybinds_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message> 
 fn chip(label: Option<&'static str>, value: String) -> Element<'static, Message> {
     let mut content = row![].spacing(5).align_y(alignment::Vertical::Center);
     if let Some(label) = label {
-        content = content.push(text(label).size(11).color(MUTED_TEXT));
+        content = content.push(text(label).size(11).color(theme::MUTED));
     }
-    content = content.push(text(value).size(13).color(BRIGHT_TEXT));
+    content = content.push(text(value).size(13).color(theme::TEXT));
 
     container(content).padding([2, 8]).style(chip_style).into()
 }
 
 fn keycap(key: &str) -> Element<'_, Message> {
-    container(text(key).size(12).color(BRIGHT_TEXT))
+    container(text(key).size(12).color(theme::TEXT))
         .padding([1, 7])
         .style(keycap_style)
         .into()
@@ -433,7 +432,7 @@ fn color_swatch(color: Rgba) -> Element<'static, Message> {
 }
 
 fn separator() -> Element<'static, Message> {
-    text("·").size(13).color(MUTED_TEXT).into()
+    text("·").size(13).color(theme::MUTED).into()
 }
 
 fn divider() -> Element<'static, Message> {
@@ -655,7 +654,7 @@ fn restore_section(app: &PrimeApp) -> Option<Element<'_, Message>> {
             "Applying a preset puts the account's own settings aside first. Restore puts them back."
         )
         .size(13)
-        .color(MUTED_TEXT)
+        .color(theme::MUTED)
     ]
     .spacing(10)
     .width(Length::Fill);
@@ -678,7 +677,7 @@ fn restore_section(app: &PrimeApp) -> Option<Element<'_, Message>> {
                     last_refreshed_label(Some(original.captured_at_unix))
                 ))
                 .size(12)
-                .color(MUTED_TEXT)
+                .color(theme::MUTED)
             ]
             .spacing(2)
             .width(Length::Fill)
@@ -774,10 +773,7 @@ fn progress_label(app: &PrimeApp, account_id: AccountId, verb: &str) -> Element<
 
 fn preset_card_style(theme: &Theme) -> iced::widget::container::Style {
     let mut style = iced::widget::container::bordered_box(theme);
-    style.background = Some(Color::from_rgba8(255, 255, 255, 0.025).into());
-    style.border = border::rounded(6)
-        .width(1)
-        .color(Color::from_rgba8(255, 255, 255, 0.10));
+    style.border = border::rounded(6).width(1).color(theme::LINE);
     style
 }
 
@@ -794,20 +790,16 @@ fn crosshair_tile_style(_: &Theme) -> iced::widget::container::Style {
 
 fn chip_style(_: &Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
-        background: Some(Color::from_rgba8(255, 255, 255, 0.06).into()),
-        border: border::rounded(4)
-            .width(1)
-            .color(Color::from_rgba8(255, 255, 255, 0.12)),
+        background: Some(theme::RAISED.into()),
+        border: border::rounded(4).width(1).color(theme::LINE),
         ..Default::default()
     }
 }
 
 fn keycap_style(_: &Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
-        background: Some(Color::from_rgb8(48, 52, 59).into()),
-        border: border::rounded(4)
-            .width(1)
-            .color(Color::from_rgb8(96, 102, 112)),
+        background: Some(theme::LINE.into()),
+        border: border::rounded(4).width(1).color(theme::FAINT),
         ..Default::default()
     }
 }

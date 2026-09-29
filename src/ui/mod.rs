@@ -5,6 +5,7 @@ mod screens;
 mod shell;
 #[cfg(test)]
 mod tests;
+mod theme;
 mod tray;
 
 use std::collections::{HashMap, HashSet};
@@ -55,7 +56,13 @@ fn settings_cloning_enabled() -> bool {
 }
 
 pub fn run() -> iced::Result {
+    let [body, display, mono] = theme::FONTS;
+
     iced::application(PrimeApp::boot, PrimeApp::update, PrimeApp::view)
+        .font(body)
+        .font(display)
+        .font(mono)
+        .default_font(theme::BODY_FONT)
         .title(app_title)
         .theme(app_theme)
         .subscription(app_subscription)
@@ -76,7 +83,8 @@ fn app_title(_: &PrimeApp) -> String {
 }
 
 fn app_theme(_: &PrimeApp) -> Theme {
-    Theme::Dark
+    static THEME: std::sync::LazyLock<Theme> = std::sync::LazyLock::new(theme::theme);
+    THEME.clone()
 }
 
 fn app_subscription(app: &PrimeApp) -> Subscription<Message> {

@@ -1,7 +1,8 @@
-use iced::widget::{button, checkbox, column, row, text, text_input};
+use iced::widget::{checkbox, column, row, text, text_input};
 use iced::{Element, Length, alignment};
 
 use crate::ui::data::format_bytes;
+use crate::ui::theme::{self, button};
 use crate::ui::{Message, PrimeApp};
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
@@ -43,6 +44,7 @@ fn riot_client_path_controls(app: &PrimeApp) -> Element<'_, Message> {
             r"C:\Riot Games\Riot Client\RiotClientServices.exe",
             &app.riot_client_path_input
         )
+        .font(theme::MONO_FONT)
         .on_input(Message::RiotClientPathChanged)
         .on_submit(Message::SaveSettings),
         save

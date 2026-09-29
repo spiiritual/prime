@@ -1,4 +1,4 @@
-use iced::widget::{button, checkbox, column, container, row, space, text, text_input, tooltip};
+use iced::widget::{checkbox, column, container, row, space, text, text_input, tooltip};
 use iced::{Color, Element, Length, Padding, Theme, alignment};
 use time::{OffsetDateTime, UtcOffset};
 
@@ -7,6 +7,7 @@ use crate::account::{AccountId, AccountProfile, CompetitiveRank};
 use crate::ui::components::{anchored_popover, compact_loading_indicator, sub_tab_button};
 use crate::ui::data::account_details::AccountAvailability;
 use crate::ui::data::shop::format_whole_number;
+use crate::ui::theme::{self, button};
 use crate::ui::{AccountsTab, LauncherCaptureKind, Message, PrimeApp};
 
 const ACCOUNT_MENU_WIDTH: f32 = 190.0;
@@ -598,8 +599,8 @@ fn account_card_style(theme: &Theme, selected: bool) -> iced::widget::container:
     let mut style = iced::widget::container::bordered_box(theme);
 
     if selected {
-        style.background = Some(Color::from_rgba8(30, 48, 67, 0.55).into());
-        style.border.color = Color::from_rgb8(95, 176, 224);
+        style.background = Some(theme::RAISED.into());
+        style.border.color = theme::MUTED;
     }
 
     style
@@ -612,12 +613,12 @@ fn rank_badge_style(theme: &Theme, accent: Option<Color>) -> iced::widget::conta
         Some(color) => {
             style.background = Some(Color::from_rgba(color.r, color.g, color.b, 0.12).into());
             style.border.color = Color::from_rgba(color.r, color.g, color.b, 0.62);
-            style.text_color = Some(Color::from_rgb8(218, 222, 230));
+            style.text_color = Some(theme::TEXT);
         }
         None => {
-            style.background = Some(Color::from_rgba8(48, 52, 59, 0.64).into());
-            style.border.color = Color::from_rgb8(88, 94, 105);
-            style.text_color = Some(Color::from_rgb8(170, 176, 188));
+            style.background = Some(theme::RAISED.into());
+            style.border.color = theme::LINE;
+            style.text_color = Some(theme::MUTED);
         }
     }
 
@@ -626,9 +627,9 @@ fn rank_badge_style(theme: &Theme, accent: Option<Color>) -> iced::widget::conta
 
 fn account_availability_color(availability: &AccountAvailability) -> Color {
     match availability {
-        AccountAvailability::Available => Color::from_rgb8(77, 201, 116),
-        AccountAvailability::Unavailable { .. } => Color::from_rgb8(236, 89, 94),
-        AccountAvailability::Unknown { .. } => Color::from_rgb8(122, 130, 142),
+        AccountAvailability::Available => theme::OK,
+        AccountAvailability::Unavailable { .. } => theme::ACCENT,
+        AccountAvailability::Unknown { .. } => theme::FAINT,
     }
 }
 
@@ -645,23 +646,21 @@ fn account_availability_dot_style(color: Color) -> iced::widget::container::Styl
 
 fn penalty_badge_style(_: &Theme) -> iced::widget::container::Style {
     let mut style = iced::widget::container::Style {
-        background: Some(Color::from_rgba8(224, 87, 92, 0.20).into()),
-        text_color: Some(Color::from_rgb8(255, 224, 224)),
+        background: Some(theme::ACCENT_SOFT.into()),
+        text_color: Some(theme::TEXT),
         ..Default::default()
     };
     style.border.radius = iced::border::radius(ACCOUNT_PENALTY_BADGE_SIZE / 2.0);
     style.border.width = 1.0;
-    style.border.color = Color::from_rgb8(224, 87, 92);
+    style.border.color = theme::ACCENT;
     style
 }
 
 fn level_badge_style(theme: &Theme) -> iced::widget::container::Style {
     let mut style = iced::widget::container::bordered_box(theme);
-    let accent = Color::from_rgb8(95, 176, 224);
-
-    style.background = Some(Color::from_rgba(accent.r, accent.g, accent.b, 0.10).into());
-    style.border.color = Color::from_rgba(accent.r, accent.g, accent.b, 0.58);
-    style.text_color = Some(Color::from_rgb8(218, 226, 234));
+    style.background = Some(theme::RAISED.into());
+    style.border.color = theme::LINE;
+    style.text_color = Some(theme::TEXT);
     style
 }
 
@@ -693,13 +692,10 @@ fn select_account_button_style(
     selected: bool,
 ) -> iced::widget::button::Style {
     if !selected {
-        return iced::widget::button::primary(theme, status);
+        return theme::button_style(theme, status);
     }
 
-    let mut style = iced::widget::button::secondary(theme, iced::widget::button::Status::Disabled);
-    style.background = Some(Color::from_rgb8(68, 72, 78).into());
-    style.text_color = Color::from_rgb8(180, 184, 190);
-    style
+    theme::button_style(theme, iced::widget::button::Status::Disabled)
 }
 
 fn account_menu_button_style(
@@ -707,11 +703,13 @@ fn account_menu_button_style(
     status: iced::widget::button::Status,
     is_open: bool,
 ) -> iced::widget::button::Style {
-    if !is_open {
-        return iced::widget::button::primary(theme, status);
-    }
+    let status = if is_open {
+        iced::widget::button::Status::Hovered
+    } else {
+        status
+    };
 
-    iced::widget::button::secondary(theme, status)
+    theme::button_style(theme, status)
 }
 
 #[cfg(test)]

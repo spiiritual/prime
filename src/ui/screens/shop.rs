@@ -9,6 +9,7 @@ use crate::ui::data::shop::{
     OfferPrice, RarityTier, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
     StoreSummary, format_duration,
 };
+use crate::ui::theme;
 use crate::ui::{Message, PrimeApp};
 
 const SHOP_ITEM_NAME_HEIGHT: f32 = 20.0;
@@ -249,9 +250,9 @@ fn price_line(
         return rich_text::<(), Message, Theme, iced::Renderer>([
             span(original_price.label())
                 .strikethrough(true)
-                .color(Color::from_rgb8(158, 164, 176)),
+                .color(theme::MUTED),
             span(" "),
-            span(price.label()).color(Color::WHITE),
+            span(price.label()).color(theme::TEXT),
         ])
         .size(size)
         .into();
