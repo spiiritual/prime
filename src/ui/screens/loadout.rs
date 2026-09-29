@@ -1,16 +1,20 @@
-use iced::widget::{column, container, grid, progress_bar, row, stack};
-use iced::{Color, Element, Length, Theme, alignment, border};
+use iced::widget::text::Wrapping;
+use iced::widget::{Column, Row, column, container, row, space, stack};
+use iced::{Color, Element, Length, Padding, alignment};
 
 use crate::ui::components::{
-    asset_image, compact_item_name, high_res_image_source, load_error_panel, loading_line,
-    sub_tab_button,
+    asset_image, card_style, empty_state, faded_asset_image, high_res_image_source, mono, outlined,
+    radial_glow, skeleton, unavailable_state,
 };
 use crate::ui::data::loadout::{
-    BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutGunDisplay,
+    BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutGunDisplay, LoadoutSummary,
+    NO_BATTLE_PASS_PROGRESS,
 };
-use crate::ui::data::shop::format_duration;
-use crate::ui::theme::{self, text};
+use crate::ui::data::shop::{RarityTier, format_time_left};
+use crate::ui::theme::{self, Icon, button, text};
 use crate::ui::{LoadoutTab, Message, PrimeApp};
+
+use super::shop::tier_color;
 
 const LOADOUT_CATEGORIES: [&str; 8] = [
     "Sidearms",
@@ -22,442 +26,650 @@ const LOADOUT_CATEGORIES: [&str; 8] = [
     "Melee",
     "Other",
 ];
-const LOADOUT_CARD_WIDTH: u32 = 220;
-const LOADOUT_CARD_HEIGHT: u32 = 264;
-const LOADOUT_IMAGE_HEIGHT: f32 = 148.0;
-const LOADOUT_WEAPON_NAME_HEIGHT: f32 = 20.0;
-const LOADOUT_SKIN_LABEL_HEIGHT: f32 = 16.0;
-const BATTLE_PASS_REWARD_CARD_WIDTH: u32 = 174;
-const BATTLE_PASS_REWARD_CARD_HEIGHT: u32 = 214;
-const BATTLE_PASS_REWARD_IMAGE_HEIGHT: f32 = 92.0;
-const BATTLE_PASS_REWARD_NAME_HEIGHT: f32 = 17.0;
-const BATTLE_PASS_PROGRESS_BAR_HEIGHT: f32 = 30.0;
-const BATTLE_PASS_SECTION_DIVIDER_HEIGHT: f32 = 1.0;
+const CATEGORY_LABEL_WIDTH: f32 = 96.0;
+const TILE_WIDTH: f32 = 136.0;
+const TILE_HEIGHT: f32 = 92.0;
+const TILE_IMAGE_HEIGHT: f32 = 40.0;
+/// A skin's glow and outline, as fractions of its tier colour's full strength.
+const TILE_GLOW_ALPHA: f32 = 0x30 as f32 / 255.0;
+const TILE_BORDER_ALPHA: f32 = 0x55 as f32 / 255.0;
+/// A default skin's art, set back from the skins that were bought.
+const DEFAULT_SKIN_OPACITY: f32 = 0.55;
+const PASS_CARD_HEIGHT: f32 = 107.0;
+const PASS_GLOW_ALPHA: f32 = 0x26 as f32 / 255.0;
+const PASS_BAR_END: Color = iced::color!(0xF5955B);
+/// Each reward row shows this many cards, the latest earned or the next ones up.
+const REWARDS_PER_ROW: usize = 6;
+const REWARD_ART_HEIGHT: f32 = 150.0;
+const REWARD_ART_BACKGROUND: Color = iced::color!(0x0F1217);
+const FEATURED_REWARD_BACKGROUND: Color = iced::color!(0x2A2214);
+const FEATURED_REWARD_BORDER: Color = iced::color!(0xE8BE55, 0x77 as f32 / 255.0);
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
-    container(
-        column![loadout_tabs(app), active_loadout_tab(app)]
-            .spacing(14)
-            .width(Length::Fill),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .into()
-}
-
-fn loadout_tabs(app: &PrimeApp) -> Element<'_, Message> {
-    row![
-        loadout_tab_button(app, LoadoutTab::Skins),
-        loadout_tab_button(app, LoadoutTab::BattlePass),
-    ]
-    .spacing(8)
-    .width(Length::Fill)
-    .into()
-}
-
-fn loadout_tab_button(app: &PrimeApp, tab: LoadoutTab) -> Element<'_, Message> {
-    sub_tab_button(
-        tab.to_string(),
-        app.active_loadout_tab == tab,
-        Message::LoadoutTabSelected(tab),
-    )
-}
-
-fn active_loadout_tab(app: &PrimeApp) -> Element<'_, Message> {
-    match app.active_loadout_tab {
-        LoadoutTab::Skins => skins_tab(app),
-        LoadoutTab::BattlePass => battle_pass_tab(app),
+    if fills_page(app) {
+        return page_state(app);
     }
-}
 
-fn skins_tab(app: &PrimeApp) -> Element<'_, Message> {
-    let mut content = column![].spacing(12).width(Length::Fill);
+    let loaded = app
+        .loadout_summary
+        .as_ref()
+        .and_then(|summary| match app.active_loadout_tab {
+            LoadoutTab::Skins => summary.loadout_error.is_none().then(|| skins(summary)),
+            LoadoutTab::BattlePass => summary
+                .battle_pass
+                .as_ref()
+                .map(|battle_pass| battle_pass_page(battle_pass, app.now)),
+        });
+    if let Some(page) = loaded {
+        return page;
+    }
 
     if app.loadout_request.is_some() {
-        content = content.push(loading_line("Loading loadout...", app.loading_frame));
-    } else if let Some(waiting) = loadout_not_loaded(app) {
-        content = content.push(waiting);
+        return match app.active_loadout_tab {
+            LoadoutTab::Skins => skins_loading(),
+            LoadoutTab::BattlePass => battle_pass_loading(),
+        };
     }
 
-    if let Some(summary) = &app.loadout_summary {
-        if let Some(error) = &summary.loadout_error {
-            content = content.push(load_error_panel(
-                "Loadout unavailable",
-                error,
-                retry_loadout(app),
-            ));
-        }
+    super::account_view_waiting(app, "loadout").unwrap_or_else(|| space().into())
+}
 
-        for category in LOADOUT_CATEGORIES {
-            if let Some(section) = loadout_section(
-                category,
+/// Whether the open sub-tab shows a centred state instead of content: its part failed to load, or
+/// the account has no battle pass progress. The loadout and battle pass load together, so a load
+/// that failed outright fails both.
+pub(super) fn fills_page(app: &PrimeApp) -> bool {
+    if app.loadout_request.is_some() {
+        return false;
+    }
+    if app.loadout_error.is_some() {
+        return true;
+    }
+
+    app.loadout_summary
+        .as_ref()
+        .is_some_and(|summary| match app.active_loadout_tab {
+            LoadoutTab::Skins => summary.loadout_error.is_some(),
+            LoadoutTab::BattlePass => summary.battle_pass.is_none(),
+        })
+}
+
+/// Skins and Battle Pass, beside the page title.
+pub(super) fn sub_tabs(app: &PrimeApp) -> Element<'_, Message> {
+    let tab_button = |tab: LoadoutTab| {
+        let selected = app.active_loadout_tab == tab;
+        button(text(tab.to_string()).size(13).font(if selected {
+            theme::SEMIBOLD_FONT
+        } else {
+            theme::MEDIUM_FONT
+        }))
+        .padding([7, 16])
+        .style(move |theme, status| {
+            let mut style = theme::choice_style(theme, status, selected);
+            style.border.radius = 7.0.into();
+            style
+        })
+        .on_press_maybe((!selected).then_some(Message::LoadoutTabSelected(tab)))
+    };
+
+    container(
+        row![
+            tab_button(LoadoutTab::Skins),
+            tab_button(LoadoutTab::BattlePass)
+        ]
+        .spacing(2),
+    )
+    .padding(3)
+    .style(|_| card_style(9.0))
+    .into()
+}
+
+fn page_state(app: &PrimeApp) -> Element<'_, Message> {
+    let summary = app.loadout_summary.as_ref();
+    let try_again = || {
+        vec![
+            button(theme::icon_label(Icon::RefreshCw, "Try again", theme::TEXT))
+                .padding([9, 16])
+                .on_press(Message::RetryLoadout)
+                .into(),
+        ]
+    };
+
+    match app.active_loadout_tab {
+        LoadoutTab::Skins => {
+            let error = app
+                .loadout_error
+                .as_deref()
+                .or_else(|| summary.and_then(|summary| summary.loadout_error.as_deref()))
+                .unwrap_or_default();
+            unavailable_state(
+                Icon::Shirt,
+                "Loadout unavailable",
+                format!(
+                    "Riot's player loadout didn't load ({error}). Your shop and account data are \
+                     unaffected."
+                ),
+                try_again(),
+                None,
+            )
+        }
+        LoadoutTab::BattlePass => {
+            let error = app.loadout_error.as_deref().or_else(|| {
                 summary
-                    .gun_skins
-                    .iter()
-                    .filter(|gun| gun.weapon.category == category),
-            ) {
-                content = content.push(section);
+                    .and_then(|summary| summary.battle_pass_error.as_deref())
+                    .filter(|error| *error != NO_BATTLE_PASS_PROGRESS)
+            });
+            match error {
+                Some(error) => unavailable_state(
+                    Icon::Ticket,
+                    "Battle pass unavailable",
+                    format!(
+                        "Riot's battle pass progress didn't load ({error}). Your shop and account \
+                         data are unaffected."
+                    ),
+                    try_again(),
+                    None,
+                ),
+                None => empty_state(
+                    Icon::Ticket,
+                    "No battle pass progress yet",
+                    "This account hasn't played a match this act, so Riot has no contract \
+                     progress to report. Play a match and it'll show up here.",
+                ),
             }
         }
     }
-
-    container(content)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
 }
 
-fn battle_pass_tab(app: &PrimeApp) -> Element<'_, Message> {
-    let mut content = column![].spacing(12).width(Length::Fill);
-
-    if app.loadout_request.is_some() {
-        content = content.push(loading_line("Loading battle pass...", app.loading_frame));
-    } else if let Some(waiting) = loadout_not_loaded(app) {
-        content = content.push(waiting);
-    }
-
-    if let Some(summary) = &app.loadout_summary {
-        if let Some(battle_pass) = &summary.battle_pass {
-            content = content.push(battle_pass_panel(battle_pass, app.now));
-        } else if let Some(error) = &summary.battle_pass_error {
-            content = content.push(load_error_panel(
-                "Battle pass progress unavailable",
-                error,
-                retry_loadout(app),
-            ));
-        } else if app.loadout_request.is_none() {
-            content = content.push(text("No battle pass progress loaded"));
-        }
-    }
-
-    container(content)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
-}
-
-/// The loadout and battle pass load together, so both sub-tabs show the same failure or wait.
-fn loadout_not_loaded(app: &PrimeApp) -> Option<Element<'static, Message>> {
-    if let Some(error) = &app.loadout_error {
-        return Some(load_error_panel(
-            "Could not load the loadout",
-            error,
-            Some(Message::RetryLoadout),
-        ));
-    }
-
-    if app.loadout_summary.is_none() {
-        return super::account_view_waiting(app, "loadout");
-    }
-
-    None
-}
-
-fn retry_loadout(app: &PrimeApp) -> Option<Message> {
-    app.loadout_request
-        .is_none()
-        .then_some(Message::RetryLoadout)
-}
-
-fn loadout_section<'a>(
-    category: &'static str,
-    guns: impl IntoIterator<Item = &'a LoadoutGunDisplay>,
-) -> Option<Element<'a, Message>> {
-    let mut cards = grid::Grid::new()
-        .spacing(12)
-        .fluid(LOADOUT_CARD_WIDTH)
-        .height(grid::aspect_ratio(LOADOUT_CARD_WIDTH, LOADOUT_CARD_HEIGHT));
-    let mut count = 0;
-
-    for gun in guns {
-        cards = cards.push(loadout_card(gun));
-        count += 1;
-    }
-
-    (count > 0).then(|| column![text(category).size(20), cards].spacing(8).into())
-}
-
-fn loadout_card(gun: &LoadoutGunDisplay) -> Element<'_, Message> {
-    let skin_label = gun.skin_detail_label();
-
-    container(
-        column![
-            asset_image(
-                gun.skin.cached_icon.as_ref(),
-                LOADOUT_IMAGE_HEIGHT,
-                skin_label.clone(),
-                high_res_image_source(
-                    "viewer-skins",
-                    &gun.skin.uuid,
-                    gun.skin.display_icon.as_deref(),
-                    gun.skin.viewer_icon.as_deref(),
-                )
-            ),
-            compact_item_name(&gun.weapon.display_name, 15, LOADOUT_WEAPON_NAME_HEIGHT),
-            compact_item_name(skin_label, 12, LOADOUT_SKIN_LABEL_HEIGHT)
-        ]
-        .spacing(6),
-    )
-    .padding(10)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(iced::widget::container::bordered_box)
+/// Each category's equipped skins, in the in-game collection order.
+fn skins(summary: &LoadoutSummary) -> Element<'_, Message> {
+    Column::with_children(LOADOUT_CATEGORIES.into_iter().filter_map(|category| {
+        let guns: Vec<_> = summary
+            .gun_skins
+            .iter()
+            .filter(|gun| gun.weapon.category == category)
+            .collect();
+        (!guns.is_empty()).then(|| {
+            let count = match guns.len() {
+                1 => "1 weapon".to_string(),
+                count => format!("{count} weapons"),
+            };
+            category_row(
+                column![
+                    text(category).size(13).font(theme::SEMIBOLD_FONT),
+                    text(count).size(11).color(theme::FAINT),
+                ]
+                .spacing(2)
+                .into(),
+                guns.into_iter().map(skin_tile).collect(),
+            )
+        })
+    }))
+    .spacing(12)
     .into()
 }
 
-fn battle_pass_panel(
+/// A category's name beside its tiles, which wrap when the page is narrow.
+fn category_row<'a>(
+    label: Element<'a, Message>,
+    tiles: Vec<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    row![
+        container(label).width(CATEGORY_LABEL_WIDTH),
+        Row::with_children(tiles)
+            .spacing(8)
+            .width(Length::Fill)
+            .wrap()
+            .vertical_spacing(8),
+    ]
+    .spacing(14)
+    .align_y(alignment::Vertical::Center)
+    .into()
+}
+
+/// A skin over a glow of its tier colour, or a plain, dimmed tile for a default skin.
+fn skin_tile(gun: &LoadoutGunDisplay) -> Element<'_, Message> {
+    let tier = gun.skin.rarity.as_deref().and_then(RarityTier::from_name);
+    let art = high_res_image_source(
+        "viewer-skins",
+        &gun.skin.uuid,
+        gun.skin.display_icon.as_deref(),
+        gun.skin.viewer_icon.as_deref(),
+    );
+    let details = column![
+        faded_asset_image(
+            gun.skin.cached_icon.as_ref(),
+            TILE_IMAGE_HEIGHT,
+            gun.skin_detail_label(),
+            art,
+            if tier.is_some() {
+                1.0
+            } else {
+                DEFAULT_SKIN_OPACITY
+            },
+        ),
+        one_line(
+            text(skin_name(gun))
+                .size(11)
+                .font(theme::SEMIBOLD_FONT)
+                .color(if tier.is_some() {
+                    theme::TEXT
+                } else {
+                    theme::MUTED
+                }),
+        ),
+        one_line(
+            text(gun.weapon.display_name.to_uppercase())
+                .size(9)
+                .font(theme::SEMIBOLD_FONT)
+                .color(theme::FAINT),
+        ),
+    ]
+    .spacing(4)
+    // The tile's 1px border is outside this.
+    .padding([9, 11]);
+
+    let (content, border): (Element<_>, _) = match tier.map(tier_color) {
+        Some(color) => (
+            stack![
+                radial_glow(color, TILE_GLOW_ALPHA, (0.5, 0.35), (1.3, 1.2), [9.0; 4]),
+                details,
+            ]
+            .into(),
+            Color {
+                a: TILE_BORDER_ALPHA,
+                ..color
+            },
+        ),
+        None => (details.into(), theme::LINE),
+    };
+
+    container(content)
+        // The glow is opaque, so it sits inside the border rather than over it.
+        .padding(1)
+        .width(TILE_WIDTH)
+        .height(TILE_HEIGHT)
+        .clip(true)
+        .style(move |_| {
+            container::Style::default()
+                .background(theme::SURFACE)
+                .border(iced::Border {
+                    color: border,
+                    width: 1.0,
+                    radius: 10.0.into(),
+                })
+        })
+        .into()
+}
+
+/// The skin's name without its weapon's, which the tile shows below it: "Prime", not "Prime
+/// Classic". Default skins read "Standard".
+fn skin_name(gun: &LoadoutGunDisplay) -> &str {
+    gun.skin_name
+        .strip_suffix(gun.weapon.display_name.as_str())
+        .map(str::trim_end)
+        .filter(|name| !name.is_empty())
+        .unwrap_or(&gun.skin_name)
+}
+
+fn battle_pass_page(
     battle_pass: &BattlePassProgressDisplay,
     now: iced::time::Instant,
 ) -> Element<'_, Message> {
-    let remaining = battle_pass
-        .remaining_seconds_at(now)
-        .map(format_duration)
-        .unwrap_or_else(|| "unavailable".to_string());
-    let details = column![
-        text(battle_pass.title()).size(22),
-        battle_pass_progress_bar(battle_pass),
-        row![
-            battle_pass_metric("Progress", battle_pass.tier_label()),
-            battle_pass_metric("Next tier", battle_pass.next_tier_label()),
-            battle_pass_metric("Time left", remaining),
-        ]
-        .spacing(18)
-        .width(Length::Fill),
+    let earned = &battle_pass.earned_rewards;
+    let earned_note = match earned.len() {
+        1 => "1 reward".to_string(),
+        count if count > REWARDS_PER_ROW => format!("{count} rewards · showing latest"),
+        count => format!("{count} rewards"),
+    };
+    let latest_earned = &earned[earned.len().saturating_sub(REWARDS_PER_ROW)..];
+    let up_next = &battle_pass.unearned_rewards;
+    let locked = &battle_pass.locked_paid_rewards;
+
+    let mut page = column![
+        pass_card(battle_pass, now),
+        reward_section(
+            "Earned",
+            earned_note,
+            latest_earned,
+            true,
+            "Nothing earned yet"
+        ),
+        reward_section(
+            "Up next",
+            format!("{} remaining", up_next.len()),
+            first_row(up_next),
+            false,
+            "Every reward is earned",
+        ),
     ]
-    .spacing(12)
+    .spacing(26)
     .width(Length::Fill);
 
-    let mut details = details.push(battle_pass_section_divider());
-
-    let mut rewards = column![text("Rewards").size(20)]
-        .spacing(14)
-        .width(Length::Fill);
-
-    if battle_pass_has_highlighted_rewards(battle_pass) {
-        rewards = rewards.push(battle_pass_highlight_note());
-    }
-
-    rewards = rewards
-        .push(battle_pass_reward_section(
-            "Earned rewards",
-            &battle_pass.earned_rewards,
-            "No earned rewards yet",
-        ))
-        .push(battle_pass_reward_section(
-            "Unearned rewards",
-            &battle_pass.unearned_rewards,
-            "No unearned rewards",
-        ));
-
-    if !battle_pass.locked_paid_rewards.is_empty() {
-        rewards = rewards.push(battle_pass_reward_section(
-            "Locked paid pass rewards",
-            &battle_pass.locked_paid_rewards,
-            "No locked paid rewards",
+    if !locked.is_empty() {
+        page = page.push(reward_section(
+            "Premium pass",
+            format!("{} locked", locked.len()),
+            first_row(locked),
+            false,
+            "",
         ));
     }
 
-    details = details.push(rewards);
+    let shown = || {
+        latest_earned
+            .iter()
+            .chain(first_row(up_next))
+            .chain(first_row(locked))
+    };
+    if shown().any(|reward| reward.highlighted) {
+        page = page.push(
+            row![
+                container(space())
+                    .width(10)
+                    .height(10)
+                    .style(|_| featured_reward_style(3.0)),
+                text("Gold-outlined rewards are Riot's featured reward for that tier.")
+                    .size(12)
+                    .color(theme::FAINT),
+            ]
+            .spacing(8)
+            .align_y(alignment::Vertical::Center),
+        );
+    }
 
-    container(details)
-        .padding(14)
-        .width(Length::Fill)
-        .style(iced::widget::container::bordered_box)
-        .into()
+    page.into()
 }
 
-fn battle_pass_progress_bar(battle_pass: &BattlePassProgressDisplay) -> Element<'_, Message> {
-    let bar: Element<_> = progress_bar(0.0..=1.0, battle_pass.progress_fraction())
-        .girth(BATTLE_PASS_PROGRESS_BAR_HEIGHT)
-        .into();
+fn first_row(rewards: &[BattlePassRewardDisplay]) -> &[BattlePassRewardDisplay] {
+    &rewards[..rewards.len().min(REWARDS_PER_ROW)]
+}
 
-    let Some(percent) = battle_pass.progress_percent_label() else {
-        return bar;
+/// The pass's name and tier, its numbers on the right, and a bar for the whole pass.
+fn pass_card(
+    battle_pass: &BattlePassProgressDisplay,
+    now: iced::time::Instant,
+) -> Element<'_, Message> {
+    let metric = |label: &'static str, value: String| {
+        column![
+            text(label)
+                .size(10)
+                .font(theme::SEMIBOLD_FONT)
+                .color(theme::FAINT),
+            mono(value, 13).font(theme::MONO_SEMIBOLD_FONT),
+        ]
+        .spacing(3)
+    };
+    let time_left = battle_pass
+        .remaining_seconds_at(now)
+        .map_or_else(|| "—".to_string(), format_time_left);
+
+    let top = row![
+        column![
+            text(battle_pass.title().to_uppercase())
+                .size(10)
+                .font(theme::BOLD_FONT)
+                .color(theme::GOLD),
+            text(battle_pass.tier_label())
+                .size(24)
+                .font(theme::DISPLAY_FONT)
+                .line_height(theme::DISPLAY_LINE_HEIGHT),
+        ]
+        .spacing(2)
+        .width(Length::Fill),
+        row![
+            metric("NEXT TIER", battle_pass.next_tier_label()),
+            metric("TIME LEFT", time_left),
+            metric("PASS", battle_pass.pass_label().to_string()),
+        ]
+        .spacing(28),
+    ]
+    .spacing(20)
+    .align_y(alignment::Vertical::Bottom);
+
+    // Thousandths of the bar, so the filled part and the rest share the width.
+    let filled = (battle_pass.progress_fraction() * 1000.0).round() as u16;
+    let mut bar = Row::new().height(8);
+    if filled > 0 {
+        bar = bar.push(
+            container(space())
+                .width(Length::FillPortion(filled))
+                .height(8)
+                .style(|_| {
+                    container::Style::default()
+                        .background(
+                            iced::gradient::Linear::new(std::f32::consts::FRAC_PI_2)
+                                .add_stop(0.0, theme::GOLD)
+                                .add_stop(1.0, PASS_BAR_END),
+                        )
+                        .border(iced::border::rounded(4))
+                }),
+        );
+    }
+    if filled < 1000 {
+        bar = bar.push(space().width(Length::FillPortion(1000 - filled)));
+    }
+    let bar = container(bar).width(Length::Fill).style(|_| {
+        container::Style::default()
+            .background(theme::RAISED)
+            .border(iced::border::rounded(4))
+    });
+
+    container(
+        stack![
+            radial_glow(
+                theme::GOLD,
+                PASS_GLOW_ALPHA,
+                (0.9, 0.0),
+                (1.2, 2.0),
+                [11.0; 4]
+            ),
+            // The card's 1px border is outside this.
+            column![top, bar].spacing(14).padding(19),
+        ]
+        .width(Length::Fill)
+        .height(PASS_CARD_HEIGHT - 2.0),
+    )
+    // The glow is opaque, so it sits inside the border rather than over it.
+    .padding(1)
+    .width(Length::Fill)
+    .style(|_| outlined(12.0))
+    .into()
+}
+
+/// A heading with a count beside it, over a row of reward cards.
+fn reward_section<'a>(
+    title: &'a str,
+    note: String,
+    rewards: &'a [BattlePassRewardDisplay],
+    earned: bool,
+    empty: &'a str,
+) -> Element<'a, Message> {
+    let body: Element<_> = if rewards.is_empty() {
+        text(empty).size(13).color(theme::MUTED).into()
+    } else {
+        // Empty slots keep a short row's cards the same width as a full row's.
+        Row::with_children(
+            rewards
+                .iter()
+                .map(|reward| reward_card(reward, earned))
+                .chain(
+                    (rewards.len()..REWARDS_PER_ROW).map(|_| space().width(Length::Fill).into()),
+                ),
+        )
+        .spacing(10)
+        .into()
     };
 
-    let label: Element<_> = container(
-        text(percent)
-            .size(13)
-            .color(Color::WHITE)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Center),
-    )
-    .width(Length::Fill)
-    .height(BATTLE_PASS_PROGRESS_BAR_HEIGHT)
-    .align_x(alignment::Horizontal::Center)
-    .align_y(alignment::Vertical::Center)
-    .into();
-
-    stack([bar, label])
-        .width(Length::Fill)
-        .height(BATTLE_PASS_PROGRESS_BAR_HEIGHT)
-        .clip(true)
-        .into()
-}
-
-fn battle_pass_has_highlighted_rewards(battle_pass: &BattlePassProgressDisplay) -> bool {
-    battle_pass
-        .earned_rewards
-        .iter()
-        .chain(&battle_pass.unearned_rewards)
-        .chain(&battle_pass.locked_paid_rewards)
-        .any(|reward| reward.highlighted)
-}
-
-fn battle_pass_highlight_note() -> Element<'static, Message> {
-    container(
+    column![
         row![
-            container(text(""))
-                .width(14)
-                .height(14)
-                .style(battle_pass_highlight_swatch_style),
-            text("Gold-highlighted rewards are Riot's featured Battle Pass rewards for that tier.")
-                .size(13)
-                .width(Length::Fill),
+            text(title).size(15).font(theme::SEMIBOLD_FONT),
+            text(note).size(12).color(theme::FAINT),
         ]
         .spacing(8)
-        .align_y(alignment::Vertical::Center)
-        .width(Length::Fill),
-    )
-    .padding([8, 10])
-    .width(Length::Fill)
-    .style(battle_pass_highlight_note_style)
+        .align_y(alignment::Vertical::Center),
+        body,
+    ]
+    .spacing(10)
     .into()
 }
 
-fn battle_pass_metric(label: &'static str, value: String) -> Element<'static, Message> {
-    column![text(label).size(12), text(value).size(16)]
-        .spacing(4)
-        .width(Length::FillPortion(1))
+/// A reward's art, with a check once earned, then its name and tier. Riot's featured reward for a
+/// tier is outlined in gold.
+fn reward_card(reward: &BattlePassRewardDisplay, earned: bool) -> Element<'_, Message> {
+    let featured = reward.highlighted;
+    // Titles have no picture, so their text stands in for one.
+    let picture = if reward.cached_icon.is_none() && reward.kind == "Title" {
+        container(
+            text(reward.name.to_uppercase())
+                .size(13)
+                .font(theme::DISPLAY_FONT)
+                .line_height(1.1)
+                .color(theme::GOLD)
+                .align_x(alignment::Horizontal::Center),
+        )
+        .center(Length::Fill)
         .into()
-}
-
-fn battle_pass_section_divider() -> Element<'static, Message> {
-    container(text(""))
-        .height(BATTLE_PASS_SECTION_DIVIDER_HEIGHT)
-        .width(Length::Fill)
-        .style(battle_pass_section_divider_style)
-        .into()
-}
-
-fn battle_pass_reward_section<'a>(
-    title: &'static str,
-    rewards: &'a [BattlePassRewardDisplay],
-    empty_label: &'static str,
-) -> Element<'a, Message> {
-    let mut section = column![text(title).size(18)].spacing(8).width(Length::Fill);
-
-    if rewards.is_empty() {
-        section = section.push(text(empty_label).size(13));
     } else {
-        let mut cards = grid::Grid::new()
-            .spacing(10)
-            .fluid(BATTLE_PASS_REWARD_CARD_WIDTH)
-            .height(grid::aspect_ratio(
-                BATTLE_PASS_REWARD_CARD_WIDTH,
-                BATTLE_PASS_REWARD_CARD_HEIGHT,
-            ));
-
-        for reward in rewards {
-            cards = cards.push(battle_pass_reward_card(reward));
-        }
-
-        section = section.push(cards);
+        asset_image(
+            reward.cached_icon.as_ref(),
+            REWARD_ART_HEIGHT - 21.0,
+            &reward.name,
+            high_res_image_source(
+                "viewer-battle-pass",
+                &reward.uuid,
+                reward.display_icon.as_deref(),
+                reward.viewer_icon.as_deref(),
+            ),
+        )
+    };
+    let mut art = stack![
+        container(picture)
+            .padding(Padding {
+                top: 9.0,
+                right: 9.0,
+                bottom: 10.0,
+                left: 9.0,
+            })
+            .width(Length::Fill)
+            .height(REWARD_ART_HEIGHT - 1.0)
+            .style(|_| {
+                container::Style::default()
+                    .background(REWARD_ART_BACKGROUND)
+                    .border(iced::border::rounded(iced::border::radius(9).bottom(0)))
+            }),
+    ];
+    if earned {
+        art = art.push(
+            container(
+                container(theme::icon(Icon::Check, 11.0, theme::OK))
+                    .center_x(20)
+                    .center_y(20)
+                    .style(|_| {
+                        container::Style::default()
+                            .background(Color {
+                                a: 0.2,
+                                ..theme::OK
+                            })
+                            .border(iced::border::rounded(10))
+                    }),
+            )
+            .padding(7),
+        );
+    }
+    let mut tier = reward.location_label();
+    if let Some(amount) = reward.amount_label() {
+        tier = format!("{tier} · {amount}");
     }
 
-    section.into()
-}
-
-fn battle_pass_reward_card(reward: &BattlePassRewardDisplay) -> Element<'_, Message> {
-    let amount = reward
-        .amount_label()
-        .map(|amount| format!(" {amount}"))
-        .unwrap_or_default();
-    let meta = format!(
-        "{} | {}{}",
-        reward.location_label(),
-        reward.track.label(),
-        amount
-    );
-    let highlighted = reward.highlighted;
-
-    container(
+    container(column![
+        art,
         column![
-            asset_image(
-                reward.cached_icon.as_ref(),
-                BATTLE_PASS_REWARD_IMAGE_HEIGHT,
-                &reward.name,
-                high_res_image_source(
-                    "viewer-battle-pass",
-                    &reward.uuid,
-                    reward.display_icon.as_deref(),
-                    reward.viewer_icon.as_deref(),
-                )
-            ),
-            compact_item_name(&reward.name, 14, BATTLE_PASS_REWARD_NAME_HEIGHT),
-            text(&reward.kind).size(12).width(Length::Fill),
-            text(meta).size(12).width(Length::Fill)
+            one_line(text(&reward.name).size(11).font(theme::SEMIBOLD_FONT)),
+            mono(tier, 10).color(if featured { theme::GOLD } else { theme::FAINT }),
         ]
-        .spacing(5),
-    )
-    .padding(9)
+        .spacing(2)
+        .padding(Padding {
+            top: 7.0,
+            right: 9.0,
+            bottom: 7.0,
+            left: 9.0,
+        }),
+    ])
+    // The art is opaque, so it sits inside the border rather than over it.
+    .padding(1)
     .width(Length::Fill)
-    .height(Length::Fill)
-    .style(move |theme| battle_pass_reward_card_style(theme, highlighted))
+    .clip(true)
+    .style(move |_| {
+        if featured {
+            featured_reward_style(10.0)
+        } else {
+            card_style(10.0)
+        }
+    })
     .into()
 }
 
-fn battle_pass_reward_card_style(
-    theme: &Theme,
-    highlighted: bool,
-) -> iced::widget::container::Style {
-    let mut style = iced::widget::container::bordered_box(theme);
-
-    if highlighted {
-        style.background = Some(
-            Color {
-                a: 0.12,
-                ..theme::GOLD
-            }
-            .into(),
-        );
-        style.border.color = theme::GOLD;
-    }
-
-    style
+fn featured_reward_style(radius: f32) -> container::Style {
+    container::Style::default()
+        .background(FEATURED_REWARD_BACKGROUND)
+        .border(iced::Border {
+            color: FEATURED_REWARD_BORDER,
+            width: 1.0,
+            radius: radius.into(),
+        })
 }
 
-fn battle_pass_highlight_note_style(theme: &Theme) -> iced::widget::container::Style {
-    let mut style = iced::widget::container::bordered_box(theme);
-    style.background = Some(
-        Color {
-            a: 0.06,
-            ..theme::GOLD
-        }
-        .into(),
-    );
-    style.border.color = Color {
-        a: 0.5,
-        ..theme::GOLD
+/// The skins page's shape in placeholders, fading down the page, while it loads.
+fn skins_loading<'a>() -> Element<'a, Message> {
+    Column::with_children(
+        [6, 2, 2, 4, 3, 2, 1]
+            .into_iter()
+            .enumerate()
+            .map(|(index, count)| {
+                let opacity = 1.0 - index as f32 * 0.1;
+                category_row(
+                    column![skeleton(70, 12.0, 4.0, 1.0), skeleton(48, 10.0, 4.0, 1.0)]
+                        .spacing(6)
+                        .into(),
+                    (0..count)
+                        .map(|_| skeleton(TILE_WIDTH, 86.0, 10.0, opacity))
+                        .collect(),
+                )
+            }),
+    )
+    .spacing(12)
+    .into()
+}
+
+/// The battle pass's shape in placeholders while it loads.
+fn battle_pass_loading<'a>() -> Element<'a, Message> {
+    let section = |opacity: f32| {
+        column![
+            skeleton(120, 14.0, 4.0, 1.0),
+            Row::with_children((0..REWARDS_PER_ROW).map(|_| skeleton(
+                Length::Fill,
+                140.0,
+                10.0,
+                opacity
+            )))
+            .spacing(10),
+        ]
+        .spacing(10)
     };
-    style.text_color = Some(theme::TEXT);
-    style
+
+    column![
+        skeleton(Length::Fill, 128.0, 12.0, 1.0),
+        section(1.0),
+        section(0.7)
+    ]
+    .spacing(26)
+    .into()
 }
 
-fn battle_pass_highlight_swatch_style(_: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(theme::GOLD.into()),
-        border: iced::Border {
-            radius: border::radius(3),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
-
-fn battle_pass_section_divider_style(_: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(theme::LINE.into()),
-        ..Default::default()
-    }
+/// A line of text that is clipped at its box instead of wrapping.
+fn one_line(content: iced::widget::Text<'_>) -> Element<'_, Message> {
+    container(content.wrapping(Wrapping::None))
+        .width(Length::Fill)
+        .clip(true)
+        .into()
 }

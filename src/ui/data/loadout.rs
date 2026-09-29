@@ -6,6 +6,10 @@ use super::shop::{
     RADIANITE_POINTS_UUID, format_whole_number, remaining_seconds_at, shop_currency_name,
 };
 
+/// The battle pass error for an account with no contract progress this act, which the Battle Pass
+/// tab shows as empty rather than failed.
+pub(in crate::ui) const NO_BATTLE_PASS_PROGRESS: &str = "No active battle pass progress found";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct LoadoutResult {
     pub(in crate::ui) account_id: AccountId,
@@ -158,27 +162,24 @@ impl BattlePassProgressDisplay {
 
         match self.next_level_progress_required {
             Some(required) if required > 0 => format!(
-                "{} / {} XP toward next tier",
+                "{} / {} XP",
                 format_whole_number(self.progression_towards_next_level.max(0)),
                 format_whole_number(required)
             ),
             _ => format!(
-                "{} XP toward next tier",
+                "{} XP",
                 format_whole_number(self.progression_towards_next_level.max(0))
             ),
         }
     }
 
-    pub(in crate::ui) fn progress_percent_label(&self) -> Option<String> {
-        self.total_progression_required
-            .filter(|required| *required > 0)
-            .map(|required| {
-                // Rounded down, so the pass never reads complete before it is.
-                let percent = (i128::from(self.total_progression_earned.max(0)) * 100
-                    / i128::from(required))
-                .min(100);
-                format!("{percent}% complete")
-            })
+    /// Paid rewards are only held back as locked when the premium pass isn't owned.
+    pub(in crate::ui) fn pass_label(&self) -> &'static str {
+        if self.locked_paid_rewards.is_empty() {
+            "Premium"
+        } else {
+            "Free"
+        }
     }
 
     pub(in crate::ui) fn progress_fraction(&self) -> f32 {
@@ -200,28 +201,10 @@ impl BattlePassProgressDisplay {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::ui) enum BattlePassRewardTrack {
-    Free,
-    Paid,
-}
-
-impl BattlePassRewardTrack {
-    pub(in crate::ui) fn label(self) -> &'static str {
-        match self {
-            Self::Free => "Free",
-            Self::Paid => "Paid",
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct BattlePassRewardDisplay {
     pub(in crate::ui) tier: i64,
-    pub(in crate::ui) chapter: i64,
-    pub(in crate::ui) level_in_chapter: i64,
     pub(in crate::ui) is_epilogue: bool,
-    pub(in crate::ui) track: BattlePassRewardTrack,
     pub(in crate::ui) uuid: String,
     pub(in crate::ui) name: String,
     pub(in crate::ui) kind: String,
@@ -235,14 +218,9 @@ pub(in crate::ui) struct BattlePassRewardDisplay {
 impl BattlePassRewardDisplay {
     pub(in crate::ui) fn location_label(&self) -> String {
         if self.is_epilogue {
-            format!("Epilogue tier {}", self.tier.max(0))
+            format!("Epilogue {}", self.tier.max(0))
         } else {
-            format!(
-                "Tier {} (Ch {} L{})",
-                self.tier.max(0),
-                self.chapter.max(0),
-                self.level_in_chapter.max(0)
-            )
+            format!("Tier {}", self.tier.max(0))
         }
     }
 
@@ -391,7 +369,6 @@ fn battle_pass_reward_groups(
             let display = battle_pass_reward_display(
                 reward,
                 level,
-                BattlePassRewardTrack::Paid,
                 skins,
                 accessories,
                 currencies,
@@ -410,7 +387,6 @@ fn battle_pass_reward_groups(
             let display = battle_pass_reward_display(
                 reward,
                 level,
-                BattlePassRewardTrack::Free,
                 skins,
                 accessories,
                 currencies,
@@ -430,7 +406,6 @@ fn battle_pass_reward_groups(
 fn battle_pass_reward_display(
     reward: &ResolvedContractReward,
     level: &crate::riot::content::ResolvedContractRewardLevel,
-    track: BattlePassRewardTrack,
     skins: &SkinCatalog,
     accessories: &AccessoryCatalog,
     currencies: &CurrencyCatalog,
@@ -439,10 +414,7 @@ fn battle_pass_reward_display(
 
     BattlePassRewardDisplay {
         tier: level.tier,
-        chapter: level.chapter,
-        level_in_chapter: level.level_in_chapter,
         is_epilogue: level.is_epilogue,
-        track,
         uuid: reward.uuid.clone(),
         name: resolved.name,
         kind: resolved.kind,
@@ -859,7 +831,7 @@ async fn fetch_battle_pass_progress(
         &metadata.accessories,
         &metadata.currencies,
     )
-    .ok_or_else(|| "No active battle pass progress found".to_string())
+    .ok_or_else(|| NO_BATTLE_PASS_PROGRESS.to_string())
 }
 
 pub(in crate::ui) fn resolve_current_skin(

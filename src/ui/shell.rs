@@ -399,15 +399,16 @@ impl PrimeApp {
             .font(theme::DISPLAY_FONT)
             .line_height(theme::DISPLAY_LINE_HEIGHT);
 
-        let wallet = match &self.store_summary {
+        let trailing = match &self.store_summary {
+            _ if self.active_tab == Tab::Loadout => Some(screens::loadout_sub_tabs(self)),
             _ if self.active_tab != Tab::Shop => None,
             Some(summary) => Some(currency_balance_display(summary)),
             None if self.store_request.is_some() => Some(wallet_skeleton()),
             None if self.store_error.is_some() => Some(balances_unavailable()),
             None => None,
         };
-        let header: Element<_> = match wallet {
-            Some(wallet) => row![container(title).width(Length::Fill), wallet]
+        let header: Element<_> = match trailing {
+            Some(trailing) => row![container(title).width(Length::Fill), trailing]
                 .spacing(12)
                 .align_y(alignment::Vertical::Center)
                 .into(),

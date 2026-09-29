@@ -1,11 +1,10 @@
-use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget::Tree,
 };
 use iced::widget::image::Handle;
-use iced::widget::{Column, Row, column, container, image, responsive, row, space};
+use iced::widget::{Column, Row, column, container, image, row, space};
 use iced::{
     Color, ContentFit, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector,
     alignment,
@@ -334,6 +333,17 @@ pub(super) fn asset_image<'a>(
     title: impl Into<String>,
     high_res: Option<ImageViewerSource>,
 ) -> Element<'a, Message> {
+    faded_asset_image(path, height, title, high_res, 1.0)
+}
+
+/// `asset_image` drawn at `opacity`, such as a default skin set back from the rest.
+pub(super) fn faded_asset_image<'a>(
+    path: Option<&'a PathBuf>,
+    height: f32,
+    title: impl Into<String>,
+    high_res: Option<ImageViewerSource>,
+    opacity: f32,
+) -> Element<'a, Message> {
     let title = title.into();
 
     match path {
@@ -341,6 +351,7 @@ pub(super) fn asset_image<'a>(
             image(Handle::from_path(path.clone()))
                 .width(Length::Fill)
                 .height(height)
+                .opacity(opacity)
                 .content_fit(ContentFit::Contain),
             path,
             height,
@@ -451,57 +462,59 @@ fn preview_image_button_style(
     style
 }
 
-/// Why a load failed, with Try again, in place of what it would have shown. `retry` is `None`
-/// while a new load is already running.
-pub(super) fn load_error_panel(
-    title: &'static str,
-    error: &str,
-    retry: Option<Message>,
-) -> Element<'static, Message> {
-    container(
-        column![
-            text(title).size(18),
-            text(error.to_string()).size(14),
-            button("Try again").on_press_maybe(retry)
-        ]
-        .spacing(10),
-    )
-    .padding(16)
-    .width(Length::Fill)
-    .style(container::bordered_box)
-    .into()
-}
-
 /// A page that couldn't load, centred in the space the page would fill: an icon, what failed,
-/// what to do, the actions, and the raw error for reference.
+/// what to do, the actions, and the raw error for reference when the body doesn't give it.
 pub(super) fn unavailable_state<'a>(
     icon: theme::Icon,
     title: &'a str,
     body: String,
     actions: Vec<Element<'a, Message>>,
-    detail: &'a str,
+    detail: Option<&'a str>,
 ) -> Element<'a, Message> {
-    let badge = container(theme::icon(icon, 24.0, theme::ACCENT))
-        .width(52)
-        .height(52)
-        .center_x(52)
-        .center_y(52)
-        .style(|_| {
-            container::Style::default()
-                .background(Color {
-                    a: 0x1F as f32 / 255.0,
-                    ..theme::ACCENT
-                })
-                .border(iced::border::rounded(14))
-        });
-    let detail = container(mono(detail, 11).color(theme::FAINT))
-        .padding([8, 12])
-        .max_width(560)
-        .style(|_| card_style(8.0));
+    let badge = container(theme::icon(icon, 24.0, theme::ACCENT)).style(|_| {
+        container::Style::default()
+            .background(Color {
+                a: 0x1F as f32 / 255.0,
+                ..theme::ACCENT
+            })
+            .border(iced::border::rounded(14))
+    });
+    let detail = detail.map(|detail| {
+        container(mono(detail, 11).color(theme::FAINT))
+            .padding([8, 12])
+            .max_width(560)
+            .style(|_| card_style(8.0))
+            .into()
+    });
 
+    centred_state(
+        badge,
+        title,
+        body,
+        [Some(Row::with_children(actions).spacing(8).into()), detail],
+    )
+}
+
+/// Nothing to show yet, centred like `unavailable_state` but quiet, with no actions.
+pub(super) fn empty_state<'a>(
+    icon: theme::Icon,
+    title: &'a str,
+    body: &'a str,
+) -> Element<'a, Message> {
+    let badge = container(theme::icon(icon, 24.0, theme::MUTED)).style(|_| card_style(14.0));
+
+    centred_state(badge, title, body.to_string(), [None, None])
+}
+
+fn centred_state<'a>(
+    badge: container::Container<'a, Message>,
+    title: &'a str,
+    body: String,
+    below: [Option<Element<'a, Message>>; 2],
+) -> Element<'a, Message> {
     container(
         column![
-            badge,
+            badge.center_x(52).center_y(52),
             text(title)
                 .size(20)
                 .font(theme::DISPLAY_FONT)
@@ -512,9 +525,8 @@ pub(super) fn unavailable_state<'a>(
                 .color(theme::MUTED)
                 .width(440)
                 .align_x(alignment::Horizontal::Center),
-            Row::with_children(actions).spacing(8),
-            detail,
         ]
+        .extend(below.into_iter().flatten())
         .spacing(14)
         .align_x(alignment::Horizontal::Center),
     )
@@ -569,12 +581,12 @@ pub(super) fn skeleton<'a>(
 }
 
 /// A soft radial glow of `color` over the opaque surface colour, filling its space, drawn as SVG
-/// because Iced's own gradients are linear only. `center_y` and `scale` are fractions of the box,
+/// because Iced's own gradients are linear only. `center` and `scale` are fractions of the box,
 /// as the design sets them; `radii` round the corners clockwise from the top left.
 pub(super) fn radial_glow<'a>(
     color: Color,
     alpha: f32,
-    center_y: f32,
+    center: (f32, f32),
     scale: (f32, f32),
     radii: [f32; 4],
 ) -> Element<'a, Message> {
@@ -583,6 +595,7 @@ pub(super) fn radial_glow<'a>(
         format!("#{red:02x}{green:02x}{blue:02x}")
     };
     let (base, color) = (hex(theme::SURFACE), hex(color));
+    let (center_x, center_y) = center;
     let (scale_x, scale_y) = scale;
     let [top_left, top_right, bottom_right, bottom_left] = radii;
 
@@ -600,8 +613,8 @@ pub(super) fn radial_glow<'a>(
         );
         let svg_source = format!(
             r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">
-<defs><radialGradient id="g" cx="0.5" cy="{center_y}" r="0.5"
-gradientTransform="translate(0.5 {center_y}) scale({scale_x} {scale_y}) translate(-0.5 -{center_y})">
+<defs><radialGradient id="g" cx="{center_x}" cy="{center_y}" r="0.5"
+gradientTransform="translate({center_x} {center_y}) scale({scale_x} {scale_y}) translate(-{center_x} -{center_y})">
 <stop offset="0" stop-color="{color}" stop-opacity="{alpha}"/>
 <stop offset="1" stop-color="{color}" stop-opacity="0"/>
 </radialGradient></defs><path d="{shape}" fill="{base}"/><path d="{shape}" fill="url(#g)"/></svg>"##
@@ -613,62 +626,6 @@ gradientTransform="translate(0.5 {center_y}) scale({scale_x} {scale_y}) translat
             .into()
     })
     .into()
-}
-
-pub(super) fn loading_line(label: &'static str, frame: usize) -> Element<'static, Message> {
-    row![loading_indicator(frame), text(label).size(15)]
-        .spacing(10)
-        .align_y(alignment::Vertical::Center)
-        .into()
-}
-
-/// A one-line item name that shrinks to fit the width its card really has, and is clipped to the
-/// card if it still doesn't fit at the smallest size.
-pub(super) fn compact_item_name<'a>(
-    name: impl Into<Cow<'a, str>>,
-    base_size: u32,
-    height: f32,
-) -> Element<'a, Message> {
-    let name: Cow<'a, str> = name.into();
-
-    container(responsive(move |size| {
-        text(name.clone())
-            .size(compact_item_name_size(&name, base_size, size.width))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(alignment::Horizontal::Left)
-            .align_y(alignment::Vertical::Center)
-            .wrapping(iced::widget::text::Wrapping::None)
-            .into()
-    }))
-    .width(Length::Fill)
-    .height(height)
-    .clip(true)
-    .into()
-}
-
-fn compact_item_name_size(name: &str, base_size: u32, available_width: f32) -> u32 {
-    let text_units: f32 = name.chars().map(compact_item_name_char_width).sum();
-    let estimated_width = text_units * base_size as f32;
-
-    if estimated_width <= available_width {
-        return base_size;
-    }
-
-    let minimum_size = base_size.saturating_sub(5).max(8);
-    ((available_width / text_units).floor() as u32).clamp(minimum_size, base_size)
-}
-
-fn compact_item_name_char_width(character: char) -> f32 {
-    match character {
-        ' ' => 0.32,
-        'i' | 'l' | 'I' | '1' | '!' | '\'' | '.' | ',' | ':' | ';' | '|' => 0.3,
-        'm' | 'w' | 'M' | 'W' => 0.85,
-        'A'..='Z' => 0.64,
-        '0'..='9' => 0.52,
-        '-' | '/' | '\\' => 0.42,
-        _ => 0.54,
-    }
 }
 
 /// One button of a row of sub-tabs, such as Loadout's Skins and Battle Pass.
@@ -864,7 +821,7 @@ fn currency_balance_chip(balance: &CurrencyBalanceDisplay) -> Element<'_, Messag
 
 #[cfg(test)]
 mod tests {
-    use super::{compact_item_name_size, high_res_image_source};
+    use super::high_res_image_source;
 
     #[test]
     fn high_res_image_source_ignores_missing_or_duplicate_urls() {
@@ -881,22 +838,5 @@ mod tests {
         assert_eq!(source.namespace, "viewer");
         assert_eq!(source.id, "id");
         assert_eq!(source.url, "full");
-    }
-
-    #[test]
-    fn compact_item_name_size_shrinks_to_available_width() {
-        assert_eq!(compact_item_name_size("Short Name", 14, 156.0), 14);
-        assert_eq!(
-            compact_item_name_size("Radiant Crisis 001 Baseball Bat", 16, 212.0),
-            14
-        );
-        assert_eq!(
-            compact_item_name_size("Radiant Crisis 001 Baseball Bat", 14, 156.0),
-            10
-        );
-        assert_eq!(
-            compact_item_name_size("A very long reward or shop item name", 14, 156.0),
-            9
-        );
     }
 }

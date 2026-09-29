@@ -281,7 +281,7 @@ fn offer_card(offer: &StoreOfferDisplay, night_market: bool) -> Element<'_, Mess
         radial_glow(
             tier_color,
             OFFER_GLOW_ALPHA,
-            0.6,
+            (0.5, 0.6),
             (1.3, 1.6),
             [9.0, 9.0, 0.0, 0.0],
         ),
@@ -397,7 +397,13 @@ fn accessory_card(offer: &StoreAccessoryDisplay) -> Element<'_, Message> {
             )
         };
     let thumb = stack![
-        radial_glow(theme::GOLD, ACCESSORY_GLOW_ALPHA, 0.5, (1.4, 1.4), [8.0; 4],),
+        radial_glow(
+            theme::GOLD,
+            ACCESSORY_GLOW_ALPHA,
+            (0.5, 0.5),
+            (1.4, 1.4),
+            [8.0; 4],
+        ),
         container(picture).padding(8).center(Length::Fill),
     ]
     .width(ACCESSORY_THUMB_SIZE)
@@ -497,7 +503,7 @@ fn load_error(app: &PrimeApp) -> Element<'_, Message> {
              login; if Riot keeps refusing it, re-capture the login."
         ),
         actions,
-        error,
+        Some(error),
     )
 }
 
@@ -527,7 +533,8 @@ fn price(price: Option<&OfferPrice>) -> Element<'_, Message> {
     }
 }
 
-fn tier_color(tier: RarityTier) -> Color {
+/// A skin tier's colour in the game, which Shop and Loadout glow and outline skins with.
+pub(super) fn tier_color(tier: RarityTier) -> Color {
     let [red, green, blue] = tier.highlight_rgb();
     Color::from_rgb8(red, green, blue)
 }

@@ -853,27 +853,6 @@ pub(in crate::ui) fn format_whole_number(amount: i64) -> String {
     formatted
 }
 
-pub(in crate::ui) fn format_duration(seconds: i64) -> String {
-    if seconds <= 0 {
-        return "soon".to_string();
-    }
-
-    let days = seconds / 86_400;
-    let hours = (seconds % 86_400) / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let seconds = seconds % 60;
-
-    if days > 0 {
-        format!("{days}d {hours}h {minutes}m")
-    } else if hours > 0 {
-        format!("{hours}h {minutes}m {seconds}s")
-    } else if minutes > 0 {
-        format!("{minutes}m {seconds}s")
-    } else {
-        format!("{seconds}s")
-    }
-}
-
 /// A section's countdown as a clock, with days in front once there are any: "3d 04:12:55".
 pub(in crate::ui) fn format_countdown(seconds: i64) -> String {
     let seconds = seconds.max(0);
@@ -953,7 +932,7 @@ pub(in crate::ui) async fn fetch_storefront(
 
 #[cfg(test)]
 mod tests {
-    use super::{AccessoryKind, format_countdown, format_duration, format_time_left};
+    use super::{AccessoryKind, format_countdown, format_time_left};
 
     #[test]
     fn countdowns_read_as_a_clock_with_days_in_front() {
@@ -980,12 +959,5 @@ mod tests {
             Some(AccessoryKind::Buddy)
         );
         assert_eq!(AccessoryKind::from_item_type_id("unknown"), None);
-    }
-
-    #[test]
-    fn format_duration_includes_ticking_seconds() {
-        assert_eq!(format_duration(3_661), "1h 1m 1s");
-        assert_eq!(format_duration(61), "1m 1s");
-        assert_eq!(format_duration(5), "5s");
     }
 }

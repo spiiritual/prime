@@ -1545,29 +1545,9 @@ fn battle_pass_progress_uses_story_contract_and_active_act() {
 
     assert_eq!(progress.title(), "Act 3 Battle Pass");
     assert_eq!(progress.tier_label(), "Tier 2 of 4");
-    assert_eq!(
-        progress.next_tier_label(),
-        "2,500 / 3,000 XP toward next tier"
-    );
-    assert_eq!(
-        progress.progress_percent_label().as_deref(),
-        Some("50% complete")
-    );
+    assert_eq!(progress.next_tier_label(), "2,500 / 3,000 XP");
+    assert!((progress.progress_fraction() - 0.5).abs() < f32::EPSILON);
     assert!(progress.remaining_seconds.is_some());
-}
-
-#[test]
-fn battle_pass_percent_is_not_rounded_up_to_complete() {
-    let progress = BattlePassProgressDisplay {
-        total_progression_earned: 995,
-        total_progression_required: Some(1_000),
-        ..battle_pass_display()
-    };
-
-    assert_eq!(
-        progress.progress_percent_label().as_deref(),
-        Some("99% complete")
-    );
 }
 
 #[test]
@@ -1627,14 +1607,8 @@ fn epilogue_tiers_are_counted_apart_from_the_main_pass() {
     .expect("battle pass progress");
 
     assert_eq!(progress.tier_label(), "Tier 4 of 4 + Epilogue 1 of 2");
-    assert_eq!(
-        progress.progress_percent_label().as_deref(),
-        Some("100% complete")
-    );
-    assert_eq!(
-        progress.next_tier_label(),
-        "1,000 / 5,000 XP toward next tier"
-    );
+    assert!((progress.progress_fraction() - 1.0).abs() < f32::EPSILON);
+    assert_eq!(progress.next_tier_label(), "1,000 / 5,000 XP");
 }
 
 #[test]
@@ -1809,16 +1783,10 @@ fn battle_pass_progress_separates_free_unearned_and_locked_paid_rewards() {
 
     assert_eq!(progress.earned_rewards.len(), 1);
     assert_eq!(progress.earned_rewards[0].name, "free-title");
-    assert_eq!(progress.earned_rewards[0].track.label(), "Free");
     assert_eq!(progress.unearned_rewards.len(), 1);
     assert_eq!(progress.unearned_rewards[0].name, "future-free-title");
     assert_eq!(progress.locked_paid_rewards.len(), 2);
-    assert!(
-        progress
-            .locked_paid_rewards
-            .iter()
-            .all(|reward| reward.track.label() == "Paid")
-    );
+    assert_eq!(progress.pass_label(), "Free");
 }
 
 #[test]
@@ -3907,6 +3875,30 @@ fn battle_pass_display() -> BattlePassProgressDisplay {
         locked_paid_rewards: Vec::new(),
         loaded_at: iced::time::Instant::now(),
     }
+}
+
+#[test]
+fn only_the_loadout_sub_tab_that_failed_or_is_empty_fills_the_page() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, _) = two_account_app(dir.path());
+    app.loadout_summary = Some(LoadoutSummary {
+        battle_pass_error: Some(super::data::loadout::NO_BATTLE_PASS_PROGRESS.to_string()),
+        ..loaded_loadout()
+    });
+
+    app.active_loadout_tab = super::LoadoutTab::Skins;
+    assert!(!super::screens::fills_page(&app, super::Tab::Loadout));
+    app.active_loadout_tab = super::LoadoutTab::BattlePass;
+    assert!(super::screens::fills_page(&app, super::Tab::Loadout));
+
+    app.loadout_summary = None;
+    app.loadout_error = Some("boom".to_string());
+    app.active_loadout_tab = super::LoadoutTab::Skins;
+    assert!(super::screens::fills_page(&app, super::Tab::Loadout));
+
+    let _ = app.update(Message::RetryLoadout);
+
+    assert!(!super::screens::fills_page(&app, super::Tab::Loadout));
 }
 
 #[test]

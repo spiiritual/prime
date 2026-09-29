@@ -26,7 +26,16 @@ pub(super) fn tab(app: &PrimeApp, tab: Tab) -> Element<'_, Message> {
 
 /// Whether the tab shows a state that fills the page, centred, instead of scrolling content.
 pub(super) fn fills_page(app: &PrimeApp, tab: Tab) -> bool {
-    tab == Tab::Shop && shop::fills_page(app)
+    match tab {
+        Tab::Shop => shop::fills_page(app),
+        Tab::Loadout => loadout::fills_page(app),
+        Tab::Accounts | Tab::Settings => false,
+    }
+}
+
+/// Loadout's Skins and Battle Pass switch, which sits beside the page title.
+pub(super) fn loadout_sub_tabs(app: &PrimeApp) -> Element<'_, Message> {
+    loadout::sub_tabs(app)
 }
 
 /// A tab's menu that stays beside its scrolling page; only Settings has one.
