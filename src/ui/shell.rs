@@ -16,9 +16,7 @@ use super::{
     LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange, PresetNamePrompt,
     PresetNameTarget, PrimeApp, SettingsChange, Tab, UnavailableLaunchWarning, screens,
 };
-use super::{
-    status_bar_visible, status_message_is_error, status_message_is_success, status_spinner_active,
-};
+use super::{StatusKind, status_bar_visible, status_spinner_active};
 
 /// Without its one-pixel border line.
 const SIDEBAR_WIDTH: f32 = 231.0;
@@ -404,28 +402,27 @@ impl PrimeApp {
     }
 
     fn status_toast(&self) -> Element<'_, Message> {
+        let kind = self.status.kind;
         let lead = if status_spinner_active(self) {
             loading_indicator(self.loading_frame)
-        } else if status_message_is_error(&self.status) {
-            theme::icon(theme::Icon::TriangleAlert, 15.0, theme::ACCENT)
-        } else if status_message_is_success(&self.status) {
-            theme::icon(theme::Icon::CircleCheck, 15.0, theme::OK)
         } else {
-            theme::icon(theme::Icon::Info, 15.0, theme::MUTED)
+            match kind {
+                StatusKind::Error => theme::icon(theme::Icon::TriangleAlert, 15.0, theme::ACCENT),
+                StatusKind::Success => theme::icon(theme::Icon::CircleCheck, 15.0, theme::OK),
+                StatusKind::Info | StatusKind::Progress => {
+                    theme::icon(theme::Icon::Info, 15.0, theme::MUTED)
+                }
+            }
         };
 
         container(
-            row![lead, text(&self.status).size(12)]
+            row![lead, text(&self.status.text).size(12)]
                 .spacing(10)
                 .align_y(alignment::Vertical::Center),
         )
         .padding([10, 14])
         .max_width(STATUS_TOAST_MAX_WIDTH)
-        .style(if status_message_is_success(&self.status) {
-            success_toast_style
-        } else {
-            popover_style
-        })
+        .style(move |theme| status_toast_style(theme, kind))
         .into()
     }
 
@@ -618,12 +615,20 @@ fn rule(color: Color) -> Element<'static, Message> {
         .into()
 }
 
-fn success_toast_style(theme: &Theme) -> iced::widget::container::Style {
+/// The design's toast: a lighter shadow than popovers, and a green border for a finished action.
+fn status_toast_style(theme: &Theme, kind: StatusKind) -> iced::widget::container::Style {
     let mut style = popover_style(theme);
-    style.border.color = Color {
-        a: 0.33,
-        ..theme::OK
+    style.shadow = iced::Shadow {
+        color: Color::from_rgba8(0, 0, 0, 0.4),
+        offset: iced::Vector::new(0.0, 8.0),
+        blur_radius: 24.0,
     };
+    if kind == StatusKind::Success {
+        style.border.color = Color {
+            a: 0x55 as f32 / 255.0,
+            ..theme::OK
+        };
+    }
     style
 }
 

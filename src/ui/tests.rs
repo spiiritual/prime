@@ -35,9 +35,8 @@ use super::data::shop::{
 };
 use super::{
     Message, PendingSettingsChange, PendingSettingsCheck, PresetNamePrompt, PresetNameTarget,
-    PrimeApp, SettingsChange, countdown_timer_active, loading_status_active,
-    masked_account_export_payload, status_bar_visible, status_message_is_error,
-    status_message_is_success, status_spinner_active, status_visible_at,
+    PrimeApp, SettingsChange, Status, StatusKind, countdown_timer_active,
+    masked_account_export_payload, status_bar_visible, status_spinner_active, status_visible_at,
 };
 use crate::account::{
     AccountId, AccountPenalty, AccountPenaltyDuration, AccountPenaltyStatus, AccountProfile,
@@ -79,7 +78,7 @@ fn test_app(repo_dir: &Path) -> PrimeApp {
     app.show_add_account_prompt = false;
     app.launcher_capture_in_progress = false;
     app.launcher_capture_kind = None;
-    app.status.clear();
+    app.status = Status::default();
     app
 }
 
@@ -1239,53 +1238,44 @@ fn loadout_weapon_categories_come_from_the_catalog() {
 }
 
 #[test]
-fn status_bar_keeps_only_error_like_messages_on_screen() {
+fn status_bar_keeps_only_errors_on_screen() {
     let changed_at = iced::time::Instant::now();
     let later = changed_at + Duration::from_secs(10);
-    let visible_later = |status: &str| status_visible_at(status, changed_at, later);
+    let visible_later = |status: Status| status_visible_at(&status, changed_at, later);
 
-    assert!(!visible_later("Loaded 2 account profile(s)"));
-    assert!(!visible_later("Loading shop"));
-    assert!(!visible_later("Saved settings"));
-
-    assert!(visible_later("Failed to load accounts: disk error"));
-    assert!(visible_later(
-        "Could not import redirect token: invalid URL"
-    ));
-    assert!(visible_later(
-        "Store loaded, but profile update failed: missing profile"
-    ));
-    assert!(visible_later("Select an account before opening the shop"));
-    assert!(visible_later("display name cannot be empty"));
-}
-
-#[test]
-fn only_finished_actions_get_the_success_toast() {
-    assert!(status_message_is_success("Saved settings"));
-    assert!(status_message_is_success("Cleared image cache"));
-    assert!(!status_message_is_success("Saving settings"));
-    assert!(!status_message_is_success(
-        "Captured login. Confirm the account details to save it."
-    ));
-    assert!(!status_message_is_success("Could not save settings"));
+    assert!(!visible_later(Status::info("Loaded 2 account profile(s)")));
+    assert!(!visible_later(Status::progress("Loading shop")));
+    assert!(!visible_later(Status::success("Saved settings")));
+    assert!(visible_later(Status::error(
+        "Failed to load accounts: disk error"
+    )));
+    assert!(!visible_later(Status::error("")));
 }
 
 #[test]
 fn status_bar_briefly_shows_successful_actions() {
     let changed_at = iced::time::Instant::now();
 
-    assert!(status_visible_at("Saved settings", changed_at, changed_at));
     assert!(status_visible_at(
-        "Saved settings",
+        &Status::success("Saved settings"),
+        changed_at,
+        changed_at
+    ));
+    assert!(status_visible_at(
+        &Status::success("Saved settings"),
         changed_at,
         changed_at + Duration::from_secs(3)
     ));
     assert!(!status_visible_at(
-        "Saved settings",
+        &Status::success("Saved settings"),
         changed_at,
         changed_at + Duration::from_secs(4)
     ));
-    assert!(!status_visible_at("", changed_at, changed_at));
+    assert!(!status_visible_at(
+        &Status::info(""),
+        changed_at,
+        changed_at
+    ));
 }
 
 #[test]
@@ -1298,7 +1288,7 @@ fn changing_the_status_restarts_its_display_time() {
 
     let _ = app.update(Message::SaveSettings);
 
-    assert_eq!(app.status, "Saved settings");
+    assert_eq!(app.status, Status::success("Saved settings"));
     assert!(status_bar_visible(&app));
 }
 
@@ -1313,17 +1303,8 @@ fn repeating_an_action_shows_its_status_again() {
 
     let _ = app.update(Message::SaveSettings);
 
-    assert_eq!(app.status, "Saved settings");
+    assert_eq!(app.status, Status::success("Saved settings"));
     assert!(status_bar_visible(&app));
-}
-
-#[test]
-fn loading_status_detection_still_tracks_hidden_progress_messages() {
-    assert!(loading_status_active("Loading shop"));
-    assert!(loading_status_active("Refreshing Riot client version"));
-    assert!(!loading_status_active(
-        "Failed to load accounts: disk error"
-    ));
 }
 
 #[test]
@@ -1332,20 +1313,20 @@ fn status_spinner_shows_only_beside_progress() {
     let mut app = test_app(dir.path());
     app.account_availability_loading = true;
 
-    app.status = "Loaded account details for 2 account(s)".to_string();
+    app.status = Status::info("Loaded account details for 2 account(s)");
     assert!(!status_spinner_active(&app));
 
-    app.status = "Could not load shop: offline".to_string();
+    app.status = Status::error("Could not load shop: offline");
     assert!(!status_spinner_active(&app));
 
-    app.status = "Loading shop".to_string();
+    app.status = Status::progress("Loading shop");
     assert!(status_spinner_active(&app));
 
     app.launcher_capture_in_progress = true;
-    app.status = "Sign in to Riot Client and tick Stay signed in".to_string();
+    app.status = Status::info("Sign in to Riot Client and tick Stay signed in");
     assert!(status_spinner_active(&app));
 
-    app.status = "Signed in as a different Riot account".to_string();
+    app.status = Status::error("Signed in as a different Riot account");
     assert!(!status_spinner_active(&app));
 }
 
@@ -2035,9 +2016,9 @@ fn cancelling_a_login_capture_stops_waiting_and_removes_its_slot() {
     assert!(app.login_capture.is_none());
     assert!(!slot.exists());
     assert!(
-        app.status.starts_with("Canceled login capture"),
+        app.status.text.starts_with("Canceled login capture"),
         "{}",
-        app.status
+        app.status.text
     );
 }
 
@@ -2120,8 +2101,12 @@ fn a_capture_warns_when_the_signed_in_login_could_not_be_saved() {
     });
 
     assert!(app.launcher_capture_in_progress);
-    assert!(app.status.contains("disk full"), "{}", app.status);
-    assert!(status_message_is_error(&app.status), "{}", app.status);
+    assert!(app.status.text.contains("disk full"), "{}", app.status.text);
+    assert!(
+        (app.status.kind == StatusKind::Error),
+        "{}",
+        app.status.text
+    );
 }
 
 #[test]
@@ -2140,7 +2125,7 @@ fn a_capture_that_cannot_open_riot_client_ends_with_the_error() {
     assert_eq!(app.launcher_capture_kind, None);
     assert!(app.login_capture.is_none());
     assert_eq!(
-        app.status,
+        app.status.text,
         "Could not add account: Riot Client was not found"
     );
 }
@@ -2210,7 +2195,7 @@ fn login_capture_is_refused_while_an_account_is_launching() {
         assert!(!app.launcher_capture_in_progress);
         assert!(!app.show_add_account_prompt);
         assert_eq!(app.confirm_recapture_account, None);
-        assert!(app.status.contains("launching"), "{}", app.status);
+        assert!(app.status.text.contains("launching"), "{}", app.status.text);
     }
 }
 
@@ -2226,7 +2211,11 @@ fn launch_is_refused_while_a_login_capture_runs() {
 
     assert_eq!(app.launching_account, None);
     assert_eq!(app.launch_preflight_account, None);
-    assert!(app.status.contains("login capture"), "{}", app.status);
+    assert!(
+        app.status.text.contains("login capture"),
+        "{}",
+        app.status.text
+    );
 }
 
 #[test]
@@ -2248,11 +2237,15 @@ fn launch_without_a_captured_login_is_refused_before_switching() {
     assert_eq!(app.state.selected_account, Some(selected.id));
     assert!(app.store_summary.is_some());
     assert!(
-        app.status.starts_with("Could not launch Alt"),
+        app.status.text.starts_with("Could not launch Alt"),
         "{}",
-        app.status
+        app.status.text
     );
-    assert!(app.status.contains("Re-capture login"), "{}", app.status);
+    assert!(
+        app.status.text.contains("Re-capture login"),
+        "{}",
+        app.status.text
+    );
 }
 
 fn finished_launch(previous_account_backup: Option<(AccountId, LauncherSessionBackup)>) -> Message {
@@ -2542,9 +2535,9 @@ fn recapture_as_a_different_account_keeps_the_existing_backup() {
     );
     assert!(!staging_slot.exists());
     assert!(
-        app.status.contains("different Riot account"),
+        app.status.text.contains("different Riot account"),
         "{}",
-        app.status
+        app.status.text
     );
 }
 
@@ -2569,7 +2562,11 @@ fn a_recapture_as_another_account_stays_on_screen_and_brings_prime_forward() {
         Ok(captured),
     ));
 
-    assert!(status_message_is_error(&app.status), "{}", app.status);
+    assert!(
+        (app.status.kind == StatusKind::Error),
+        "{}",
+        app.status.text
+    );
     assert!(task.units() > 0);
 }
 
@@ -2586,8 +2583,16 @@ fn a_launch_that_could_not_save_the_previous_login_stays_on_screen() {
         sync_warning: None,
     })));
 
-    assert!(app.status.contains("could not be saved"), "{}", app.status);
-    assert!(status_message_is_error(&app.status), "{}", app.status);
+    assert!(
+        app.status.text.contains("could not be saved"),
+        "{}",
+        app.status.text
+    );
+    assert!(
+        (app.status.kind == StatusKind::Error),
+        "{}",
+        app.status.text
+    );
 }
 
 #[test]
@@ -2763,7 +2768,10 @@ fn add_current_account_starts_capture_without_login_prompt() {
         Some(super::LauncherCaptureKind::Current)
     );
     assert!(!app.show_add_account_prompt);
-    assert_eq!(app.status, "Capturing the Riot account currently signed in");
+    assert_eq!(
+        app.status,
+        Status::progress("Capturing the Riot account currently signed in")
+    );
 }
 
 #[test]
@@ -2786,7 +2794,7 @@ fn current_account_capture_success_populates_confirmation_fields() {
     assert_eq!(app.pending_account, Some(draft));
     assert_eq!(app.new_display_name, "Player");
     assert_eq!(
-        app.status,
+        app.status.text,
         "Captured current Riot account. Confirm the account details to save it."
     );
 }
@@ -2805,7 +2813,7 @@ fn current_account_capture_failure_clears_capture_state() {
     assert_eq!(app.launcher_capture_kind, None);
     assert_eq!(app.pending_account, None);
     assert_eq!(
-        app.status,
+        app.status.text,
         "Could not add current account: Riot Client is not signed in with Stay signed in enabled"
     );
 }
@@ -2925,11 +2933,11 @@ fn duplicate_current_account_capture_updates_existing_profile_without_confirmati
         "new-settings"
     );
     assert!(
-        app.status
+        app.status.text
             .starts_with("Duplicate account: Prime did not add a new profile because this Riot account is already in Prime; updated and selected Main")
     );
-    assert!(!app.status.starts_with("Loading account details"));
-    assert!(status_message_is_error(&app.status));
+    assert!(!app.status.text.starts_with("Loading account details"));
+    assert!((app.status.kind == StatusKind::Error));
 }
 
 #[test]
@@ -2970,7 +2978,7 @@ fn adding_the_current_account_says_it_discarded_the_unsaved_one() {
     let _ = app.update(Message::AddCurrentAccount);
 
     assert_eq!(app.pending_account, None);
-    assert!(app.status.contains("Discarded"), "{}", app.status);
+    assert!(app.status.text.contains("Discarded"), "{}", app.status.text);
 }
 
 #[test]
@@ -2988,7 +2996,7 @@ fn adding_a_new_account_says_it_discarded_the_unsaved_one() {
     let _ = app.update(Message::ConfirmAddAccountCapture);
 
     assert_eq!(app.pending_account, None);
-    assert!(app.status.contains("Discarded"), "{}", app.status);
+    assert!(app.status.text.contains("Discarded"), "{}", app.status.text);
 }
 
 #[test]
@@ -3045,9 +3053,11 @@ fn token_import_rejects_a_token_for_another_riot_account() {
     let _ = app.update(Message::ImportRedirect);
 
     assert!(
-        app.status.starts_with("Could not import redirect token"),
-        "{}",
         app.status
+            .text
+            .starts_with("Could not import redirect token"),
+        "{}",
+        app.status.text
     );
     assert_eq!(app.state.accounts[0].session, None);
 }
@@ -3061,9 +3071,11 @@ fn token_import_rejects_a_token_whose_account_cannot_be_read() {
     let _ = app.update(Message::ImportRedirect);
 
     assert!(
-        app.status.starts_with("Could not import redirect token"),
-        "{}",
         app.status
+            .text
+            .starts_with("Could not import redirect token"),
+        "{}",
+        app.status.text
     );
     assert_eq!(app.state.accounts[0].session, None);
 }
@@ -3076,11 +3088,15 @@ fn token_import_accepts_the_accounts_own_token() {
 
     let _ = app.update(Message::ImportRedirect);
 
-    assert!(app.state.accounts[0].session.is_some(), "{}", app.status);
     assert!(
-        app.status.contains(&app.state.accounts[0].summary()),
+        app.state.accounts[0].session.is_some(),
         "{}",
-        app.status
+        app.status.text
+    );
+    assert!(
+        app.status.text.contains(&app.state.accounts[0].summary()),
+        "{}",
+        app.status.text
     );
 }
 
@@ -3418,7 +3434,7 @@ fn selecting_an_account_refreshes_it_without_a_full_reload() {
 
     assert!(!app.account_ranks_loading.is_empty());
     assert!(app.account_availability_loading);
-    assert_eq!(app.status, format!("Selected {}", alt.summary()));
+    assert_eq!(app.status.text, format!("Selected {}", alt.summary()));
 }
 
 fn accounts_tab_app(dir: &Path) -> (PrimeApp, AccountProfile) {
@@ -3449,7 +3465,11 @@ fn refresh_profile_result_is_not_replaced_by_a_details_reload() {
         }),
     ));
 
-    assert!(app.status.starts_with("Refreshed "), "{}", app.status);
+    assert!(
+        app.status.text.starts_with("Refreshed "),
+        "{}",
+        app.status.text
+    );
 }
 
 #[test]
@@ -3496,9 +3516,9 @@ fn import_result_is_not_replaced_by_a_details_reload() {
     )));
 
     assert!(
-        app.status.ends_with("with a new local ID"),
+        app.status.text.ends_with("with a new local ID"),
         "{}",
-        app.status
+        app.status.text
     );
 }
 
@@ -3506,14 +3526,14 @@ fn import_result_is_not_replaced_by_a_details_reload() {
 fn background_account_details_leave_the_status_alone() {
     let dir = tempdir().expect("temp dir");
     let (mut app, _) = accounts_tab_app(dir.path());
-    app.status = "Added Main".to_string();
+    app.status = Status::success("Added Main");
 
     let _ = app.update(Message::AccountRanksLoaded {
         result: Default::default(),
         announce: false,
     });
 
-    assert_eq!(app.status, "Added Main");
+    assert_eq!(app.status, Status::success("Added Main"));
 }
 
 #[test]
@@ -3522,11 +3542,14 @@ fn opening_accounts_during_a_launch_keeps_the_launch_progress() {
     let (mut app, account) = accounts_tab_app(dir.path());
     app.active_tab = super::Tab::Settings;
     app.launching_account = Some(account.id);
-    app.status = "Riot Client is open; waiting for VALORANT".to_string();
+    app.status = Status::info("Riot Client is open; waiting for VALORANT");
 
     let _ = app.update(Message::TabSelected(super::Tab::Accounts));
 
-    assert_eq!(app.status, "Riot Client is open; waiting for VALORANT");
+    assert_eq!(
+        app.status,
+        Status::info("Riot Client is open; waiting for VALORANT")
+    );
 }
 
 #[test]
@@ -3571,7 +3594,11 @@ fn a_shop_reply_for_an_account_switched_away_from_is_not_reported() {
 
     let _ = app.update(Message::StorefrontLoaded(request, Err("boom".to_string())));
 
-    assert!(!app.status.contains("Store check failed"), "{}", app.status);
+    assert!(
+        !app.status.text.contains("Store check failed"),
+        "{}",
+        app.status.text
+    );
     assert_eq!(app.store_request, None);
 }
 
@@ -3588,7 +3615,11 @@ fn an_old_shop_reply_does_not_end_the_newer_load_for_the_same_account() {
     let _ = app.update(Message::StorefrontLoaded(first, Err("boom".to_string())));
 
     assert_eq!(app.store_request, Some(latest));
-    assert!(!app.status.contains("Store check failed"), "{}", app.status);
+    assert!(
+        !app.status.text.contains("Store check failed"),
+        "{}",
+        app.status.text
+    );
 }
 
 #[test]
@@ -3605,9 +3636,9 @@ fn an_old_loadout_reply_does_not_end_the_newer_load_for_the_same_account() {
 
     assert_eq!(app.loadout_request, Some(latest));
     assert!(
-        !app.status.contains("Loadout check failed"),
+        !app.status.text.contains("Loadout check failed"),
         "{}",
-        app.status
+        app.status.text
     );
 }
 
@@ -3655,7 +3686,11 @@ fn an_update_does_not_download_while_a_launch_runs() {
         app.app_update_status,
         super::AppUpdateStatus::Available(_)
     ));
-    assert!(status_message_is_error(&app.status), "{}", app.status);
+    assert!(
+        (app.status.kind == StatusKind::Error),
+        "{}",
+        app.status.text
+    );
 }
 
 fn downloading_update_app(dir: &Path) -> PrimeApp {
@@ -3676,7 +3711,7 @@ fn a_launch_does_not_start_while_an_update_downloads() {
 
     assert_eq!(task.units(), 0);
     assert_eq!(app.launch_preflight_account, None);
-    assert!(app.status.contains("update"), "{}", app.status);
+    assert!(app.status.text.contains("update"), "{}", app.status.text);
 }
 
 #[test]
@@ -3687,7 +3722,7 @@ fn a_login_capture_does_not_start_while_an_update_downloads() {
     let _ = app.update(Message::AddAccount);
 
     assert!(!app.show_add_account_prompt);
-    assert!(app.status.contains("update"), "{}", app.status);
+    assert!(app.status.text.contains("update"), "{}", app.status.text);
 }
 
 #[test]
@@ -3699,7 +3734,7 @@ fn an_import_does_not_start_while_an_update_downloads() {
     let _ = app.update(Message::ConfirmImportAccount);
 
     assert!(!app.import_account_in_progress);
-    assert!(app.status.contains("update"), "{}", app.status);
+    assert!(app.status.text.contains("update"), "{}", app.status.text);
 }
 
 #[test]
@@ -3766,7 +3801,11 @@ fn opening_the_shop_without_accounts_shows_no_error() {
 
     let _ = app.update(Message::TabSelected(super::Tab::Shop));
 
-    assert!(!status_message_is_error(&app.status), "{}", app.status);
+    assert!(
+        !(app.status.kind == StatusKind::Error),
+        "{}",
+        app.status.text
+    );
 }
 
 #[test]
@@ -3819,7 +3858,11 @@ fn launching_another_account_reloads_the_open_tab_for_it() {
         app.store_request
             .is_some_and(|request| request.account_id == alt.id)
     );
-    assert!(app.status.starts_with("Launching"), "{}", app.status);
+    assert!(
+        app.status.text.starts_with("Launching"),
+        "{}",
+        app.status.text
+    );
 }
 
 fn loaded_loadout() -> LoadoutSummary {
@@ -3921,9 +3964,21 @@ fn a_loadout_whose_battle_pass_failed_says_so() {
         }),
     ));
 
-    assert!(app.status.contains("battle pass failed"), "{}", app.status);
-    assert!(app.status.contains("Riot returned 500"), "{}", app.status);
-    assert!(status_message_is_error(&app.status), "{}", app.status);
+    assert!(
+        app.status.text.contains("battle pass failed"),
+        "{}",
+        app.status.text
+    );
+    assert!(
+        app.status.text.contains("Riot returned 500"),
+        "{}",
+        app.status.text
+    );
+    assert!(
+        (app.status.kind == StatusKind::Error),
+        "{}",
+        app.status.text
+    );
 }
 
 #[test]
@@ -3936,11 +3991,11 @@ fn development_builds_do_not_report_update_checks_as_failed() {
         result: Ok(crate::updater::UpdateCheckOutcome::NotInstalled),
     });
 
-    assert!(!app.status.contains("failed"), "{}", app.status);
+    assert!(!app.status.text.contains("failed"), "{}", app.status.text);
     assert!(
-        app.status.contains("not an installed build"),
+        app.status.text.contains("not an installed build"),
         "{}",
-        app.status
+        app.status.text
     );
 }
 
@@ -3956,7 +4011,7 @@ fn a_manual_client_version_refresh_replaces_the_field() {
     });
 
     assert_eq!(app.client_version_input, "release-2");
-    assert!(app.status.contains("release-2"), "{}", app.status);
+    assert!(app.status.text.contains("release-2"), "{}", app.status.text);
 }
 
 #[test]
@@ -3972,18 +4027,19 @@ fn a_failed_manual_client_version_refresh_is_reported() {
 
     assert!(
         app.status
+            .text
             .starts_with("Could not fetch Riot client version"),
         "{}",
-        app.status
+        app.status.text
     );
-    assert!(!loading_status_active(&app.status));
+    assert!(!(app.status.kind == StatusKind::Progress));
 }
 
 #[test]
 fn the_startup_client_version_does_not_replace_a_startup_error() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    app.status = "Failed to load accounts: disk error".to_string();
+    app.status = Status::error("Failed to load accounts: disk error");
 
     let _ = app.update(Message::ClientVersionLoaded {
         user_requested: false,
@@ -3991,14 +4047,17 @@ fn the_startup_client_version_does_not_replace_a_startup_error() {
     });
 
     assert_eq!(app.client_version_input, "release-1");
-    assert_eq!(app.status, "Failed to load accounts: disk error");
+    assert_eq!(
+        app.status,
+        Status::error("Failed to load accounts: disk error")
+    );
 }
 
 #[test]
 fn a_failed_startup_client_version_fetch_is_shown_and_retried() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    app.status = "Loaded 1 account profile(s)".to_string();
+    app.status = Status::info("Loaded 1 account profile(s)");
 
     let task = app.update(Message::ClientVersionLoaded {
         user_requested: false,
@@ -4007,9 +4066,10 @@ fn a_failed_startup_client_version_fetch_is_shown_and_retried() {
 
     assert!(
         app.status
+            .text
             .starts_with("Could not fetch Riot client version"),
         "{}",
-        app.status
+        app.status.text
     );
     assert!(task.units() > 0, "a retry is scheduled");
 }
@@ -4018,7 +4078,7 @@ fn a_failed_startup_client_version_fetch_is_shown_and_retried() {
 fn a_background_update_check_leaves_the_status_alone() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    app.status = "Failed to load accounts: disk error".to_string();
+    app.status = Status::error("Failed to load accounts: disk error");
 
     let _ = app.update(Message::AppUpdateChecked {
         user_requested: false,
@@ -4027,7 +4087,10 @@ fn a_background_update_check_leaves_the_status_alone() {
         )),
     });
 
-    assert_eq!(app.status, "Failed to load accounts: disk error");
+    assert_eq!(
+        app.status,
+        Status::error("Failed to load accounts: disk error")
+    );
     assert!(app.app_update_status.prompt_update().is_some());
 }
 
@@ -4282,9 +4345,10 @@ fn adding_an_account_saves_its_settings_when_asked() {
     assert_eq!(app.state.accounts.len(), 1);
     assert_eq!(app.settings_saving_account, Some(draft.account_id));
     assert!(task.units() > 0);
-    assert!(app.status.starts_with("Added "));
+    assert!(app.status.text.starts_with("Added "));
     assert!(
         app.status
+            .text
             .ends_with("Saving its VALORANT settings as a preset")
     );
 }
@@ -4345,7 +4409,7 @@ fn a_saved_preset_is_listed_first() {
 
     assert_eq!(app.settings_saving_account, None);
     assert_eq!(profile_ids(&app), [saved.id, older.id]);
-    assert_eq!(app.status, "Saved preset Main settings");
+    assert_eq!(app.status, Status::success("Saved preset Main settings"));
 }
 
 #[test]
@@ -4359,9 +4423,9 @@ fn saved_settings_profile_is_listed_when_the_account_update_fails() {
 
     assert_eq!(profile_ids(&app), [saved.id]);
     assert!(
-        app.status.contains("account update failed"),
+        app.status.text.contains("account update failed"),
         "{}",
-        app.status
+        app.status.text
     );
 }
 
@@ -4394,7 +4458,7 @@ fn saving_a_preset_asks_for_its_name_first() {
     assert!(task.units() > 0);
     assert_eq!(app.preset_name_prompt, None);
     assert_eq!(app.settings_saving_account, Some(account_id));
-    assert!(app.status.contains("Aim duels"), "{}", app.status);
+    assert!(app.status.text.contains("Aim duels"), "{}", app.status.text);
 }
 
 #[test]
@@ -4442,7 +4506,10 @@ fn renaming_a_preset_starts_from_its_name() {
     let _ = app.update(Message::PresetRenamed(Ok(renamed.clone())));
 
     assert_eq!(app.settings_profiles, [renamed]);
-    assert_eq!(app.status, "Renamed preset to Old crosshair");
+    assert_eq!(
+        app.status,
+        Status::success("Renamed preset to Old crosshair")
+    );
 }
 
 #[test]
@@ -5028,7 +5095,11 @@ fn confirming_apply_starts_it() {
     assert!(task.units() > 0);
     assert_eq!(app.confirm_settings_change, None);
     assert_eq!(app.settings_applying_account, Some(account_id));
-    assert!(app.status.contains("Main settings"), "{}", app.status);
+    assert!(
+        app.status.text.contains("Main settings"),
+        "{}",
+        app.status.text
+    );
 }
 
 fn applied(
@@ -5064,13 +5135,13 @@ fn applied_status_points_to_restore_only_when_it_saved_the_accounts_settings() {
     assert!(task.units() > 0, "reloads the list to show the new backup");
     assert_eq!(app.settings_applying_account, None);
     assert_eq!(
-        app.status,
+        app.status.text,
         "Applied preset Alt settings. Its own settings were saved; restore them from Game settings"
     );
 
     let _ = app.update(applied(account_id, preset, None));
 
-    assert_eq!(app.status, "Applied preset Alt settings");
+    assert_eq!(app.status, Status::success("Applied preset Alt settings"));
 }
 
 #[test]
@@ -5115,7 +5186,7 @@ fn restoring_asks_first_then_starts() {
         "reloads the list without the restored backup"
     );
     assert_eq!(app.settings_applying_account, None);
-    assert_eq!(app.status, "Restored original settings");
+    assert_eq!(app.status, Status::success("Restored original settings"));
 }
 
 #[test]
@@ -5189,7 +5260,7 @@ fn deleting_a_preset_asks_first() {
     let _ = app.update(Message::SettingsProfileDeleted(deleted.id.clone(), Ok(())));
 
     assert_eq!(profile_ids(&app), std::slice::from_ref(&kept.id));
-    assert_eq!(app.status, "Deleted Main settings");
+    assert_eq!(app.status, Status::success("Deleted Main settings"));
 }
 
 fn seconds_ago(seconds: u64) -> iced::time::Instant {
@@ -5431,7 +5502,7 @@ fn a_quoted_riot_client_path_is_saved_without_quotes() {
     let _ = app.update(Message::SaveSettings);
 
     assert_eq!(app.state.riot_client_path, Some(client));
-    assert_eq!(app.status, "Saved settings");
+    assert_eq!(app.status, Status::success("Saved settings"));
 }
 
 #[test]
@@ -5444,7 +5515,11 @@ fn a_riot_client_path_that_does_not_exist_is_not_saved() {
 
     assert_eq!(task.units(), 0);
     assert_eq!(app.state.riot_client_path, None);
-    assert!(status_message_is_error(&app.status), "{}", app.status);
+    assert!(
+        (app.status.kind == StatusKind::Error),
+        "{}",
+        app.status.text
+    );
 }
 
 #[test]

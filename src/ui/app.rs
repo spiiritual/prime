@@ -39,7 +39,8 @@ use super::{
     AccountsTab, AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, LoginCapture,
     LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange,
     PendingSettingsCheck, PresetNamePrompt, PresetNameTarget, PrimeApp, SettingsChange,
-    SettingsSection, Tab, TabScrollOffsets, ViewRequest, background_refresh_active, screens,
+    SettingsSection, Status, StatusKind, Tab, TabScrollOffsets, ViewRequest,
+    background_refresh_active, screens,
 };
 
 impl PrimeApp {
@@ -69,7 +70,7 @@ impl PrimeApp {
                 token_import_open: false,
                 client_version_input: String::new(),
                 riot_client_path_input: String::new(),
-                status: "Loading accounts".to_string(),
+                status: Status::progress("Loading accounts"),
                 account_switcher_open: false,
                 open_account_menu: None,
                 show_add_account_prompt: false,
@@ -227,22 +228,22 @@ impl PrimeApp {
 
     /// Shows a status message. Setting the same text again restarts its display time, so a
     /// repeated action still gets visible feedback.
-    fn set_status(&mut self, status: impl Into<String>) {
-        self.status = status.into();
+    fn set_status(&mut self, status: Status) {
+        self.status = status;
         self.status_changed_at = iced::time::Instant::now();
     }
 
     /// Shows a status from background work the user didn't ask for, unless an error is on screen;
     /// errors stay until something the user does replaces them.
-    fn set_background_status(&mut self, status: impl Into<String>) {
-        if !super::status_message_is_error(&self.status) {
+    fn set_background_status(&mut self, status: Status) {
+        if self.status.kind != StatusKind::Error {
             self.set_status(status);
         }
     }
 
     /// Shows Shop and Loadout load progress and results, unless launch or login capture progress
     /// is pinned in the status bar; the tab itself shows its loading line and errors.
-    fn set_view_status(&mut self, status: impl Into<String>) {
+    fn set_view_status(&mut self, status: Status) {
         if !self.progress_pinned() {
             self.set_status(status);
         }
@@ -262,24 +263,24 @@ impl PrimeApp {
                         self.state = loaded.state;
                         self.accounts_loaded = true;
                         self.set_status(if let Some(error) = loaded.legacy_cleanup_error {
-                            format!("Could not remove old Riot Client sessions: {error}")
+                            Status::error(format!("Could not remove old Riot Client sessions: {error}"))
                         } else if !loaded.removed_legacy_sessions.is_empty() {
-                            format!(
+                            Status::info(format!(
                                 "Removed outdated Riot Client sessions for {}; re-capture their login",
                                 loaded.removed_legacy_sessions.join(", ")
-                            )
+                            ))
                         } else {
-                            format!(
+                            Status::info(format!(
                                 "Loaded {} account profile(s) from {}",
                                 self.state.accounts.len(),
                                 self.repo.path().display()
-                            )
+                            ))
                         });
                     }
                     Err(error) => {
-                        self.set_status(format!(
+                        self.set_status(Status::error(format!(
                             "Failed to load accounts: {error}. Changes will not be saved until accounts.json loads."
-                        ));
+                        )));
                     }
                 }
 
@@ -287,7 +288,7 @@ impl PrimeApp {
             }
             Message::Saved(result) => {
                 if let Err(error) = result {
-                    self.set_status(format!("Failed to save accounts: {error}"));
+                    self.set_status(Status::error(format!("Failed to save accounts: {error}")));
                 }
 
                 Task::none()
@@ -338,7 +339,7 @@ impl PrimeApp {
             Message::SelectAccount(id) => {
                 if !self.state.select_account(id) {
                     self.account_switcher_open = false;
-                    self.set_status("Account profile no longer exists");
+                    self.set_status(Status::error("Account profile no longer exists"));
                     return Task::none();
                 }
 
@@ -346,12 +347,12 @@ impl PrimeApp {
                 self.close_account_surfaces();
                 self.unavailable_launch_warning = None;
                 self.clear_selected_account_views();
-                self.set_status(
+                self.set_status(Status::info(
                     self.state
                         .selected_account()
                         .map(|account| format!("Selected {}", account.summary()))
                         .unwrap_or_else(|| "No account selected".to_string()),
-                );
+                ));
                 Task::batch([self.save_task(), self.load_account_tab(id)])
             }
             Message::NewDisplayNameChanged(value) => {
@@ -369,9 +370,9 @@ impl PrimeApp {
 
                 self.close_account_surfaces();
                 self.show_add_account_prompt = true;
-                self.set_status(
+                self.set_status(Status::info(
                     "Before Riot Client opens, confirm that you will tick Stay signed in.",
-                );
+                ));
 
                 check_capture_prompt_game_task()
             }
@@ -385,11 +386,11 @@ impl PrimeApp {
                 let discarded = self.discard_pending_account();
                 self.close_account_surfaces();
                 self.new_display_name.clear();
-                self.set_status(if discarded {
+                self.set_status(Status::progress(if discarded {
                     "Discarded the unsaved captured account; capturing the Riot account currently signed in"
                 } else {
                     "Capturing the Riot account currently signed in"
-                });
+                }));
                 self.launcher_capture_in_progress = true;
                 self.launcher_capture_kind = Some(super::LauncherCaptureKind::Current);
 
@@ -406,14 +407,14 @@ impl PrimeApp {
                 let discarded = self.discard_pending_account();
                 self.close_account_surfaces();
                 self.new_display_name.clear();
-                self.set_status(format!(
+                self.set_status(Status::progress(format!(
                     "{}Opening Riot Client. When it appears, sign in normally with \"Stay signed in\" ticked.",
                     if discarded {
                         "Discarded the unsaved captured account. "
                     } else {
                         ""
                     }
-                ));
+                )));
                 self.start_login_capture(LoginCaptureTarget::NewAccount(AccountId::new()))
             }
             Message::LoginCapturePrepared { target, result } => {
@@ -428,7 +429,7 @@ impl PrimeApp {
             Message::CancelAddAccountCapture => {
                 self.show_add_account_prompt = false;
                 self.capture_prompt_valorant_running = false;
-                self.set_status("Canceled account capture");
+                self.set_status(Status::info("Canceled account capture"));
                 Task::none()
             }
             Message::AccountCaptureFinished(result) => {
@@ -443,7 +444,9 @@ impl PrimeApp {
                             .game_name
                             .clone()
                             .unwrap_or_else(|| "New account".to_string());
-                        self.set_status("Captured login. Confirm the account details to save it.");
+                        self.set_status(Status::info(
+                            "Captured login. Confirm the account details to save it.",
+                        ));
                         self.pending_account = Some(draft);
                         Task::batch([
                             self.show_accounts_tab_top(),
@@ -451,7 +454,7 @@ impl PrimeApp {
                         ])
                     }
                     Err(error) => {
-                        self.set_status(format!("Could not add account: {error}"));
+                        self.set_status(Status::error(format!("Could not add account: {error}")));
                         Task::none()
                     }
                 }
@@ -483,7 +486,7 @@ impl PrimeApp {
                             .game_name
                             .clone()
                             .unwrap_or_else(|| "New account".to_string());
-                        self.set_status("Captured current Riot account. Confirm the account details to save it.");
+                        self.set_status(Status::info("Captured current Riot account. Confirm the account details to save it."));
                         self.pending_account = Some(draft);
                         Task::batch([
                             self.show_accounts_tab_top(),
@@ -491,7 +494,9 @@ impl PrimeApp {
                         ])
                     }
                     Err(error) => {
-                        self.set_status(format!("Could not add current account: {error}"));
+                        self.set_status(Status::error(format!(
+                            "Could not add current account: {error}"
+                        )));
                         Task::none()
                     }
                 }
@@ -512,7 +517,9 @@ impl PrimeApp {
             }
             Message::CancelCapturedAccount => {
                 let Some(draft) = self.pending_account.as_ref() else {
-                    self.set_status("No captured account is waiting to be discarded");
+                    self.set_status(Status::error(
+                        "No captured account is waiting to be discarded",
+                    ));
                     return Task::none();
                 };
 
@@ -520,16 +527,16 @@ impl PrimeApp {
                     self.repo.launcher_backups_dir(),
                     draft.account_id,
                 ) {
-                    self.set_status(format!(
+                    self.set_status(Status::error(format!(
                         "Could not discard captured account session: {error}"
-                    ));
+                    )));
                     return Task::none();
                 }
 
                 self.pending_account = None;
                 self.close_account_surfaces();
                 self.new_display_name.clear();
-                self.set_status("Discarded captured account draft");
+                self.set_status(Status::info("Discarded captured account draft"));
                 Task::none()
             }
             Message::ToggleAccountMenu(id) => {
@@ -557,7 +564,7 @@ impl PrimeApp {
                 else {
                     self.open_account_menu = None;
                     self.account_switcher_open = false;
-                    self.set_status("Account profile no longer exists");
+                    self.set_status(Status::error("Account profile no longer exists"));
                     return Task::none();
                 };
 
@@ -565,7 +572,7 @@ impl PrimeApp {
                 let display_name = account.display_name.clone();
                 let summary = account.summary();
                 self.close_account_surfaces();
-                self.set_status(format!("Exporting {summary}"));
+                self.set_status(Status::progress(format!("Exporting {summary}")));
 
                 Task::perform(
                     async move {
@@ -581,14 +588,16 @@ impl PrimeApp {
             Message::AccountExportPrepared(result) => {
                 match result {
                     Ok(export) => {
-                        self.set_status(format!(
+                        self.set_status(Status::success(format!(
                             "Prepared account export for {}",
                             export.display_name
-                        ));
+                        )));
                         self.exported_account = Some(export);
                     }
                     Err(error) => {
-                        self.set_status(format!("Could not export account: {error}"));
+                        self.set_status(Status::error(format!(
+                            "Could not export account: {error}"
+                        )));
                     }
                 }
 
@@ -596,7 +605,9 @@ impl PrimeApp {
             }
             Message::CopyAccountExport => {
                 let Some(export) = &self.exported_account else {
-                    self.set_status("Could not export account: no export is ready");
+                    self.set_status(Status::error(
+                        "Could not export account: no export is ready",
+                    ));
                     return Task::none();
                 };
 
@@ -614,10 +625,10 @@ impl PrimeApp {
             }
             Message::AccountExportCopied(display_name, result) => {
                 self.set_status(match result {
-                    Ok(()) => format!(
+                    Ok(()) => Status::success(format!(
                         "Copied account export for {display_name}; it is kept out of clipboard history"
-                    ),
-                    Err(error) => format!("Could not copy account export: {error}"),
+                    )),
+                    Err(error) => Status::error(format!("Could not copy account export: {error}")),
                 });
                 Task::none()
             }
@@ -628,7 +639,7 @@ impl PrimeApp {
             Message::OpenImportAccount => {
                 self.close_account_surfaces();
                 self.show_import_account_prompt = true;
-                self.set_status("Paste an account export to import it");
+                self.set_status(Status::info("Paste an account export to import it"));
                 Task::none()
             }
             Message::ImportAccountInputChanged(value) => {
@@ -641,13 +652,13 @@ impl PrimeApp {
             }
             Message::CancelImportAccount => {
                 if self.import_account_in_progress {
-                    self.set_status("Importing account");
+                    self.set_status(Status::progress("Importing account"));
                     return Task::none();
                 }
 
                 self.show_import_account_prompt = false;
                 self.import_account_input.clear();
-                self.set_status("Canceled account import");
+                self.set_status(Status::info("Canceled account import"));
                 Task::none()
             }
             Message::ConfirmImportAccount => {
@@ -656,7 +667,9 @@ impl PrimeApp {
                 }
 
                 if self.import_account_input.trim().is_empty() {
-                    self.set_status("Could not import account: paste an account export first");
+                    self.set_status(Status::error(
+                        "Could not import account: paste an account export first",
+                    ));
                     return Task::none();
                 }
 
@@ -665,7 +678,7 @@ impl PrimeApp {
                 let existing_accounts = self.state.accounts.clone();
 
                 self.import_account_in_progress = true;
-                self.set_status("Importing account");
+                self.set_status(Status::progress("Importing account"));
 
                 Task::perform(
                     async move {
@@ -694,9 +707,9 @@ impl PrimeApp {
                             .iter()
                             .any(|account| account.id == account_id)
                         {
-                            self.set_status(
+                            self.set_status(Status::error(
                                 "Could not import account: imported account ID already exists",
-                            );
+                            ));
                             return Task::none();
                         }
 
@@ -706,11 +719,13 @@ impl PrimeApp {
                         self.show_import_account_prompt = false;
                         self.import_account_input.clear();
                         self.clear_selected_account_views();
-                        self.set_status(format!("Imported {summary}{id_note}"));
+                        self.set_status(Status::success(format!("Imported {summary}{id_note}")));
                         return Task::batch([self.save_task(), self.load_account_tab(account_id)]);
                     }
                     Err(error) => {
-                        self.set_status(format!("Could not import account: {error}"));
+                        self.set_status(Status::error(format!(
+                            "Could not import account: {error}"
+                        )));
                     }
                 }
 
@@ -722,7 +737,7 @@ impl PrimeApp {
                     self.confirm_delete_account = Some(id);
                 } else {
                     self.close_account_surfaces();
-                    self.set_status("Account profile no longer exists");
+                    self.set_status(Status::error("Account profile no longer exists"));
                 }
 
                 Task::none()
@@ -741,7 +756,7 @@ impl PrimeApp {
                 else {
                     self.open_account_menu = None;
                     self.confirm_delete_account = None;
-                    self.set_status("Account profile no longer exists");
+                    self.set_status(Status::error("Account profile no longer exists"));
                     return Task::none();
                 };
 
@@ -749,10 +764,10 @@ impl PrimeApp {
                     remove_launcher_session_backup(self.repo.launcher_backups_dir(), id)
                 {
                     self.open_account_menu = None;
-                    self.set_status(format!(
+                    self.set_status(Status::error(format!(
                         "Could not delete captured launcher session for {}: {error}",
                         account.summary()
-                    ));
+                    )));
                     return Task::none();
                 }
 
@@ -774,7 +789,7 @@ impl PrimeApp {
                     self.clear_selected_account_views();
                 }
 
-                self.set_status(format!("Deleted {}", account.summary()));
+                self.set_status(Status::success(format!("Deleted {}", account.summary())));
                 self.save_task()
             }
             Message::RedirectChanged(value) => {
@@ -786,7 +801,7 @@ impl PrimeApp {
                 Task::none()
             }
             Message::RefreshClientVersion => {
-                self.set_status("Refreshing Riot client version");
+                self.set_status(Status::progress("Refreshing Riot client version"));
                 fetch_client_version_task(true)
             }
             Message::RetryClientVersion => {
@@ -806,13 +821,16 @@ impl PrimeApp {
                         self.client_version_input = version.clone();
                     }
                     if user_requested {
-                        self.set_status(format!("Current Riot client version: {version}"));
+                        self.set_status(Status::info(format!(
+                            "Current Riot client version: {version}"
+                        )));
                     }
 
                     self.load_active_tab()
                 }
                 Err(error) => {
-                    let status = format!("Could not fetch Riot client version: {error}");
+                    let status =
+                        Status::error(format!("Could not fetch Riot client version: {error}"));
 
                     if user_requested {
                         self.set_status(status);
@@ -831,7 +849,7 @@ impl PrimeApp {
             Message::ImportRedirect => {
                 let Some(account) = self.state.selected_account_mut() else {
                     self.account_switcher_open = false;
-                    self.set_status("Select an account before importing a token");
+                    self.set_status(Status::error("Select an account before importing a token"));
                     return Task::none();
                 };
 
@@ -844,11 +862,15 @@ impl PrimeApp {
                         let summary = account.summary();
                         account.session = Some(session);
                         self.redirect_input.clear();
-                        self.set_status(format!("Imported Riot redirect token for {summary}"));
+                        self.set_status(Status::success(format!(
+                            "Imported Riot redirect token for {summary}"
+                        )));
                         Task::batch([self.save_task(), self.load_account_tab(account_id)])
                     }
                     Err(error) => {
-                        self.set_status(format!("Could not import redirect token: {error}"));
+                        self.set_status(Status::error(format!(
+                            "Could not import redirect token: {error}"
+                        )));
                         Task::none()
                     }
                 }
@@ -869,7 +891,7 @@ impl PrimeApp {
                     self.confirm_recapture_account = Some(account_id);
                     check_capture_prompt_game_task()
                 } else {
-                    self.set_status("Account profile no longer exists");
+                    self.set_status(Status::error("Account profile no longer exists"));
                     Task::none()
                 }
             }
@@ -894,15 +916,15 @@ impl PrimeApp {
                 else {
                     self.open_account_menu = None;
                     self.account_switcher_open = false;
-                    self.set_status("Account profile no longer exists");
+                    self.set_status(Status::error("Account profile no longer exists"));
                     return Task::none();
                 };
 
                 let summary = account.summary();
                 self.close_account_surfaces();
-                self.set_status(format!(
+                self.set_status(Status::progress(format!(
                     "Opening Riot Client and waiting for remembered login capture for {summary}"
-                ));
+                )));
                 // Capture into a separate slot so the account's working backup is only replaced
                 // after the login is confirmed to belong to this account.
                 self.start_login_capture(LoginCaptureTarget::Existing {
@@ -920,9 +942,9 @@ impl PrimeApp {
                 let stored = match result {
                     Ok(captured) => self.store_captured_launcher_session(account_id, captured),
                     Err(error) => {
-                        self.set_status(format!(
+                        self.set_status(Status::error(format!(
                             "Could not complete launcher session login: {error}"
-                        ));
+                        )));
                         Task::none()
                     }
                 };
@@ -939,13 +961,15 @@ impl PrimeApp {
                 else {
                     self.open_account_menu = None;
                     self.account_switcher_open = false;
-                    self.set_status("Account profile no longer exists");
+                    self.set_status(Status::error("Account profile no longer exists"));
                     return Task::none();
                 };
 
                 let summary = account.summary();
                 self.close_account_surfaces();
-                self.set_status(format!("Refreshing Riot profile identity for {summary}"));
+                self.set_status(Status::progress(format!(
+                    "Refreshing Riot profile identity for {summary}"
+                )));
                 if !self.profile_identity_refreshing.insert(account_id) {
                     return Task::none();
                 }
@@ -970,7 +994,9 @@ impl PrimeApp {
                                 identity.game_name,
                                 identity.tag_line,
                             ) {
-                                self.set_status(format!("Profile identity rejected: {error}"));
+                                self.set_status(Status::error(format!(
+                                    "Profile identity rejected: {error}"
+                                )));
                                 return Task::none();
                             }
 
@@ -982,19 +1008,19 @@ impl PrimeApp {
                                 account.launcher_session = Some(launcher_session);
                             }
                             let summary = account.summary();
-                            self.set_status(format!("Refreshed {summary}"));
+                            self.set_status(Status::success(format!("Refreshed {summary}")));
                             return Task::batch([
                                 self.save_task(),
                                 self.load_account_tab(identity.account_id),
                             ]);
                         }
 
-                        self.set_status(
+                        self.set_status(Status::error(
                             "Refreshed profile identity, but the selected profile no longer exists",
-                        );
+                        ));
                     }
                     Err(error) => {
-                        self.set_status(format!("Profile refresh failed: {error}"));
+                        self.set_status(Status::error(format!("Profile refresh failed: {error}")));
                     }
                 }
 
@@ -1062,26 +1088,22 @@ impl PrimeApp {
 
                 let failed = result.failures.len() + context_failures;
                 let status = match (updated, failed, partial) {
-                    (0, 0, 0) => "No account details to refresh".to_string(),
-                    (0, failed, _) => {
-                        format!("Account detail refresh failed for {failed} account(s)")
+                    (0, 0, 0) => Status::info("No account details to refresh"),
+                    (0, failed, _) => Status::error(format!(
+                        "Account detail refresh failed for {failed} account(s)"
+                    )),
+                    (updated, 0, 0) => {
+                        Status::info(format!("Loaded account details for {updated} account(s)"))
                     }
-                    (updated, 0, 0) => format!("Loaded account details for {updated} account(s)"),
-                    (updated, 0, partial) => {
-                        format!(
-                            "Loaded account details for {updated} account(s); {partial} partial"
-                        )
-                    }
-                    (updated, failed, 0) => {
-                        format!(
-                            "Loaded account details for {updated} account(s); {failed} unavailable"
-                        )
-                    }
-                    (updated, failed, partial) => {
-                        format!(
-                            "Loaded account details for {updated} account(s); {failed} unavailable, {partial} partial"
-                        )
-                    }
+                    (updated, 0, partial) => Status::info(format!(
+                        "Loaded account details for {updated} account(s); {partial} partial"
+                    )),
+                    (updated, failed, 0) => Status::info(format!(
+                        "Loaded account details for {updated} account(s); {failed} unavailable"
+                    )),
+                    (updated, failed, partial) => Status::info(format!(
+                        "Loaded account details for {updated} account(s); {failed} unavailable, {partial} partial"
+                    )),
                 };
                 if announce && !self.progress_pinned() {
                     self.set_status(status);
@@ -1130,7 +1152,9 @@ impl PrimeApp {
                         window::set_mode(id, window::Mode::Hidden)
                     }
                     Err(error) => {
-                        self.set_status(format!("{error}; minimized to the taskbar instead"));
+                        self.set_status(Status::error(format!(
+                            "{error}; minimized to the taskbar instead"
+                        )));
                         window::minimize(id, true)
                     }
                 }
@@ -1196,7 +1220,9 @@ impl PrimeApp {
                 match result {
                     Ok(profiles) => self.settings_profiles = profiles,
                     Err(error) => {
-                        self.set_status(format!("Could not load settings profiles: {error}"));
+                        self.set_status(Status::error(format!(
+                            "Could not load settings profiles: {error}"
+                        )));
                     }
                 }
 
@@ -1213,7 +1239,7 @@ impl PrimeApp {
                     .iter()
                     .find(|account| account.id == account_id)
                 else {
-                    self.set_status("Account profile no longer exists");
+                    self.set_status(Status::error("Account profile no longer exists"));
                     return Task::none();
                 };
 
@@ -1242,7 +1268,7 @@ impl PrimeApp {
                     .find(|profile| profile.id == profile_id)
                     .map(|profile| profile.name.clone())
                 else {
-                    self.set_status("Settings preset no longer exists");
+                    self.set_status(Status::error("Settings preset no longer exists"));
                     return Task::none();
                 };
 
@@ -1304,11 +1330,14 @@ impl PrimeApp {
                     {
                         *profile = renamed.clone();
                     }
-                    self.set_status(format!("Renamed preset to {}", renamed.name));
+                    self.set_status(Status::success(format!(
+                        "Renamed preset to {}",
+                        renamed.name
+                    )));
                     Task::none()
                 }
                 Err(error) => {
-                    self.set_status(format!("Could not rename preset: {error}"));
+                    self.set_status(Status::error(format!("Could not rename preset: {error}")));
                     self.load_settings_profiles_task()
                 }
             },
@@ -1329,7 +1358,7 @@ impl PrimeApp {
                 else {
                     self.open_account_menu = None;
                     self.account_switcher_open = false;
-                    self.set_status("Account profile no longer exists");
+                    self.set_status(Status::error("Account profile no longer exists"));
                     return Task::none();
                 };
 
@@ -1337,7 +1366,9 @@ impl PrimeApp {
                 let profile_dir = self.repo.settings_profiles_dir();
                 self.close_account_surfaces();
                 self.settings_saving_account = Some(account_id);
-                self.set_status(format!("Saving {summary}'s settings as {name}"));
+                self.set_status(Status::progress(format!(
+                    "Saving {summary}'s settings as {name}"
+                )));
 
                 Task::perform(
                     save_game_settings_profile(account, profile_dir, name),
@@ -1367,18 +1398,23 @@ impl PrimeApp {
                             result.launcher_session,
                             result.identity,
                         ) {
-                            self.set_status(format!(
+                            self.set_status(Status::error(format!(
                                 "Saved preset {}, but account update failed: {error}",
                                 result.profile.name
-                            ));
+                            )));
                             return Task::none();
                         }
 
-                        self.set_status(format!("Saved preset {}", result.profile.name));
+                        self.set_status(Status::success(format!(
+                            "Saved preset {}",
+                            result.profile.name
+                        )));
                         Task::batch([self.save_task(), self.load_settings_profiles_task()])
                     }
                     Err(error) => {
-                        self.set_status(format!("Could not save account settings: {error}"));
+                        self.set_status(Status::error(format!(
+                            "Could not save account settings: {error}"
+                        )));
                         Task::none()
                     }
                 }
@@ -1400,7 +1436,7 @@ impl PrimeApp {
                 {
                     self.confirm_delete_settings_profile = Some(profile_id);
                 } else {
-                    self.set_status("Settings profile no longer exists");
+                    self.set_status(Status::error("Settings profile no longer exists"));
                 }
 
                 Task::none()
@@ -1432,13 +1468,13 @@ impl PrimeApp {
                     Ok(()) => {
                         self.settings_profiles
                             .retain(|profile| profile.id != profile_id);
-                        self.set_status(format!("Deleted {name}"));
+                        self.set_status(Status::success(format!("Deleted {name}")));
                         Task::none()
                     }
                     Err(error) => {
-                        self.set_status(format!(
+                        self.set_status(Status::error(format!(
                             "Could not delete settings profile {name}: {error}"
-                        ));
+                        )));
                         self.load_settings_profiles_task()
                     }
                 }
@@ -1453,7 +1489,7 @@ impl PrimeApp {
                         .iter()
                         .any(|profile| profile.id == profile_id)
                 {
-                    self.set_status("Settings preset no longer exists");
+                    self.set_status(Status::error("Settings preset no longer exists"));
                     return Task::none();
                 }
 
@@ -1480,9 +1516,9 @@ impl PrimeApp {
                             result.launcher_session,
                             result.identity,
                         ) {
-                            self.set_status(format!(
+                            self.set_status(Status::error(format!(
                                 "Applied saved settings, but profile update failed: {error}"
-                            ));
+                            )));
                             return self.load_settings_profiles_task();
                         }
 
@@ -1491,14 +1527,16 @@ impl PrimeApp {
                         } else {
                             ""
                         };
-                        self.set_status(format!(
+                        self.set_status(Status::success(format!(
                             "Applied preset {}{put_aside}",
                             result.source_profile.name
-                        ));
+                        )));
                         Task::batch([self.save_task(), self.load_settings_profiles_task()])
                     }
                     Err(error) => {
-                        self.set_status(format!("Could not apply account settings: {error}"));
+                        self.set_status(Status::error(format!(
+                            "Could not apply account settings: {error}"
+                        )));
                         // Apply may have saved its backup before failing.
                         self.load_settings_profiles_task()
                     }
@@ -1555,7 +1593,7 @@ impl PrimeApp {
             Message::CancelSettingsChange => {
                 self.settings_check = None;
                 self.confirm_settings_change = None;
-                self.set_status("Canceled settings change");
+                self.set_status(Status::info("Canceled settings change"));
                 Task::none()
             }
             Message::ConfirmSettingsChange => {
@@ -1573,7 +1611,7 @@ impl PrimeApp {
                     .find(|account| account.id == pending.change.account_id())
                     .cloned()
                 else {
-                    self.set_status("Account profile no longer exists");
+                    self.set_status(Status::error("Account profile no longer exists"));
                     return Task::none();
                 };
 
@@ -1587,14 +1625,16 @@ impl PrimeApp {
                             .find(|profile| profile.id == profile_id)
                             .map(|profile| profile.name.clone())
                         else {
-                            self.set_status(
+                            self.set_status(Status::error(
                                 "Could not apply account settings: that settings profile no longer exists",
-                            );
+                            ));
                             return Task::none();
                         };
 
                         self.settings_applying_account = Some(account.id);
-                        self.set_status(format!("Applying {profile_name} to {summary}"));
+                        self.set_status(Status::progress(format!(
+                            "Applying {profile_name} to {summary}"
+                        )));
                         Task::perform(
                             apply_game_settings_profile(account, profile_dir, profile_id),
                             Message::SavedSettingsApplied,
@@ -1602,7 +1642,9 @@ impl PrimeApp {
                     }
                     SettingsChange::Restore(_) => {
                         self.settings_applying_account = Some(account.id);
-                        self.set_status(format!("Restoring {summary}'s original settings"));
+                        self.set_status(Status::progress(format!(
+                            "Restoring {summary}'s original settings"
+                        )));
                         Task::perform(
                             restore_original_game_settings(account, profile_dir),
                             Message::SettingsRestored,
@@ -1628,17 +1670,19 @@ impl PrimeApp {
                             result.launcher_session,
                             result.identity,
                         ) {
-                            self.set_status(format!(
+                            self.set_status(Status::error(format!(
                                 "Restored original settings, but profile update failed: {error}"
-                            ));
+                            )));
                             return self.load_settings_profiles_task();
                         }
 
-                        self.set_status("Restored original settings");
+                        self.set_status(Status::success("Restored original settings"));
                         Task::batch([self.save_task(), self.load_settings_profiles_task()])
                     }
                     Err(error) => {
-                        self.set_status(format!("Could not restore original settings: {error}"));
+                        self.set_status(Status::error(format!(
+                            "Could not restore original settings: {error}"
+                        )));
                         self.load_settings_profiles_task()
                     }
                 }
@@ -1680,7 +1724,7 @@ impl PrimeApp {
                         ) {
                             let error = format!("Store loaded, but profile update failed: {error}");
                             self.store_error = Some(error.clone());
-                            self.set_view_status(error);
+                            self.set_view_status(Status::error(error));
                             return Task::none();
                         }
 
@@ -1693,10 +1737,10 @@ impl PrimeApp {
                             ""
                         };
 
-                        self.set_view_status(format!(
+                        self.set_view_status(Status::info(format!(
                             "Loaded {} featured bundle(s), {} daily offer(s), and {} night market offer(s){}",
                             bundle_count, daily_count, night_market_count, balance_status
-                        ));
+                        )));
                         if self.state.selected_account == Some(result.account_id) {
                             self.store_summary = Some(result.summary);
                         }
@@ -1705,7 +1749,9 @@ impl PrimeApp {
                     }
                     Err(error) => {
                         if is_current_request {
-                            self.set_view_status(format!("Store check failed: {error}"));
+                            self.set_view_status(Status::error(format!(
+                                "Store check failed: {error}"
+                            )));
                             self.store_error = Some(error);
                         }
                     }
@@ -1738,7 +1784,9 @@ impl PrimeApp {
                 {
                     self.store_summary = None;
                     let task = self.fetch_storefront_task();
-                    self.set_view_status("Shop reset reached; loading updated shop");
+                    self.set_view_status(Status::progress(
+                        "Shop reset reached; loading updated shop",
+                    ));
                     return task;
                 }
 
@@ -1750,7 +1798,9 @@ impl PrimeApp {
                 {
                     self.loadout_summary = None;
                     let task = self.fetch_loadout_task();
-                    self.set_view_status("Battle pass act ended; loading the new one");
+                    self.set_view_status(Status::progress(
+                        "Battle pass act ended; loading the new one",
+                    ));
                     return task;
                 }
 
@@ -1801,7 +1851,7 @@ impl PrimeApp {
                             let error =
                                 format!("Loadout loaded, but profile update failed: {error}");
                             self.loadout_error = Some(error.clone());
-                            self.set_view_status(error);
+                            self.set_view_status(Status::error(error));
                             return Task::none();
                         }
 
@@ -1817,15 +1867,15 @@ impl PrimeApp {
                                 &result.summary.loadout_error,
                                 &result.summary.battle_pass_error,
                             ) {
-                                (Some(error), _) => {
-                                    format!("Loaded battle pass progress; loadout failed: {error}")
-                                }
-                                (None, Some(error)) => format!(
+                                (Some(error), _) => Status::error(format!(
+                                    "Loaded battle pass progress; loadout failed: {error}"
+                                )),
+                                (None, Some(error)) => Status::error(format!(
                                     "Loaded loadout with {gun_count} gun skin(s); battle pass failed: {error}"
-                                ),
-                                (None, None) => format!(
+                                )),
+                                (None, None) => Status::info(format!(
                                     "Loaded loadout with {gun_count} gun skin(s){battle_pass_status}"
-                                ),
+                                )),
                             },
                         );
                         if let Some(level) = result.summary.account_level
@@ -1846,7 +1896,9 @@ impl PrimeApp {
                     }
                     Err(error) => {
                         if is_current_request {
-                            self.set_view_status(format!("Loadout check failed: {error}"));
+                            self.set_view_status(Status::error(format!(
+                                "Loadout check failed: {error}"
+                            )));
                             self.loadout_error = Some(error);
                         }
                     }
@@ -1904,7 +1956,7 @@ impl PrimeApp {
             ),
             Message::ExplorerOpened(result) => {
                 if let Err(error) = result {
-                    self.set_status(format!("Could not open Explorer: {error}"));
+                    self.set_status(Status::error(format!("Could not open Explorer: {error}")));
                 }
                 Task::none()
             }
@@ -1914,10 +1966,10 @@ impl PrimeApp {
                 if let Some(path) = &path
                     && !path.is_file()
                 {
-                    self.set_status(format!(
+                    self.set_status(Status::error(format!(
                         "Could not save settings: there is no Riot Client at {}",
                         path.display()
-                    ));
+                    )));
                     return Task::none();
                 }
 
@@ -1926,7 +1978,7 @@ impl PrimeApp {
                     .map(|path| path.display().to_string())
                     .unwrap_or_default();
                 self.state.riot_client_path = path;
-                self.set_status("Saved settings");
+                self.set_status(Status::success("Saved settings"));
                 self.save_task()
             }
             Message::ImageCacheSizeLoaded(result) => self.handle_image_cache_size_loaded(result),
@@ -1949,9 +2001,9 @@ impl PrimeApp {
                 }
 
                 if self.launcher_capture_in_progress {
-                    self.set_status(
+                    self.set_status(Status::info(
                         "Wait for the login capture to finish before launching VALORANT",
-                    );
+                    ));
                     return Task::none();
                 }
 
@@ -1962,7 +2014,7 @@ impl PrimeApp {
                     .find(|account| account.id == id)
                     .cloned()
                 else {
-                    self.set_status("Account profile no longer exists");
+                    self.set_status(Status::error("Account profile no longer exists"));
                     return Task::none();
                 };
 
@@ -1970,16 +2022,18 @@ impl PrimeApp {
 
                 // Riot Client would otherwise start on whichever account it last remembered.
                 if !account.has_launcher_session() {
-                    self.set_status(format!(
+                    self.set_status(Status::error(format!(
                         "Could not launch {summary}: capture its login first (... > Re-capture login)"
-                    ));
+                    )));
                     return Task::none();
                 }
 
                 self.close_account_surfaces();
                 self.unavailable_launch_warning = None;
                 self.launch_preflight_account = Some(id);
-                self.set_status(format!("Checking availability for {summary}"));
+                self.set_status(Status::progress(format!(
+                    "Checking availability for {summary}"
+                )));
 
                 Task::perform(
                     check_account_in_game(account, self.client_version_input.clone()),
@@ -2006,7 +2060,7 @@ impl PrimeApp {
                     .find(|account| account.id == check.account_id)
                     .cloned()
                 else {
-                    self.set_status("Account profile no longer exists");
+                    self.set_status(Status::error("Account profile no longer exists"));
                     return Task::none();
                 };
 
@@ -2032,13 +2086,15 @@ impl PrimeApp {
                         display_name: account.display_name,
                         reason: warnings.join(" "),
                     });
-                    self.set_status("Confirm launch to continue");
+                    self.set_status(Status::info("Confirm launch to continue"));
                     return Task::none();
                 }
 
                 match decision {
                     LaunchPreflightDecision::WarnUnavailable => {
-                        self.set_status("Account appears unavailable; confirm launch to continue");
+                        self.set_status(Status::info(
+                            "Account appears unavailable; confirm launch to continue",
+                        ));
                         Task::none()
                     }
                     LaunchPreflightDecision::Launch => {
@@ -2061,7 +2117,7 @@ impl PrimeApp {
                     &mut self.launching_account,
                     &mut self.launch_progress_checking,
                 );
-                self.set_status("Canceled launch");
+                self.set_status(Status::info("Canceled launch"));
                 Task::none()
             }
             Message::LaunchAnyway(id) => {
@@ -2070,9 +2126,9 @@ impl PrimeApp {
                 }
 
                 if self.launcher_capture_in_progress {
-                    self.set_status(
+                    self.set_status(Status::info(
                         "Wait for the login capture to finish before launching VALORANT",
-                    );
+                    ));
                     return Task::none();
                 }
 
@@ -2092,7 +2148,7 @@ impl PrimeApp {
                     .find(|account| account.id == id)
                     .cloned()
                 else {
-                    self.set_status("Account profile no longer exists");
+                    self.set_status(Status::error("Account profile no longer exists"));
                     return Task::none();
                 };
 
@@ -2118,7 +2174,9 @@ impl PrimeApp {
                 }
 
                 if matches!(result, Ok(true)) {
-                    self.set_status("Riot Client is open; waiting for VALORANT");
+                    self.set_status(Status::progress(
+                        "Riot Client is open; waiting for VALORANT",
+                    ));
                 }
 
                 Task::none()
@@ -2144,16 +2202,14 @@ impl PrimeApp {
 
                     self.set_status(match (result.sync_warning, result.previous_account_sync_warning)
                     {
-                        (Some(warning), _) => {
-                            format!(
-                                "Could not sync launcher session after VALORANT window detected: {warning}"
-                            )
-                        }
-                        (None, Some(warning)) => format!(
+                        (Some(warning), _) => Status::error(format!(
+                            "Could not sync launcher session after VALORANT window detected: {warning}"
+                        )),
+                        (None, Some(warning)) => Status::error(format!(
                             "VALORANT window detected, but the previous account's login could not be saved: {warning}"
-                        ),
+                        )),
                         (None, None) => {
-                            "VALORANT window detected; launcher session updated".to_string()
+                            Status::success("VALORANT window detected; launcher session updated")
                         }
                     });
 
@@ -2175,7 +2231,7 @@ impl PrimeApp {
                 Err(error) => {
                     self.launching_account = None;
                     self.launch_progress_checking = false;
-                    self.set_status(format!("Launch failed: {error}"));
+                    self.set_status(Status::error(format!("Launch failed: {error}")));
                     Task::none()
                 }
             },
@@ -2207,7 +2263,7 @@ impl PrimeApp {
         }
 
         self.app_update_status = AppUpdateStatus::Checking;
-        self.set_status("Checking for Prime updates");
+        self.set_status(Status::progress("Checking for Prime updates"));
         Task::perform(check_for_update(), |result| Message::AppUpdateChecked {
             user_requested: true,
             result: result.map_err(|error| error.to_string()),
@@ -2223,10 +2279,10 @@ impl PrimeApp {
             Ok(UpdateCheckOutcome::Available(update)) => {
                 // A background check opens the update prompt, which says the same thing.
                 if user_requested {
-                    self.set_status(format!(
+                    self.set_status(Status::info(format!(
                         "Prime {} is available; download it when ready",
                         update.latest_version
-                    ));
+                    )));
                 }
                 self.app_update_status = AppUpdateStatus::Available(update);
             }
@@ -2234,24 +2290,24 @@ impl PrimeApp {
                 self.app_update_status = AppUpdateStatus::NotInstalled;
 
                 if user_requested {
-                    self.set_status(self.app_update_status.label());
+                    self.set_status(Status::info(self.app_update_status.label()));
                 }
             }
             Ok(UpdateCheckOutcome::UpToDate) => {
                 self.app_update_status = AppUpdateStatus::UpToDate;
 
                 if user_requested {
-                    self.set_status(format!(
+                    self.set_status(Status::success(format!(
                         "Prime is up to date ({})",
                         crate::updater::CURRENT_VERSION
-                    ));
+                    )));
                 }
             }
             Err(error) => {
                 self.app_update_status = AppUpdateStatus::CheckFailed(error.clone());
 
                 if user_requested {
-                    self.set_status(format!("Update check failed: {error}"));
+                    self.set_status(Status::error(format!("Update check failed: {error}")));
                 }
             }
         }
@@ -2262,7 +2318,7 @@ impl PrimeApp {
     fn dismiss_app_update(&mut self) -> Task<Message> {
         if let Some(update) = self.app_update_status.prompt_update().cloned() {
             self.app_update_status = AppUpdateStatus::Dismissed(update);
-            self.set_status("Update postponed");
+            self.set_status(Status::info("Update postponed"));
         }
 
         Task::none()
@@ -2270,17 +2326,22 @@ impl PrimeApp {
 
     fn download_app_update(&mut self) -> Task<Message> {
         let Some(update) = self.app_update_status.pending_update().cloned() else {
-            self.set_status("No Prime update is available to download");
+            self.set_status(Status::info("No Prime update is available to download"));
             return Task::none();
         };
 
         // Prime exits to install the update, which would cut this work off.
         if let Some(work) = self.work_blocking_update() {
-            self.set_status(format!("Could not start the update: wait for {work}"));
+            self.set_status(Status::error(format!(
+                "Could not start the update: wait for {work}"
+            )));
             return Task::none();
         }
 
-        self.set_status(format!("Downloading Prime {}", update.latest_version));
+        self.set_status(Status::progress(format!(
+            "Downloading Prime {}",
+            update.latest_version
+        )));
         self.app_update_status = AppUpdateStatus::Downloading(update.clone());
         Task::perform(download_and_prepare_update(update), |result| {
             Message::AppUpdatePrepared(result.map_err(|error| error.to_string()))
@@ -2291,7 +2352,9 @@ impl PrimeApp {
         match result {
             Ok(()) => {
                 self.app_update_status = AppUpdateStatus::Installing;
-                self.set_status("Preparing to restart and install the update");
+                self.set_status(Status::progress(
+                    "Preparing to restart and install the update",
+                ));
                 iced::exit()
             }
             Err(error) => {
@@ -2299,7 +2362,7 @@ impl PrimeApp {
                     AppUpdateStatus::Downloading(update) => Some(update.clone()),
                     _ => None,
                 };
-                self.set_status(format!("Update failed: {error}"));
+                self.set_status(Status::error(format!("Update failed: {error}")));
                 self.app_update_status = AppUpdateStatus::InstallFailed { update, error };
                 Task::none()
             }
@@ -2353,7 +2416,7 @@ impl PrimeApp {
             }
             Err(error) => {
                 viewer.high_res_error = Some("Full image unavailable".to_string());
-                self.set_status(format!("Could not load full image: {error}"));
+                self.set_status(Status::error(format!("Could not load full image: {error}")));
             }
         }
 
@@ -2374,7 +2437,9 @@ impl PrimeApp {
                 self.image_cache_usage = usage;
             }
             Err(error) => {
-                self.set_status(format!("Could not read image cache size: {error}"));
+                self.set_status(Status::error(format!(
+                    "Could not read image cache size: {error}"
+                )));
             }
         }
 
@@ -2388,7 +2453,7 @@ impl PrimeApp {
 
         let cache = self.image_cache.clone();
         self.image_cache_clearing = true;
-        self.set_status("Clearing image cache");
+        self.set_status(Status::progress("Clearing image cache"));
         Task::perform(
             async move { cache.clear().map_err(|error| error.to_string()) },
             Message::ImageCacheCleared,
@@ -2404,13 +2469,15 @@ impl PrimeApp {
         match result {
             Ok(()) => {
                 self.image_cache_usage = CacheUsage::default();
-                self.set_status("Cleared image cache");
+                self.set_status(Status::success("Cleared image cache"));
                 // The rank icon files were deleted with the rest.
                 self.rank_icons.clear();
                 return cache_rank_icons_task(&self.image_cache);
             }
             Err(error) => {
-                self.set_status(format!("Could not clear image cache: {error}"));
+                self.set_status(Status::error(format!(
+                    "Could not clear image cache: {error}"
+                )));
             }
         }
 
@@ -2460,7 +2527,7 @@ impl PrimeApp {
             .find(|account| account.id == change.account_id())
             .cloned()
         else {
-            self.set_status("Account profile no longer exists");
+            self.set_status(Status::error("Account profile no longer exists"));
             return Task::none();
         };
 
@@ -2683,7 +2750,7 @@ impl PrimeApp {
         let announce = announce && !self.progress_pinned();
         self.account_ranks_loading = accounts.iter().map(|account| account.id).collect();
         if announce {
-            self.set_status("Loading account details");
+            self.set_status(Status::progress("Loading account details"));
         }
         let client_version = self.client_version_input.clone();
 
@@ -2706,7 +2773,7 @@ impl PrimeApp {
         let request = self.next_view_request(account.id);
         self.store_request = Some(request);
         self.store_error = None;
-        self.set_view_status("Loading shop");
+        self.set_view_status(Status::progress("Loading shop"));
         let image_cache = self.image_cache.clone();
         Task::perform(
             fetch_storefront(account, self.client_version_input.clone(), image_cache),
@@ -2725,7 +2792,7 @@ impl PrimeApp {
         let request = self.next_view_request(account.id);
         self.loadout_request = Some(request);
         self.loadout_error = None;
-        self.set_view_status("Loading loadout");
+        self.set_view_status(Status::progress("Loading loadout"));
         let image_cache = self.image_cache.clone();
         Task::perform(
             fetch_loadout(account, self.client_version_input.clone(), image_cache),
@@ -2801,6 +2868,7 @@ impl PrimeApp {
     }
 
     fn start_account_launch(&mut self, account: AccountProfile, status: String) -> Task<Message> {
+        let status = Status::progress(status);
         let id = account.id;
         let config = LaunchConfig {
             riot_client_path: self.state.riot_client_path.clone(),
@@ -2918,7 +2986,7 @@ impl PrimeApp {
 
     fn confirm_captured_account(&mut self) -> Task<Message> {
         let Some(draft) = self.pending_account.clone() else {
-            self.set_status("No captured account is waiting to be saved");
+            self.set_status(Status::error("No captured account is waiting to be saved"));
             return Task::none();
         };
 
@@ -2943,7 +3011,7 @@ impl PrimeApp {
                 account.session = draft.session;
 
                 if let Err(error) = account.attach_launcher_session(draft.backup) {
-                    self.set_status(format!("Captured account rejected: {error}"));
+                    self.set_status(Status::error(format!("Captured account rejected: {error}")));
                     return Task::none();
                 }
 
@@ -2951,11 +3019,13 @@ impl PrimeApp {
                     && let Err(error) =
                         account.apply_riot_identity(draft.puuid, game_name, tag_line)
                 {
-                    self.set_status(format!("Captured identity rejected: {error}"));
+                    self.set_status(Status::error(format!(
+                        "Captured identity rejected: {error}"
+                    )));
                     return Task::none();
                 }
 
-                self.set_status(format!("Added {}", account.summary()));
+                self.set_status(Status::success(format!("Added {}", account.summary())));
                 self.state.push_account(account);
                 self.account_availability.remove(&draft.account_id);
                 self.state.select_account(draft.account_id);
@@ -2965,7 +3035,7 @@ impl PrimeApp {
                 return Task::batch([self.save_task(), self.load_account_tab(draft.account_id)]);
             }
             Err(error) => {
-                self.set_status(error.to_string());
+                self.set_status(Status::error(error.to_string()));
             }
         }
 
@@ -2974,7 +3044,7 @@ impl PrimeApp {
 
     /// Saves a just-added account's VALORANT settings as a profile, when that was asked for.
     fn save_added_account_settings(&mut self, account_id: AccountId) -> Task<Message> {
-        let added = self.status.clone();
+        let added = self.status.text.clone();
         let name = self
             .state
             .accounts
@@ -2985,11 +3055,13 @@ impl PrimeApp {
         let task = self.handle_message(Message::SaveSettingsPreset { account_id, name });
 
         if self.settings_saving_account == Some(account_id) {
-            self.set_status(format!("{added}. Saving its VALORANT settings as a preset"));
+            self.set_status(Status::progress(format!(
+                "{added}. Saving its VALORANT settings as a preset"
+            )));
         } else {
-            self.set_status(format!(
+            self.set_status(Status::error(format!(
                 "{added}, but its VALORANT settings could not be saved while other settings work runs"
-            ));
+            )));
         }
 
         task
@@ -3008,7 +3080,7 @@ impl PrimeApp {
         ) {
             Ok(backup) => backup,
             Err(error) => {
-                self.set_status(format!("Captured account rejected: {error}"));
+                self.set_status(Status::error(format!("Captured account rejected: {error}")));
                 return Task::none();
             }
         };
@@ -3023,10 +3095,10 @@ impl PrimeApp {
                 self.repo.launcher_backups_dir(),
                 draft.account_id,
             ) {
-                Ok(()) => "Captured account, but the profile no longer exists".to_string(),
-                Err(error) => format!(
+                Ok(()) => Status::error("Captured account, but the profile no longer exists"),
+                Err(error) => Status::error(format!(
                     "Captured account, but the profile no longer exists and cleanup failed: {error}"
-                ),
+                )),
             });
             return Task::none();
         };
@@ -3035,14 +3107,16 @@ impl PrimeApp {
         account.session = draft.session;
 
         if let Err(error) = account.attach_launcher_session(backup) {
-            self.set_status(format!("Captured account rejected: {error}"));
+            self.set_status(Status::error(format!("Captured account rejected: {error}")));
             return Task::none();
         }
 
         if let (Some(game_name), Some(tag_line)) = (draft.game_name, draft.tag_line)
             && let Err(error) = account.apply_riot_identity(draft.puuid, game_name, tag_line)
         {
-            self.set_status(format!("Captured identity rejected: {error}"));
+            self.set_status(Status::error(format!(
+                "Captured identity rejected: {error}"
+            )));
             return Task::none();
         }
 
@@ -3052,9 +3126,9 @@ impl PrimeApp {
         self.pending_account = None;
         self.new_display_name.clear();
         self.clear_selected_account_views();
-        self.set_status(format!(
+        self.set_status(Status::error(format!(
             "Duplicate account: Prime did not add a new profile because this Riot account is already in Prime; updated and selected {summary}"
-        ));
+        )));
         Task::batch([self.save_task(), self.load_account_tab(account_id)])
     }
 
@@ -3083,12 +3157,16 @@ impl PrimeApp {
         }
 
         if self.launcher_capture_in_progress {
-            self.set_status("Launcher login capture is already in progress");
+            self.set_status(Status::info(
+                "Launcher login capture is already in progress",
+            ));
             return true;
         }
 
         if self.launch_in_progress() {
-            self.set_status("Wait for VALORANT to finish launching before capturing a login");
+            self.set_status(Status::info(
+                "Wait for VALORANT to finish launching before capturing a login",
+            ));
             return true;
         }
 
@@ -3119,7 +3197,9 @@ impl PrimeApp {
             self.app_update_status,
             AppUpdateStatus::Downloading(_) | AppUpdateStatus::Installing
         ) {
-            self.set_status("Wait for the Prime update to finish; Prime restarts to install it");
+            self.set_status(Status::info(
+                "Wait for the Prime update to finish; Prime restarts to install it",
+            ));
             return true;
         }
 
@@ -3178,19 +3258,21 @@ impl PrimeApp {
             Err(error) => {
                 self.end_login_capture();
                 self.set_status(match target {
-                    LoginCaptureTarget::NewAccount(_) => format!("Could not add account: {error}"),
-                    LoginCaptureTarget::Existing { .. } => {
-                        format!("Could not complete launcher session login: {error}")
+                    LoginCaptureTarget::NewAccount(_) => {
+                        Status::error(format!("Could not add account: {error}"))
                     }
+                    LoginCaptureTarget::Existing { .. } => Status::error(format!(
+                        "Could not complete launcher session login: {error}"
+                    )),
                 });
                 return save;
             }
         };
 
         if let Some(warning) = previous_sync_warning {
-            self.set_status(format!(
+            self.set_status(Status::error(format!(
                 "Could not save the previously signed-in account's login: {warning}. Sign in to Riot Client with \"Stay signed in\" ticked to continue."
-            ));
+            )));
         }
 
         let backup_root = self.repo.launcher_backups_dir();
@@ -3238,10 +3320,10 @@ impl PrimeApp {
                 self.repo.launcher_backups_dir(),
                 capture.target.slot_id(),
             ) {
-                Ok(()) => "Canceled login capture. Riot Client was left open and signed out; launching an account from Prime signs it back in.".to_string(),
-                Err(error) => format!(
+                Ok(()) => Status::info("Canceled login capture. Riot Client was left open and signed out; launching an account from Prime signs it back in."),
+                Err(error) => Status::error(format!(
                     "Canceled login capture, but could not remove its partial login backup: {error}"
-                ),
+                )),
             },
         );
         Task::none()
@@ -3314,9 +3396,9 @@ impl PrimeApp {
                 .is_some_and(|puuid| !puuid.eq_ignore_ascii_case(&captured_puuid))
             {
                 let _ = remove_launcher_session_backup(&backup_root, captured.account_id);
-                self.set_status(format!(
+                self.set_status(Status::error(format!(
                     "Signed in as a different Riot account; {summary} was not changed. Re-capture and sign in to {summary}."
-                ));
+                )));
                 return Task::none();
             }
 
@@ -3329,21 +3411,21 @@ impl PrimeApp {
                 Ok(backup) => backup,
                 Err(error) => {
                     let _ = remove_launcher_session_backup(&backup_root, captured.account_id);
-                    self.set_status(format!(
+                    self.set_status(Status::error(format!(
                         "Could not save the captured login for {summary}: {error}"
-                    ));
+                    )));
                     return Task::none();
                 }
             };
 
             if let Err(error) = account.attach_launcher_session(backup) {
-                self.set_status(format!("Launcher session rejected: {error}"));
+                self.set_status(Status::error(format!("Launcher session rejected: {error}")));
                 return Task::none();
             }
 
-            self.set_status(format!(
+            self.set_status(Status::success(format!(
                 "Captured launcher session for {summary} ({captured_puuid})"
-            ));
+            )));
             return Task::batch([self.save_task(), self.load_account_tab(account_id)]);
         }
 
@@ -3351,10 +3433,10 @@ impl PrimeApp {
             self.repo.launcher_backups_dir(),
             captured.account_id,
         ) {
-            Ok(()) => "Captured launcher session, but the profile no longer exists".to_string(),
-            Err(error) => format!(
+            Ok(()) => Status::error("Captured launcher session, but the profile no longer exists"),
+            Err(error) => Status::error(format!(
                 "Captured launcher session, but the profile no longer exists and cleanup failed: {error}"
-            ),
+            )),
         });
         Task::none()
     }

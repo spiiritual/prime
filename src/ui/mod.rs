@@ -157,7 +157,7 @@ fn loading_indicator_active(app: &PrimeApp) -> bool {
                 .image_viewer
                 .as_ref()
                 .is_some_and(|image| image.high_res_loading)
-        || loading_status_active(&app.status)
+        || app.status.kind == StatusKind::Progress
 }
 
 /// Countdowns tick only while one is on screen. A reset reached meanwhile is caught when the tab
@@ -187,102 +187,78 @@ fn escape_key_message(event: iced::keyboard::Event) -> Option<Message> {
     }
 }
 
-/// The status bar's spinner marks a progress message, not unrelated work in the background.
-fn status_spinner_active(app: &PrimeApp) -> bool {
-    !status_message_is_error(&app.status)
-        && (loading_status_active(&app.status)
-            || app.launching_account.is_some()
-            || app.launcher_capture_in_progress)
+/// What a status message reports, which sets its toast's look and how long it stays.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum StatusKind {
+    #[default]
+    Info,
+    /// Work that is still running; the toast shows a spinner.
+    Progress,
+    /// A finished action; the toast is green.
+    Success,
+    /// Stays on screen until something the user does replaces it.
+    Error,
 }
 
-fn loading_status_active(status: &str) -> bool {
-    status.starts_with("Loading ")
-        || status.starts_with("Refreshing ")
-        || status.starts_with("Opening Riot Client")
-        || status.starts_with("Capturing ")
-        || status.starts_with("Clearing ")
-        || status.starts_with("Launching ")
-        || status.starts_with("Exporting ")
-        || status.starts_with("Importing ")
-        || status.starts_with("Saving ")
-        || status.starts_with("Applying ")
-        || status.starts_with("Checking for Prime updates")
-        || status.starts_with("Downloading Prime ")
-        || status.starts_with("Preparing to restart")
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Status {
+    kind: StatusKind,
+    text: String,
+}
+
+impl Status {
+    fn new(kind: StatusKind, text: impl Into<String>) -> Self {
+        Self {
+            kind,
+            text: text.into(),
+        }
+    }
+
+    fn info(text: impl Into<String>) -> Self {
+        Self::new(StatusKind::Info, text)
+    }
+
+    fn progress(text: impl Into<String>) -> Self {
+        Self::new(StatusKind::Progress, text)
+    }
+
+    fn success(text: impl Into<String>) -> Self {
+        Self::new(StatusKind::Success, text)
+    }
+
+    fn error(text: impl Into<String>) -> Self {
+        Self::new(StatusKind::Error, text)
+    }
+}
+
+/// The status bar's spinner marks a progress message, not unrelated work in the background.
+fn status_spinner_active(app: &PrimeApp) -> bool {
+    app.status.kind == StatusKind::Progress
+        || app.status.kind != StatusKind::Error
+            && (app.launching_account.is_some() || app.launcher_capture_in_progress)
 }
 
 /// Errors stay on screen; other updates show briefly so actions still get feedback without
 /// cluttering the window, and launch or login capture progress stays visible while it runs.
 fn status_bar_visible(app: &PrimeApp) -> bool {
     status_visible_at(&app.status, app.status_changed_at, app.now)
-        || (!app.status.trim().is_empty()
+        || (!app.status.text.trim().is_empty()
             && (app.launching_account.is_some() || app.launcher_capture_in_progress))
 }
 
 fn status_visible_at(
-    status: &str,
+    status: &Status,
     changed_at: iced::time::Instant,
     now: iced::time::Instant,
 ) -> bool {
-    !status.trim().is_empty()
-        && (status_message_is_error(status)
+    !status.text.trim().is_empty()
+        && (status.kind == StatusKind::Error
             || now.saturating_duration_since(changed_at) < STATUS_FLASH_DURATION)
 }
 
 fn status_flash_active(app: &PrimeApp) -> bool {
-    !status_message_is_error(&app.status)
+    app.status.kind != StatusKind::Error
         && status_visible_at(&app.status, app.status_changed_at, app.now)
-}
-
-/// Finished actions get the green toast; progress and prompts stay neutral.
-fn status_message_is_success(status: &str) -> bool {
-    const SUCCESS_PREFIXES: &[&str] = &[
-        "Saved ",
-        "Imported ",
-        "Restored ",
-        "Renamed ",
-        "Refreshed ",
-        "Added ",
-        "Cleared ",
-        "Deleted ",
-    ];
-
-    !status_message_is_error(status)
-        && SUCCESS_PREFIXES
-            .iter()
-            .any(|prefix| status.starts_with(prefix))
-}
-
-fn status_message_is_error(status: &str) -> bool {
-    const ERROR_PREFIXES: &[&str] = &[
-        "Failed ",
-        "Could not ",
-        "Launch failed",
-        "Profile refresh failed",
-        "Store check failed",
-        "Loadout check failed",
-        "Update check failed",
-        "Update failed",
-        "Rank refresh failed",
-        "Captured account rejected",
-        "Captured identity rejected",
-        "Duplicate account",
-        "Profile identity rejected",
-        "Launcher session rejected",
-        "Signed in as a different Riot account",
-        "No captured account",
-        "Select an account before",
-        "Account profile no longer exists",
-        "display name cannot be empty",
-    ];
-
-    ERROR_PREFIXES
-        .iter()
-        .any(|prefix| status.starts_with(prefix))
-        || status.contains(" failed")
-        || status.contains(" could not ")
-        || status.contains(" rejected")
-        || status.contains(" no longer exists")
 }
 
 #[derive(Clone, Debug)]
@@ -307,7 +283,7 @@ struct PrimeApp {
     token_import_open: bool,
     client_version_input: String,
     riot_client_path_input: String,
-    status: String,
+    status: Status,
     account_switcher_open: bool,
     open_account_menu: Option<AccountId>,
     show_add_account_prompt: bool,
