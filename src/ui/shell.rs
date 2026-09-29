@@ -148,15 +148,16 @@ impl PrimeApp {
         let content: Element<_> = if status_bar_visible(self) {
             stack![
                 content,
+                // Bottom right, lined up with the right edge of the page content.
                 container(self.status_toast())
                     .padding(Padding {
                         bottom: 24.0,
-                        // Lined up with the main panel's content.
-                        left: SIDEBAR_WIDTH + 1.0 + 36.0,
+                        right: 36.0,
                         ..Padding::ZERO
                     })
                     .width(Length::Fill)
                     .height(Length::Fill)
+                    .align_x(alignment::Horizontal::Right)
                     .align_y(alignment::Vertical::Bottom)
             ]
             .into()
@@ -415,8 +416,22 @@ impl PrimeApp {
             }
         };
 
+        // Errors stay until closed, so only they get a close button.
+        let close = (kind == StatusKind::Error).then(|| {
+            button(theme::hover_icon(
+                theme::Icon::X,
+                14.0,
+                theme::MUTED,
+                theme::TEXT,
+            ))
+            .padding(0)
+            .style(|_, _| iced::widget::button::Style::default())
+            .on_press(Message::DismissStatus)
+        });
+
         container(
             row![lead, text(&self.status.text).size(12)]
+                .push(close)
                 .spacing(10)
                 .align_y(alignment::Vertical::Center),
         )
@@ -615,7 +630,8 @@ fn rule(color: Color) -> Element<'static, Message> {
         .into()
 }
 
-/// The design's toast: a lighter shadow than popovers, and a green border for a finished action.
+/// The design's toast: a lighter shadow than popovers, and a green or red border for a finished
+/// action or an error.
 fn status_toast_style(theme: &Theme, kind: StatusKind) -> iced::widget::container::Style {
     let mut style = popover_style(theme);
     style.shadow = iced::Shadow {
@@ -623,10 +639,15 @@ fn status_toast_style(theme: &Theme, kind: StatusKind) -> iced::widget::containe
         offset: iced::Vector::new(0.0, 8.0),
         blur_radius: 24.0,
     };
-    if kind == StatusKind::Success {
+    let tint = match kind {
+        StatusKind::Success => Some(theme::OK),
+        StatusKind::Error => Some(theme::ACCENT),
+        StatusKind::Info | StatusKind::Progress => None,
+    };
+    if let Some(tint) = tint {
         style.border.color = Color {
             a: 0x55 as f32 / 255.0,
-            ..theme::OK
+            ..tint
         };
     }
     style

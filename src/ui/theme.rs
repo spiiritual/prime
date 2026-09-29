@@ -329,6 +329,25 @@ pub(super) fn sized_icon<'a>(
         .into()
 }
 
+/// An icon that changes colour while the pointer is over it.
+pub(super) fn hover_icon<'a>(
+    icon: Icon,
+    size: f32,
+    idle: Color,
+    hovered: Color,
+) -> Element<'a, Message> {
+    svg(svg::Handle::from_memory(icon.svg()))
+        .width(size)
+        .height(size)
+        .style(move |_, status| svg::Style {
+            color: Some(match status {
+                svg::Status::Hovered => hovered,
+                svg::Status::Idle => idle,
+            }),
+        })
+        .into()
+}
+
 #[cfg(test)]
 mod tests {
     use iced::advanced::graphics::text::cosmic_text::{

@@ -214,6 +214,8 @@ impl PrimeApp {
             Message::DismissPopovers
         } else if self.settings_check.is_some() {
             Message::CancelSettingsChange
+        } else if self.status.kind == StatusKind::Error && super::status_bar_visible(self) {
+            Message::DismissStatus
         } else {
             return None;
         };
@@ -330,6 +332,10 @@ impl PrimeApp {
                     self.close_account_action_surfaces();
                 }
 
+                Task::none()
+            }
+            Message::DismissStatus => {
+                self.status = Status::default();
                 Task::none()
             }
             Message::DismissPopovers => {

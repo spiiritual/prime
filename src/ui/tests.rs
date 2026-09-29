@@ -4565,6 +4565,32 @@ fn show_all_settings_opens_and_closes_one_preset() {
 }
 
 #[test]
+fn an_error_toast_closes_with_its_button_or_escape_once_dialogs_are_closed() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let error = Status::error("Could not load shop: request timed out");
+
+    app.status = error.clone();
+    let _ = app.update(Message::DismissStatus);
+    assert!(!status_bar_visible(&app));
+
+    app.status = error.clone();
+    app.account_switcher_open = true;
+    let _ = app.update(Message::EscapePressed);
+    assert!(!app.account_switcher_open);
+    assert_eq!(app.status, error);
+
+    let _ = app.update(Message::EscapePressed);
+    assert!(!status_bar_visible(&app));
+
+    // Other kinds fade by themselves, so Escape leaves them alone.
+    app.status = Status::success("Saved settings");
+    app.status_changed_at = iced::time::Instant::now();
+    let _ = app.update(Message::EscapePressed);
+    assert_eq!(app.status, Status::success("Saved settings"));
+}
+
+#[test]
 fn escape_closes_the_preset_dialogs() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());

@@ -760,6 +760,8 @@ enum Message {
     ToggleAccountSwitcher,
     /// A click outside the open account switcher or account menu.
     DismissPopovers,
+    /// Closes the error toast.
+    DismissStatus,
     /// Escape closes the topmost dialog or popover.
     EscapePressed,
     SelectAccount(AccountId),
