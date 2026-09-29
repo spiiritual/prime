@@ -314,8 +314,21 @@ pub(in crate::ui) async fn cache_player_card_art(
 /// look intentional. The blurred copy is saved next to the original and made once.
 fn blurred_copy(path: &std::path::Path) -> Option<PathBuf> {
     let blurred = path.with_extension("blur.png");
-    if !blurred.exists() {
-        image::open(path).ok()?.blur(1.2).save(&blurred).ok()?;
+    if blurred.exists() {
+        // Keeps a copy in use from expiring, as `ImageCache::cache_url` does for downloads.
+        let _ = std::fs::File::options()
+            .write(true)
+            .open(&blurred)
+            .and_then(|file| file.set_modified(std::time::SystemTime::now()));
+    } else {
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::open(path)
+            .ok()?
+            .blur(1.2)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .ok()?;
+        // Written atomically, so an interrupted write can't leave a broken copy behind.
+        crate::image_cache::write_cache_file(&blurred, png.get_ref()).ok()?;
     }
     Some(blurred)
 }

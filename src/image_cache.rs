@@ -221,7 +221,7 @@ pub enum ImageCacheError {
 
 /// Writes through a temporary file so an interrupted write never leaves a truncated image that
 /// later loads would treat as already cached.
-fn write_cache_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_cache_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
     // Images download at the same time, so each write gets its own partial file.
     static NEXT_PARTIAL: AtomicU64 = AtomicU64::new(0);
 
