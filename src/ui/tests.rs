@@ -1264,6 +1264,9 @@ fn status_bar_keeps_only_errors_on_screen() {
     assert!(!visible_later(Status::info("Loaded 2 account profile(s)")));
     assert!(!visible_later(Status::progress("Loading shop")));
     assert!(!visible_later(Status::success("Saved settings")));
+    assert!(!visible_later(Status::warning(
+        "Loaded account details for 2 account(s); 1 partial"
+    )));
     assert!(visible_later(Status::error(
         "Failed to load accounts: disk error"
     )));

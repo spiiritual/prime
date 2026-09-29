@@ -439,6 +439,7 @@ impl PrimeApp {
             match kind {
                 StatusKind::Error => theme::icon(theme::Icon::TriangleAlert, 15.0, theme::ACCENT),
                 StatusKind::Success => theme::icon(theme::Icon::CircleCheck, 15.0, theme::OK),
+                StatusKind::Warning => theme::icon(theme::Icon::TriangleAlert, 15.0, theme::GOLD),
                 StatusKind::Info | StatusKind::Progress => {
                     theme::icon(theme::Icon::Info, 15.0, theme::MUTED)
                 }
@@ -656,8 +657,8 @@ fn rule(color: Color) -> Element<'static, Message> {
         .into()
 }
 
-/// The design's toast: a lighter shadow than popovers, and a green or red border for a finished
-/// action or an error.
+/// The design's toast: a lighter shadow than popovers, and a green, gold or red border for a
+/// finished action, a warning or an error.
 fn status_toast_style(theme: &Theme, kind: StatusKind) -> iced::widget::container::Style {
     let mut style = popover_style(theme);
     style.shadow = iced::Shadow {
@@ -667,6 +668,7 @@ fn status_toast_style(theme: &Theme, kind: StatusKind) -> iced::widget::containe
     };
     let tint = match kind {
         StatusKind::Success => Some(theme::OK),
+        StatusKind::Warning => Some(theme::GOLD),
         StatusKind::Error => Some(theme::ACCENT),
         StatusKind::Info | StatusKind::Progress => None,
     };

@@ -271,7 +271,7 @@ impl PrimeApp {
                         self.set_status(if let Some(error) = loaded.legacy_cleanup_error {
                             Status::error(format!("Could not remove old Riot Client sessions: {error}"))
                         } else if !loaded.removed_legacy_sessions.is_empty() {
-                            Status::info(format!(
+                            Status::warning(format!(
                                 "Removed outdated Riot Client sessions for {}; re-capture their login",
                                 loaded.removed_legacy_sessions.join(", ")
                             ))
@@ -1092,13 +1092,13 @@ impl PrimeApp {
                     (updated, 0, 0) => {
                         Status::info(format!("Loaded account details for {updated} account(s)"))
                     }
-                    (updated, 0, partial) => Status::info(format!(
+                    (updated, 0, partial) => Status::warning(format!(
                         "Loaded account details for {updated} account(s); {partial} partial"
                     )),
-                    (updated, failed, 0) => Status::info(format!(
+                    (updated, failed, 0) => Status::warning(format!(
                         "Loaded account details for {updated} account(s); {failed} unavailable"
                     )),
-                    (updated, failed, partial) => Status::info(format!(
+                    (updated, failed, partial) => Status::warning(format!(
                         "Loaded account details for {updated} account(s); {failed} unavailable, {partial} partial"
                     )),
                 };
@@ -1734,10 +1734,15 @@ impl PrimeApp {
                             ""
                         };
 
-                        self.set_view_status(Status::info(format!(
+                        let summary = format!(
                             "Loaded {} featured bundle(s), {} daily offer(s), and {} night market offer(s){}",
                             bundle_count, daily_count, night_market_count, balance_status
-                        )));
+                        );
+                        self.set_view_status(if result.summary.currency_balance_error.is_some() {
+                            Status::warning(summary)
+                        } else {
+                            Status::info(summary)
+                        });
                         if self.state.selected_account == Some(result.account_id) {
                             self.store_summary = Some(result.summary);
                         }
@@ -2113,7 +2118,7 @@ impl PrimeApp {
 
                 match decision {
                     LaunchPreflightDecision::WarnUnavailable => {
-                        self.set_status(Status::info(
+                        self.set_status(Status::warning(
                             "Account appears unavailable; confirm launch to continue",
                         ));
                         Task::none()

@@ -197,6 +197,8 @@ enum StatusKind {
     Progress,
     /// A finished action; the toast is green.
     Success,
+    /// Something finished but needs attention, such as a partial load; the toast is gold.
+    Warning,
     /// Stays on screen until something the user does replaces it.
     Error,
 }
@@ -225,6 +227,10 @@ impl Status {
 
     fn success(text: impl Into<String>) -> Self {
         Self::new(StatusKind::Success, text)
+    }
+
+    fn warning(text: impl Into<String>) -> Self {
+        Self::new(StatusKind::Warning, text)
     }
 
     fn error(text: impl Into<String>) -> Self {
