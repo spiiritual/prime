@@ -56,12 +56,12 @@ fn settings_cloning_enabled() -> bool {
 }
 
 pub fn run() -> iced::Result {
-    let [body, display, mono] = theme::FONTS;
+    let application = theme::FONTS.into_iter().fold(
+        iced::application(PrimeApp::boot, PrimeApp::update, PrimeApp::view),
+        |application, font| application.font(font),
+    );
 
-    iced::application(PrimeApp::boot, PrimeApp::update, PrimeApp::view)
-        .font(body)
-        .font(display)
-        .font(mono)
+    application
         .default_font(theme::BODY_FONT)
         .title(app_title)
         .theme(app_theme)

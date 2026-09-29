@@ -521,8 +521,22 @@ pub(super) fn last_refreshed_label(timestamp: Option<i64>) -> String {
     format_refreshed_at(refreshed_at, offset)
 }
 
-pub(in crate::ui) fn login_saved_label(account: &AccountProfile) -> String {
+fn login_saved_label(account: &AccountProfile) -> String {
     last_refreshed_label(launcher_session_captured_at_unix(account))
+}
+
+/// The short form dialogs use, such as "captured Sep 27".
+pub(in crate::ui) fn captured_on_label(account: &AccountProfile) -> String {
+    let captured_at = launcher_session_captured_at_unix(account)
+        .and_then(|timestamp| OffsetDateTime::from_unix_timestamp(timestamp).ok());
+    let Some(captured_at) = captured_at else {
+        return "login not captured".to_string();
+    };
+    let captured_at =
+        captured_at.to_offset(UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC));
+    let month = captured_at.month().to_string();
+
+    format!("captured {} {}", &month[..3], captured_at.day())
 }
 
 fn launcher_session_captured_at_unix(account: &AccountProfile) -> Option<i64> {

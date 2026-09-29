@@ -183,6 +183,8 @@ impl PrimeApp {
         ]
         .spacing(6)
         .padding([0, 8])
+        // The design's height; the 28px logo overhangs it by a pixel each way.
+        .height(26)
         .align_y(alignment::Vertical::Center);
 
         let nav = column![
@@ -204,7 +206,7 @@ impl PrimeApp {
                 self.account_switcher(),
                 nav,
                 space().height(Length::Fill),
-                container(version).padding([0, 8])
+                version
             ]
             .spacing(28),
         )
@@ -437,7 +439,10 @@ impl PrimeApp {
                 indicator,
                 row![
                     theme::icon(icon, 17.0, color),
-                    text(tab.to_string()).size(14).font(font)
+                    text(tab.to_string())
+                        .size(14)
+                        .font(font)
+                        .line_height(text::LineHeight::Absolute(17.0.into()))
                 ]
                 .spacing(12)
                 .align_y(alignment::Vertical::Center)
@@ -845,7 +850,7 @@ fn identity_card<'a>(
     .into()
 }
 
-/// A saved account's card: its Riot ID, then rank, level and when its login was saved.
+/// A saved account's card: its Riot ID, then rank, level and when its login was captured.
 fn account_identity_card(account: &AccountProfile) -> Element<'_, Message> {
     let mut detail = Vec::new();
     if let Some(rank) = &account.competitive_rank {
@@ -854,10 +859,7 @@ fn account_identity_card(account: &AccountProfile) -> Element<'_, Message> {
     if let Some(level) = account.account_level.filter(|level| *level > 0) {
         detail.push(format!("Level {level}"));
     }
-    detail.push(format!(
-        "login saved {}",
-        screens::login_saved_label(account)
-    ));
+    detail.push(screens::captured_on_label(account));
 
     identity_card(
         &account.display_name,
@@ -1142,7 +1144,14 @@ fn import_account_prompt_overlay(app: &PrimeApp) -> Element<'_, Message> {
         !app.import_account_in_progress && !app.import_account_input.trim().is_empty();
     let mut import_input = theme::text_input("Paste account export", &app.import_account_input)
         .font(theme::MONO_FONT)
-        .size(12);
+        .size(12)
+        // The design's 96px box with the export on its first line.
+        .padding(Padding {
+            top: 10.0,
+            right: 12.0,
+            bottom: 68.0,
+            left: 12.0,
+        });
 
     if !app.import_account_in_progress {
         import_input = import_input.on_input(Message::ImportAccountInputChanged);

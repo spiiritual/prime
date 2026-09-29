@@ -21,10 +21,20 @@ pub(super) const ACCENT_SOFT: Color = color!(0xFF4F5E, 0.12);
 pub(super) const OK: Color = color!(0x4CC974);
 pub(super) const GOLD: Color = color!(0xE8BE55);
 
-pub(super) const FONTS: [&[u8]; 3] = [
-    include_bytes!("../../assets/fonts/Inter.ttf"),
-    include_bytes!("../../assets/fonts/SpaceGrotesk.ttf"),
-    include_bytes!("../../assets/fonts/JetBrainsMono.ttf"),
+/// One static file per weight. cosmic-text only picks a face whose weight matches exactly, and
+/// registers a variable font at its default weight alone, so a variable font's other weights
+/// silently fall back to a system font.
+pub(super) const FONTS: [&[u8]; 10] = [
+    include_bytes!("../../assets/fonts/Inter-Regular.ttf"),
+    include_bytes!("../../assets/fonts/Inter-Medium.ttf"),
+    include_bytes!("../../assets/fonts/Inter-SemiBold.ttf"),
+    include_bytes!("../../assets/fonts/Inter-Bold.ttf"),
+    include_bytes!("../../assets/fonts/SpaceGrotesk-Medium.ttf"),
+    include_bytes!("../../assets/fonts/SpaceGrotesk-SemiBold.ttf"),
+    include_bytes!("../../assets/fonts/SpaceGrotesk-Bold.ttf"),
+    include_bytes!("../../assets/fonts/JetBrainsMono-Regular.ttf"),
+    include_bytes!("../../assets/fonts/JetBrainsMono-SemiBold.ttf"),
+    include_bytes!("../../assets/fonts/JetBrainsMono-Bold.ttf"),
 ];
 
 pub(super) const BODY_FONT: Font = Font::with_name("Inter");
@@ -279,4 +289,49 @@ pub(super) fn sized_icon<'a>(
         .height(height)
         .style(move |_, _| svg::Style { color: Some(color) })
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use iced::advanced::graphics::text::cosmic_text::{
+        Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Weight, fontdb,
+    };
+    use std::sync::Arc;
+
+    use super::*;
+
+    #[test]
+    fn every_font_resolves_to_its_own_face_not_a_system_fallback() {
+        // System fonts included, as in the app, so a miss falls back to Segoe UI and fails.
+        let mut system =
+            FontSystem::new_with_fonts(FONTS.map(|bytes| fontdb::Source::Binary(Arc::new(bytes))));
+
+        for font in [
+            BODY_FONT,
+            MEDIUM_FONT,
+            SEMIBOLD_FONT,
+            BOLD_FONT,
+            DISPLAY_FONT,
+            MONO_FONT,
+        ] {
+            let iced::font::Family::Name(family) = font.family else {
+                panic!("{font:?} has no family name");
+            };
+            let weight = Weight(match font.weight {
+                font::Weight::Medium => 500,
+                font::Weight::Semibold => 600,
+                font::Weight::Bold => 700,
+                _ => 400,
+            });
+            let attrs = Attrs::new().family(Family::Name(family)).weight(weight);
+            let mut buffer = Buffer::new(&mut system, Metrics::new(20.0, 24.0));
+            buffer.set_text(&mut system, "Good", &attrs, Shaping::Advanced, None);
+            buffer.shape_until_scroll(&mut system, false);
+            let glyph_font = buffer.layout_runs().next().expect("a line").glyphs[0].font_id;
+            let face = system.db().face(glyph_font).expect("the face");
+
+            assert_eq!(face.families[0].0, family, "{font:?}");
+            assert_eq!(face.weight, weight, "{font:?}");
+        }
+    }
 }
