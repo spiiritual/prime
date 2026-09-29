@@ -424,7 +424,8 @@ impl PrimeApp {
                 theme::MUTED,
                 theme::TEXT,
             ))
-            .padding(0)
+            // A 20px target around the 14px icon.
+            .padding(3)
             .style(|_, _| iced::widget::button::Style::default())
             .on_press(Message::DismissStatus)
         });
