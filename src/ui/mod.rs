@@ -16,7 +16,7 @@ use iced::widget::operation::AbsoluteOffset;
 use iced::{Size, Subscription, Theme, window};
 
 use crate::account::AccountId;
-use crate::image_cache::ImageCache;
+use crate::image_cache::{CacheUsage, ImageCache};
 use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{AvailableUpdate, UpdateCheckOutcome};
 
@@ -234,6 +234,25 @@ fn status_flash_active(app: &PrimeApp) -> bool {
         && status_visible_at(&app.status, app.status_changed_at, app.now)
 }
 
+/// Finished actions get the green toast; progress and prompts stay neutral.
+fn status_message_is_success(status: &str) -> bool {
+    const SUCCESS_PREFIXES: &[&str] = &[
+        "Saved ",
+        "Imported ",
+        "Restored ",
+        "Renamed ",
+        "Refreshed ",
+        "Added ",
+        "Cleared ",
+        "Deleted ",
+    ];
+
+    !status_message_is_error(status)
+        && SUCCESS_PREFIXES
+            .iter()
+            .any(|prefix| status.starts_with(prefix))
+}
+
 fn status_message_is_error(status: &str) -> bool {
     const ERROR_PREFIXES: &[&str] = &[
         "Failed ",
@@ -283,6 +302,9 @@ struct PrimeApp {
     tab_scroll_offsets: TabScrollOffsets,
     new_display_name: String,
     redirect_input: String,
+    /// The Settings section last picked from its menu.
+    settings_section: SettingsSection,
+    token_import_open: bool,
     client_version_input: String,
     riot_client_path_input: String,
     status: String,
@@ -349,7 +371,7 @@ struct PrimeApp {
     window_minimized: bool,
     status_changed_at: iced::time::Instant,
     app_update_status: AppUpdateStatus,
-    image_cache_size_bytes: u64,
+    image_cache_usage: CacheUsage,
     image_cache_clearing: bool,
     loading_frame: usize,
     now: iced::time::Instant,
@@ -685,6 +707,38 @@ impl TabScrollOffsets {
     }
 }
 
+/// The Settings tab's sections, in page order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SettingsSection {
+    RiotClient,
+    SystemTray,
+    Storage,
+    Updates,
+    Advanced,
+}
+
+impl SettingsSection {
+    const ALL: [SettingsSection; 5] = [
+        SettingsSection::RiotClient,
+        SettingsSection::SystemTray,
+        SettingsSection::Storage,
+        SettingsSection::Updates,
+        SettingsSection::Advanced,
+    ];
+}
+
+impl std::fmt::Display for SettingsSection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            SettingsSection::RiotClient => "Riot Client",
+            SettingsSection::SystemTray => "System tray",
+            SettingsSection::Storage => "Storage & cache",
+            SettingsSection::Updates => "Updates",
+            SettingsSection::Advanced => "Advanced",
+        })
+    }
+}
+
 /// The Accounts tab's sub-tabs; Game settings only shows with settings cloning.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AccountsTab {
@@ -850,8 +904,14 @@ enum Message {
     ImageViewerImageLoaded(ImageViewerSource, Result<PathBuf, String>),
     CloseImageViewer,
     RiotClientPathChanged(String),
+    BrowseRiotClientPath,
+    RiotClientPathPicked(Option<PathBuf>),
     SaveSettings,
-    ImageCacheSizeLoaded(Result<u64, String>),
+    SettingsSectionSelected(SettingsSection),
+    ToggleTokenImport,
+    OpenInExplorer(PathBuf),
+    ExplorerOpened(Result<(), String>),
+    ImageCacheSizeLoaded(Result<CacheUsage, String>),
     RankIconsLoaded(Result<HashMap<i64, PathBuf>, String>),
     ClearImageCache,
     ImageCacheCleared(Result<(), String>),
@@ -869,6 +929,7 @@ enum Message {
         result: Result<UpdateCheckOutcome, String>,
     },
     DismissAppUpdate,
+    ShowAppUpdate,
     DownloadAppUpdate,
     AppUpdatePrepared(Result<(), String>),
 }

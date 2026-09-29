@@ -5,14 +5,14 @@ use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget::Tree,
 };
 use iced::widget::image::Handle;
-use iced::widget::{Column, Row, column, container, image, responsive, row, space, text};
+use iced::widget::{Column, Row, column, container, image, responsive, row, space};
 use iced::{
     Color, ContentFit, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector,
     alignment,
 };
 
 use super::data::shop::{CurrencyBalanceDisplay, StoreSummary, format_whole_number};
-use super::theme::{self, button};
+use super::theme::{self, button, text};
 use super::{ImageViewerRequest, ImageViewerSource, Message, image_viewer_enabled};
 
 const RADIANITE_COLOR: Color = iced::color!(0x54D1C2);
@@ -672,7 +672,8 @@ fn currency_balance_chip(balance: &CurrencyBalanceDisplay) -> Element<'_, Messag
             dot,
             text(format_whole_number(balance.amount))
                 .size(13)
-                .font(theme::MONO_FONT),
+                .font(theme::MONO_FONT)
+                .line_height(theme::MONO_LINE_HEIGHT),
             text(short_name)
                 .size(11)
                 .font(theme::SEMIBOLD_FONT)

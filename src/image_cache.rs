@@ -2,12 +2,16 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime};
 
 use directories::ProjectDirs;
 use thiserror::Error;
 use url::Url;
 
 const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// Images nobody has shown for this long are deleted at startup. A file's modified time records its
+/// last use, because Windows often doesn't keep access times.
+const UNUSED_IMAGE_LIFETIME: Duration = Duration::from_secs(60 * 24 * 60 * 60);
 const USER_AGENT_VALUE: &str = concat!("prime/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Clone)]
@@ -40,8 +44,20 @@ impl ImageCache {
         &self.root
     }
 
-    pub fn size_bytes(&self) -> Result<u64, ImageCacheError> {
-        dir_size(&self.root).map_err(ImageCacheError::Io)
+    pub fn usage(&self) -> Result<CacheUsage, ImageCacheError> {
+        let mut usage = CacheUsage::default();
+        add_dir_usage(&self.root, None, &mut usage)?;
+        Ok(usage)
+    }
+
+    /// Deletes images unused for 60 days and returns the usage of what's left.
+    pub fn remove_unused(&self) -> Result<CacheUsage, ImageCacheError> {
+        let cutoff = SystemTime::now()
+            .checked_sub(UNUSED_IMAGE_LIFETIME)
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        let mut usage = CacheUsage::default();
+        add_dir_usage(&self.root, Some(cutoff), &mut usage)?;
+        Ok(usage)
     }
 
     pub fn clear(&self) -> Result<(), ImageCacheError> {
@@ -61,6 +77,11 @@ impl ImageCache {
         let path = self.asset_path(namespace, id, url);
 
         if path.exists() {
+            // Only delays expiry, so a failure doesn't matter.
+            let _ = fs::File::options()
+                .write(true)
+                .open(&path)
+                .and_then(|file| file.set_modified(SystemTime::now()));
             return Ok(path);
         }
 
@@ -109,25 +130,41 @@ impl PartialEq for ImageCache {
 
 impl Eq for ImageCache {}
 
-fn dir_size(path: &Path) -> io::Result<u64> {
-    if !path.exists() {
-        return Ok(0);
-    }
+/// How much the cache holds.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CacheUsage {
+    pub bytes: u64,
+    pub files: u64,
+}
 
-    let mut size = 0;
+/// Adds up the files under `path`, first deleting any last used before `remove_before`.
+fn add_dir_usage(
+    path: &Path,
+    remove_before: Option<SystemTime>,
+    usage: &mut CacheUsage,
+) -> io::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
 
     for entry in fs::read_dir(path)? {
         let entry = entry?;
         let metadata = entry.metadata()?;
 
         if metadata.is_dir() {
-            size += dir_size(&entry.path())?;
+            add_dir_usage(&entry.path(), remove_before, usage)?;
+        } else if remove_before
+            .is_some_and(|cutoff| metadata.modified().is_ok_and(|used| used < cutoff))
+            && fs::remove_file(entry.path()).is_ok()
+        {
+            continue;
         } else {
-            size += metadata.len();
+            usage.bytes += metadata.len();
+            usage.files += 1;
         }
     }
 
-    Ok(size)
+    Ok(())
 }
 
 fn sanitize_path_component(value: &str) -> String {
@@ -240,7 +277,31 @@ mod tests {
     }
 
     #[test]
-    fn size_bytes_counts_nested_files() {
+    fn remove_unused_deletes_only_images_unused_for_60_days() {
+        let dir = tempdir().expect("cache dir");
+        let nested = dir.path().join("skins");
+        fs::create_dir(&nested).expect("nested dir");
+        let old = nested.join("old.png");
+        let fresh = nested.join("fresh.png");
+        fs::write(&old, [1, 2, 3]).expect("old file");
+        fs::write(&fresh, [4, 5]).expect("fresh file");
+        fs::File::options()
+            .write(true)
+            .open(&old)
+            .and_then(|file| {
+                file.set_modified(SystemTime::now() - Duration::from_secs(61 * 24 * 60 * 60))
+            })
+            .expect("age old file");
+
+        let usage = ImageCache::new(dir.path()).remove_unused().expect("remove");
+
+        assert_eq!(usage, CacheUsage { bytes: 2, files: 1 });
+        assert!(!old.exists());
+        assert!(fresh.exists());
+    }
+
+    #[test]
+    fn usage_counts_nested_files() {
         let dir = tempdir().expect("cache dir");
         let nested = dir.path().join("skins");
         fs::create_dir(&nested).expect("nested dir");
@@ -249,7 +310,10 @@ mod tests {
 
         let cache = ImageCache::new(dir.path());
 
-        assert_eq!(cache.size_bytes().expect("size"), 5);
+        assert_eq!(
+            cache.usage().expect("usage"),
+            CacheUsage { bytes: 5, files: 2 }
+        );
     }
 
     #[test]

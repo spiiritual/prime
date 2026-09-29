@@ -1,4 +1,4 @@
-use iced::widget::{checkbox, column, container, row, space, text, tooltip};
+use iced::widget::{checkbox, column, container, row, space, tooltip};
 use iced::{Color, Element, Length, Padding, Theme, alignment};
 use time::{OffsetDateTime, UtcOffset};
 
@@ -7,7 +7,7 @@ use crate::account::{AccountId, AccountProfile, CompetitiveRank};
 use crate::ui::components::{anchored_popover, compact_loading_indicator, sub_tab_button};
 use crate::ui::data::account_details::AccountAvailability;
 use crate::ui::data::shop::format_whole_number;
-use crate::ui::theme::{self, button};
+use crate::ui::theme::{self, button, text};
 use crate::ui::{AccountsTab, LauncherCaptureKind, Message, PrimeApp};
 
 const ACCOUNT_MENU_WIDTH: f32 = 190.0;

@@ -1,4 +1,4 @@
-use iced::widget::{column, container, rich_text, span, stack, text};
+use iced::widget::{column, container, rich_text, span, stack};
 use iced::{Color, Element, Length, Theme, alignment};
 
 use crate::ui::components::{
@@ -9,7 +9,7 @@ use crate::ui::data::shop::{
     OfferPrice, RarityTier, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
     StoreSummary, format_duration,
 };
-use crate::ui::theme;
+use crate::ui::theme::{self, text};
 use crate::ui::{Message, PrimeApp};
 
 const SHOP_ITEM_NAME_HEIGHT: f32 = 20.0;

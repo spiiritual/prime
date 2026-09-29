@@ -1,4 +1,4 @@
-use iced::widget::{column, container, grid, progress_bar, row, stack, text};
+use iced::widget::{column, container, grid, progress_bar, row, stack};
 use iced::{Color, Element, Length, Theme, alignment, border};
 
 use crate::ui::components::{
@@ -9,7 +9,7 @@ use crate::ui::data::loadout::{
     BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutGunDisplay,
 };
 use crate::ui::data::shop::format_duration;
-use crate::ui::theme;
+use crate::ui::theme::{self, text};
 use crate::ui::{LoadoutTab, Message, PrimeApp};
 
 const LOADOUT_CATEGORIES: [&str; 8] = [

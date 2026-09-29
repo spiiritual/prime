@@ -1,12 +1,13 @@
 use iced::widget::operation;
 use iced::{Task, window};
+use std::path::Path;
 
 use crate::account::{
     AccountId, AccountPenaltyStatus, AccountProfile, AuthSession, CompetitiveRank,
     LauncherSessionBackup,
 };
 use crate::account_transfer::{export_account, import_account};
-use crate::image_cache::ImageCache;
+use crate::image_cache::{CacheUsage, ImageCache};
 use crate::launch::{LaunchConfig, LaunchTargetProcess};
 use crate::riot::auth::{RedirectTokens, parse_redirect_tokens};
 use crate::riot::launcher_session::{
@@ -37,8 +38,8 @@ use super::data::{cache_account_api_context, typed_riot_client_path};
 use super::{
     AccountsTab, AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, LoginCapture,
     LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange,
-    PendingSettingsCheck, PresetNamePrompt, PresetNameTarget, PrimeApp, SettingsChange, Tab,
-    TabScrollOffsets, ViewRequest, background_refresh_active,
+    PendingSettingsCheck, PresetNamePrompt, PresetNameTarget, PrimeApp, SettingsChange,
+    SettingsSection, Tab, TabScrollOffsets, ViewRequest, background_refresh_active, screens,
 };
 
 impl PrimeApp {
@@ -64,6 +65,8 @@ impl PrimeApp {
                 tab_scroll_offsets: TabScrollOffsets::default(),
                 new_display_name: String::new(),
                 redirect_input: String::new(),
+                settings_section: SettingsSection::RiotClient,
+                token_import_open: false,
                 client_version_input: String::new(),
                 riot_client_path_input: String::new(),
                 status: "Loading accounts".to_string(),
@@ -113,7 +116,7 @@ impl PrimeApp {
                 window_minimized: false,
                 status_changed_at: iced::time::Instant::now(),
                 app_update_status: AppUpdateStatus::Checking,
-                image_cache_size_bytes: 0,
+                image_cache_usage: CacheUsage::default(),
                 image_cache_clearing: false,
                 loading_frame: 0,
                 now: iced::time::Instant::now(),
@@ -137,7 +140,7 @@ impl PrimeApp {
                 Task::perform(
                     async move {
                         cache_for_size
-                            .size_bytes()
+                            .remove_unused()
                             .map_err(|error| error.to_string())
                     },
                     Message::ImageCacheSizeLoaded,
@@ -1860,6 +1863,51 @@ impl PrimeApp {
                 self.riot_client_path_input = value;
                 Task::none()
             }
+            Message::BrowseRiotClientPath => {
+                let start_dir = typed_riot_client_path(&self.riot_client_path_input)
+                    .and_then(|path| path.parent().map(Path::to_path_buf))
+                    .filter(|dir| dir.is_dir());
+
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            crate::file_dialog::pick_exe(
+                                "Find RiotClientServices.exe",
+                                start_dir.as_deref(),
+                            )
+                        })
+                        .await
+                        .ok()
+                        .flatten()
+                    },
+                    Message::RiotClientPathPicked,
+                )
+            }
+            Message::RiotClientPathPicked(path) => {
+                // Still needs Save, like a typed path.
+                if let Some(path) = path {
+                    self.riot_client_path_input = path.display().to_string();
+                }
+                Task::none()
+            }
+            Message::SettingsSectionSelected(section) => {
+                self.settings_section = section;
+                screens::scroll_to_settings_section(section)
+            }
+            Message::ToggleTokenImport => {
+                self.token_import_open = !self.token_import_open;
+                Task::none()
+            }
+            Message::OpenInExplorer(path) => Task::perform(
+                async move { open_in_explorer(&path).map_err(|error| error.to_string()) },
+                Message::ExplorerOpened,
+            ),
+            Message::ExplorerOpened(result) => {
+                if let Err(error) = result {
+                    self.set_status(format!("Could not open Explorer: {error}"));
+                }
+                Task::none()
+            }
             Message::SaveSettings => {
                 let path = typed_riot_client_path(&self.riot_client_path_input);
 
@@ -2137,6 +2185,17 @@ impl PrimeApp {
                 result,
             } => self.handle_app_update_checked(user_requested, result),
             Message::DismissAppUpdate => self.dismiss_app_update(),
+            Message::ShowAppUpdate => {
+                if let AppUpdateStatus::Dismissed(update)
+                | AppUpdateStatus::InstallFailed {
+                    update: Some(update),
+                    ..
+                } = &self.app_update_status
+                {
+                    self.app_update_status = AppUpdateStatus::Available(update.clone());
+                }
+                Task::none()
+            }
             Message::DownloadAppUpdate => self.download_app_update(),
             Message::AppUpdatePrepared(result) => self.handle_app_update_prepared(result),
         }
@@ -2306,10 +2365,13 @@ impl PrimeApp {
         Task::none()
     }
 
-    fn handle_image_cache_size_loaded(&mut self, result: Result<u64, String>) -> Task<Message> {
+    fn handle_image_cache_size_loaded(
+        &mut self,
+        result: Result<CacheUsage, String>,
+    ) -> Task<Message> {
         match result {
-            Ok(size) => {
-                self.image_cache_size_bytes = size;
+            Ok(usage) => {
+                self.image_cache_usage = usage;
             }
             Err(error) => {
                 self.set_status(format!("Could not read image cache size: {error}"));
@@ -2341,7 +2403,7 @@ impl PrimeApp {
 
         match result {
             Ok(()) => {
-                self.image_cache_size_bytes = 0;
+                self.image_cache_usage = CacheUsage::default();
                 self.set_status("Cleared image cache");
                 // The rank icon files were deleted with the rest.
                 self.rank_icons.clear();
@@ -2817,7 +2879,7 @@ impl PrimeApp {
         let cache = self.image_cache.clone();
 
         Task::perform(
-            async move { cache.size_bytes().map_err(|error| error.to_string()) },
+            async move { cache.usage().map_err(|error| error.to_string()) },
             Message::ImageCacheSizeLoaded,
         )
     }
@@ -3459,4 +3521,26 @@ fn redirect_session_for_account(
 /// The name a new preset starts with.
 fn default_preset_name(display_name: &str) -> String {
     format!("{display_name} settings")
+}
+
+/// Opens Explorer at a folder, or at a file's folder with the file selected. A path that doesn't
+/// exist yet (a cleared cache, no accounts saved) opens its nearest existing folder, because
+/// Explorer would otherwise open Documents without an error.
+fn open_in_explorer(path: &Path) -> std::io::Result<()> {
+    use std::os::windows::process::CommandExt;
+
+    // Explorer splits unquoted arguments on commas, so always quote the path.
+    let mut explorer = std::process::Command::new("explorer");
+    if path.is_file() {
+        explorer.raw_arg(format!("/select,\"{}\"", path.display()));
+    } else {
+        let folder = path
+            .ancestors()
+            .find(|folder| folder.is_dir())
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::NotFound, "the folder doesn't exist")
+            })?;
+        explorer.raw_arg(format!("\"{}\"", folder.display()));
+    }
+    explorer.spawn().map(|_| ())
 }

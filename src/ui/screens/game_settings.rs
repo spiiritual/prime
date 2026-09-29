@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use iced::widget::{Space, canvas, column, container, pick_list, row, text};
+use iced::widget::{Space, canvas, column, container, pick_list, row};
 use iced::{
     Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, alignment, border, mouse,
 };
@@ -13,7 +13,7 @@ use crate::game_settings::{
     GameSettingsProfileSummary, Rgba, Setting,
 };
 use crate::ui::components::compact_loading_indicator;
-use crate::ui::theme::{self, button};
+use crate::ui::theme::{self, button, text};
 use crate::ui::{Message, PrimeApp, SettingsChange};
 
 use super::accounts::last_refreshed_label;

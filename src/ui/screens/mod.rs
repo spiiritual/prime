@@ -5,14 +5,15 @@ mod settings;
 mod shop;
 
 use iced::Element;
-use iced::widget::text;
 
+use super::theme::text;
 use super::{Message, PrimeApp, Tab};
 
 #[cfg(test)]
 pub(super) use accounts::missing_rank_label;
 pub(super) use accounts::{captured_on_label, save_settings_on_add_checkbox};
 pub(super) use game_settings::original_settings;
+pub(super) use settings::scroll_to_settings_section;
 
 pub(super) fn tab(app: &PrimeApp, tab: Tab) -> Element<'_, Message> {
     match tab {
@@ -21,6 +22,11 @@ pub(super) fn tab(app: &PrimeApp, tab: Tab) -> Element<'_, Message> {
         Tab::Loadout => loadout::tab(app),
         Tab::Settings => settings::tab(app),
     }
+}
+
+/// A tab's menu that stays beside its scrolling page; only Settings has one.
+pub(super) fn side_nav(app: &PrimeApp, tab: Tab) -> Option<Element<'_, Message>> {
+    (tab == Tab::Settings).then(|| settings::section_nav(app))
 }
 
 /// What Shop or Loadout shows instead of content it can't load yet: no account to load, or the

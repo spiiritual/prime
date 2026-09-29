@@ -1,6 +1,6 @@
 use iced::widget::image::Handle;
 use iced::widget::text::Wrapping;
-use iced::widget::{Column, column, container, image, opaque, row, scrollable, space, stack, text};
+use iced::widget::{Column, column, container, image, opaque, row, scrollable, space, stack};
 use iced::{Color, ContentFit, Element, Length, Padding, Theme, alignment};
 use std::path::PathBuf;
 
@@ -10,13 +10,15 @@ use crate::game_settings::{GameSettingsProfileMetadata, GameSettingsProfilePurpo
 use super::components::{
     anchored_popover, compact_loading_indicator, currency_balance_display, loading_indicator,
 };
-use super::theme::{self, button};
+use super::theme::{self, button, text};
 use super::{
-    AccountExportOutput, CapturedAccountDraft, ImageViewerImage, LoginCapture, LoginCaptureTarget,
-    MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange, PresetNamePrompt, PresetNameTarget,
-    PrimeApp, SettingsChange, Tab, UnavailableLaunchWarning, screens,
+    AccountExportOutput, CapturedAccountDraft, ImageViewerImage, LoadoutTab, LoginCapture,
+    LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange, PresetNamePrompt,
+    PresetNameTarget, PrimeApp, SettingsChange, Tab, UnavailableLaunchWarning, screens,
 };
-use super::{status_bar_visible, status_message_is_error, status_spinner_active};
+use super::{
+    status_bar_visible, status_message_is_error, status_message_is_success, status_spinner_active,
+};
 
 /// Without its one-pixel border line.
 const SIDEBAR_WIDTH: f32 = 231.0;
@@ -179,7 +181,10 @@ impl PrimeApp {
     fn sidebar(&self) -> Element<'_, Message> {
         let brand = row![
             theme::sized_icon(theme::Icon::Logo, 30.0, 28.0, theme::TEXT),
-            text("prime").size(20).font(theme::DISPLAY_FONT)
+            text("prime")
+                .size(20)
+                .font(theme::DISPLAY_FONT)
+                .line_height(theme::DISPLAY_LINE_HEIGHT)
         ]
         .spacing(6)
         .padding([0, 8])
@@ -198,6 +203,7 @@ impl PrimeApp {
         let version = text(format!("v{}", env!("CARGO_PKG_VERSION")))
             .size(11)
             .font(theme::MONO_FONT)
+            .line_height(theme::MONO_LINE_HEIGHT)
             .color(theme::FAINT);
 
         let sidebar = container(
@@ -345,25 +351,40 @@ impl PrimeApp {
             })
             .width(Length::Fill);
 
-        let panel = column![
-            self.main_header(),
-            scrollable(scroll_body)
-                .id(MAIN_PANEL_SCROLLABLE_ID)
-                .on_scroll(move |viewport| Message::MainPanelScrolled {
-                    tab: active_tab,
-                    offset: viewport.absolute_offset(),
-                })
-                .height(Length::Fill)
-        ]
-        .spacing(22);
+        let page: Element<_> = scrollable(scroll_body)
+            .id(MAIN_PANEL_SCROLLABLE_ID)
+            .on_scroll(move |viewport| Message::MainPanelScrolled {
+                tab: active_tab,
+                offset: viewport.absolute_offset(),
+            })
+            .height(Length::Fill)
+            .into();
+        let page = match screens::side_nav(self, active_tab) {
+            Some(nav) => row![nav, page].spacing(40).into(),
+            None => page,
+        };
 
-        panel.into()
+        column![self.main_header(), page]
+            .spacing(self.header_gap())
+            .into()
+    }
+
+    /// The gap under the page title, which the design varies by screen.
+    fn header_gap(&self) -> f32 {
+        match self.active_tab {
+            Tab::Accounts => 20.0,
+            Tab::Shop => 26.0,
+            Tab::Loadout if self.active_loadout_tab == LoadoutTab::BattlePass => 26.0,
+            Tab::Loadout => 20.0,
+            Tab::Settings => 32.0,
+        }
     }
 
     fn main_header(&self) -> Element<'_, Message> {
         let title = text(self.active_tab.to_string())
             .size(28)
-            .font(theme::DISPLAY_FONT);
+            .font(theme::DISPLAY_FONT)
+            .line_height(theme::DISPLAY_LINE_HEIGHT);
 
         let header: Element<_> = match (&self.store_summary, self.active_tab) {
             (Some(summary), Tab::Shop) => row![
@@ -387,6 +408,8 @@ impl PrimeApp {
             loading_indicator(self.loading_frame)
         } else if status_message_is_error(&self.status) {
             theme::icon(theme::Icon::TriangleAlert, 15.0, theme::ACCENT)
+        } else if status_message_is_success(&self.status) {
+            theme::icon(theme::Icon::CircleCheck, 15.0, theme::OK)
         } else {
             theme::icon(theme::Icon::Info, 15.0, theme::MUTED)
         };
@@ -398,7 +421,11 @@ impl PrimeApp {
         )
         .padding([10, 14])
         .max_width(STATUS_TOAST_MAX_WIDTH)
-        .style(popover_style)
+        .style(if status_message_is_success(&self.status) {
+            success_toast_style
+        } else {
+            popover_style
+        })
         .into()
     }
 
@@ -442,7 +469,7 @@ impl PrimeApp {
                     text(tab.to_string())
                         .size(14)
                         .font(font)
-                        .line_height(text::LineHeight::Absolute(17.0.into()))
+                        .line_height(iced::widget::text::LineHeight::Absolute(17.0.into()))
                 ]
                 .spacing(12)
                 .align_y(alignment::Vertical::Center)
@@ -591,6 +618,15 @@ fn rule(color: Color) -> Element<'static, Message> {
         .into()
 }
 
+fn success_toast_style(theme: &Theme) -> iced::widget::container::Style {
+    let mut style = popover_style(theme);
+    style.border.color = Color {
+        a: 0.33,
+        ..theme::OK
+    };
+    style
+}
+
 fn popover_style(_: &Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
         background: Some(theme::RAISED.into()),
@@ -665,7 +701,12 @@ fn dialog<'a>(
     if let Some((kicker, color)) = kicker {
         top = top.push(text(kicker).size(10).font(theme::BOLD_FONT).color(color));
     }
-    top = top.push(text(title).size(21).font(theme::DISPLAY_FONT));
+    top = top.push(
+        text(title)
+            .size(21)
+            .font(theme::DISPLAY_FONT)
+            .line_height(theme::DISPLAY_LINE_HEIGHT),
+    );
     if let Some(description) = description {
         top = top.push(text(description).size(13).color(theme::MUTED));
     }
@@ -764,7 +805,7 @@ fn dialog_action<'a>(
 fn dialog_note<'a>(
     icon: theme::Icon,
     color: Color,
-    message: impl text::IntoFragment<'a>,
+    message: impl iced::widget::text::IntoFragment<'a>,
 ) -> Element<'a, Message> {
     container(
         row![
@@ -1144,6 +1185,7 @@ fn import_account_prompt_overlay(app: &PrimeApp) -> Element<'_, Message> {
         !app.import_account_in_progress && !app.import_account_input.trim().is_empty();
     let mut import_input = theme::text_input("Paste account export", &app.import_account_input)
         .font(theme::MONO_FONT)
+        .line_height(theme::MONO_LINE_HEIGHT)
         .size(12)
         // The design's 96px box with the export on its first line.
         .padding(Padding {
@@ -1192,6 +1234,7 @@ fn export_account_prompt_overlay(export: &AccountExportOutput) -> Element<'_, Me
             text(&export.masked_payload)
                 .size(12)
                 .font(theme::MONO_FONT)
+                .line_height(theme::MONO_LINE_HEIGHT)
                 .color(theme::MUTED)
                 .width(Length::Fill)
                 .wrapping(Wrapping::None),
@@ -1587,6 +1630,7 @@ fn image_viewer_overlay(
         text(&image_to_view.title)
             .size(18)
             .font(theme::DISPLAY_FONT)
+            .line_height(theme::DISPLAY_LINE_HEIGHT)
             .width(Length::Fill),
         status,
         button(theme::icon(theme::Icon::X, 16.0, theme::TEXT))

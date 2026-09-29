@@ -4,7 +4,8 @@
 use iced::theme::Palette;
 use iced::theme::palette::{Extended, Pair};
 use iced::widget::button::{Status, Style};
-use iced::widget::{row, svg, text};
+use iced::widget::text::{IntoFragment, LineHeight};
+use iced::widget::{row, svg};
 use iced::{Border, Color, Element, Font, Theme, alignment, color, font};
 
 use super::Message;
@@ -74,6 +75,18 @@ pub(super) fn theme() -> Theme {
         extended.background.weak = Pair::new(LINE, TEXT);
         extended
     })
+}
+
+/// Each font's own line height, as the design lays text out. Iced's default of 1.3 makes every
+/// line of Inter a pixel or two taller than the design.
+pub(super) const BODY_LINE_HEIGHT: LineHeight = LineHeight::Relative(1.21);
+pub(super) const DISPLAY_LINE_HEIGHT: LineHeight = LineHeight::Relative(1.28);
+pub(super) const MONO_LINE_HEIGHT: LineHeight = LineHeight::Relative(1.32);
+
+/// Iced's `text` with Inter's line height. Set `DISPLAY_LINE_HEIGHT` or `MONO_LINE_HEIGHT` along
+/// with those fonts.
+pub(super) fn text<'a>(content: impl IntoFragment<'a>) -> iced::widget::Text<'a> {
+    iced::widget::text(content).line_height(BODY_LINE_HEIGHT)
 }
 
 /// Iced's `button`, but a plain dark button by default. Iced's own default is the accent colour,
@@ -166,36 +179,47 @@ pub(super) fn text_input<'a>(
     iced::widget::text_input(placeholder, value)
         .padding([10, 12])
         .size(13)
+        .line_height(BODY_LINE_HEIGHT)
         .style(input_style)
 }
 
-fn input_style(
-    _: &Theme,
-    status: iced::widget::text_input::Status,
-) -> iced::widget::text_input::Style {
-    use iced::widget::text_input::{Status, Style};
+fn input_style(theme: &Theme, status: iced::widget::text_input::Status) -> InputStyle {
+    field_style(BG, false)(theme, status)
+}
 
-    let border_color = match status {
-        Status::Focused { .. } => ACCENT,
-        Status::Hovered => FAINT,
-        Status::Active | Status::Disabled => LINE,
-    };
+type InputStyle = iced::widget::text_input::Style;
 
-    Style {
-        background: BG.into(),
-        border: Border {
-            color: border_color,
-            width: 1.0,
-            radius: 8.0.into(),
-        },
-        icon: MUTED,
-        placeholder: FAINT,
-        value: if matches!(status, Status::Disabled) {
-            MUTED
-        } else {
-            TEXT
-        },
-        selection: Color { a: 0.35, ..ACCENT },
+/// The design's field on a given background; an invalid field keeps an accent border.
+pub(super) fn field_style(
+    background: Color,
+    invalid: bool,
+) -> impl Fn(&Theme, iced::widget::text_input::Status) -> InputStyle {
+    move |_, status| {
+        use iced::widget::text_input::Status;
+
+        let border_color = match status {
+            _ if invalid => ACCENT,
+            Status::Focused { .. } => ACCENT,
+            Status::Hovered => FAINT,
+            Status::Active | Status::Disabled => LINE,
+        };
+
+        InputStyle {
+            background: background.into(),
+            border: Border {
+                color: border_color,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            icon: MUTED,
+            placeholder: FAINT,
+            value: if matches!(status, Status::Disabled) {
+                MUTED
+            } else {
+                TEXT
+            },
+            selection: Color { a: 0.35, ..ACCENT },
+        }
     }
 }
 
@@ -227,17 +251,24 @@ pub(super) enum Icon {
     Logo,
     ArrowRight,
     Check,
+    ChevronDown,
+    ChevronRight,
     ChevronsUpDown,
+    CircleCheck,
+    CircleX,
     Download,
     Eraser,
+    FolderOpen,
     Info,
     MousePointerClick,
     Play,
     Plus,
     Power,
+    RefreshCw,
     Settings,
     Settings2,
     ShoppingBag,
+    Sparkles,
     Swords,
     Trash,
     TriangleAlert,
@@ -251,9 +282,14 @@ impl Icon {
             Icon::Logo => include_bytes!("../../assets/logo.svg"),
             Icon::ArrowRight => include_bytes!("../../assets/icons/arrow-right.svg"),
             Icon::Check => include_bytes!("../../assets/icons/check.svg"),
+            Icon::ChevronDown => include_bytes!("../../assets/icons/chevron-down.svg"),
+            Icon::ChevronRight => include_bytes!("../../assets/icons/chevron-right.svg"),
+            Icon::CircleCheck => include_bytes!("../../assets/icons/circle-check.svg"),
+            Icon::CircleX => include_bytes!("../../assets/icons/circle-x.svg"),
             Icon::ChevronsUpDown => include_bytes!("../../assets/icons/chevrons-up-down.svg"),
             Icon::Download => include_bytes!("../../assets/icons/download.svg"),
             Icon::Eraser => include_bytes!("../../assets/icons/eraser.svg"),
+            Icon::FolderOpen => include_bytes!("../../assets/icons/folder-open.svg"),
             Icon::Info => include_bytes!("../../assets/icons/info.svg"),
             Icon::MousePointerClick => {
                 include_bytes!("../../assets/icons/mouse-pointer-click.svg")
@@ -261,9 +297,11 @@ impl Icon {
             Icon::Play => include_bytes!("../../assets/icons/play.svg"),
             Icon::Plus => include_bytes!("../../assets/icons/plus.svg"),
             Icon::Power => include_bytes!("../../assets/icons/power.svg"),
+            Icon::RefreshCw => include_bytes!("../../assets/icons/refresh-cw.svg"),
             Icon::Settings => include_bytes!("../../assets/icons/settings.svg"),
             Icon::Settings2 => include_bytes!("../../assets/icons/settings-2.svg"),
             Icon::ShoppingBag => include_bytes!("../../assets/icons/shopping-bag.svg"),
+            Icon::Sparkles => include_bytes!("../../assets/icons/sparkles.svg"),
             Icon::Swords => include_bytes!("../../assets/icons/swords.svg"),
             Icon::Trash => include_bytes!("../../assets/icons/trash-2.svg"),
             Icon::TriangleAlert => include_bytes!("../../assets/icons/triangle-alert.svg"),

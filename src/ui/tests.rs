@@ -37,7 +37,7 @@ use super::{
     Message, PendingSettingsChange, PendingSettingsCheck, PresetNamePrompt, PresetNameTarget,
     PrimeApp, SettingsChange, countdown_timer_active, loading_status_active,
     masked_account_export_payload, status_bar_visible, status_message_is_error,
-    status_spinner_active, status_visible_at,
+    status_message_is_success, status_spinner_active, status_visible_at,
 };
 use crate::account::{
     AccountId, AccountPenalty, AccountPenaltyDuration, AccountPenaltyStatus, AccountProfile,
@@ -1257,6 +1257,17 @@ fn status_bar_keeps_only_error_like_messages_on_screen() {
     ));
     assert!(visible_later("Select an account before opening the shop"));
     assert!(visible_later("display name cannot be empty"));
+}
+
+#[test]
+fn only_finished_actions_get_the_success_toast() {
+    assert!(status_message_is_success("Saved settings"));
+    assert!(status_message_is_success("Cleared image cache"));
+    assert!(!status_message_is_success("Saving settings"));
+    assert!(!status_message_is_success(
+        "Captured login. Confirm the account details to save it."
+    ));
+    assert!(!status_message_is_success("Could not save settings"));
 }
 
 #[test]
