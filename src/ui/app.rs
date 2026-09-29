@@ -501,20 +501,7 @@ impl PrimeApp {
                     }
                 }
             }
-            Message::ConfirmCapturedAccount => {
-                let save_settings = self.settings_cloning
-                    && self.save_settings_on_add
-                    && self.pending_account.is_some();
-                let task = self.confirm_captured_account();
-
-                // The draft is cleared only once the account is saved, and it is then selected.
-                match self.state.selected_account {
-                    Some(account_id) if save_settings && self.pending_account.is_none() => {
-                        Task::batch([task, self.save_added_account_settings(account_id)])
-                    }
-                    _ => task,
-                }
-            }
+            Message::ConfirmCapturedAccount => self.confirm_captured_account(),
             Message::CancelCapturedAccount => {
                 let Some(draft) = self.pending_account.as_ref() else {
                     self.set_status(Status::error(
@@ -2001,7 +1988,7 @@ impl PrimeApp {
                 }
 
                 if self.launcher_capture_in_progress {
-                    self.set_status(Status::info(
+                    self.set_status(Status::error(
                         "Wait for the login capture to finish before launching VALORANT",
                     ));
                     return Task::none();
@@ -2126,7 +2113,7 @@ impl PrimeApp {
                 }
 
                 if self.launcher_capture_in_progress {
-                    self.set_status(Status::info(
+                    self.set_status(Status::error(
                         "Wait for the login capture to finish before launching VALORANT",
                     ));
                     return Task::none();
@@ -3025,14 +3012,24 @@ impl PrimeApp {
                     return Task::none();
                 }
 
-                self.set_status(Status::success(format!("Added {}", account.summary())));
+                let added = format!("Added {}", account.summary());
+                self.set_status(Status::success(added.clone()));
                 self.state.push_account(account);
                 self.account_availability.remove(&draft.account_id);
                 self.state.select_account(draft.account_id);
                 self.clear_selected_account_views();
                 self.pending_account = None;
                 self.new_display_name.clear();
-                return Task::batch([self.save_task(), self.load_account_tab(draft.account_id)]);
+                let saved =
+                    Task::batch([self.save_task(), self.load_account_tab(draft.account_id)]);
+                // Only a new account; a duplicate updates the existing one and adds nothing.
+                if self.settings_cloning && self.save_settings_on_add {
+                    return Task::batch([
+                        saved,
+                        self.save_added_account_settings(draft.account_id, &added),
+                    ]);
+                }
+                return saved;
             }
             Err(error) => {
                 self.set_status(Status::error(error.to_string()));
@@ -3043,8 +3040,7 @@ impl PrimeApp {
     }
 
     /// Saves a just-added account's VALORANT settings as a profile, when that was asked for.
-    fn save_added_account_settings(&mut self, account_id: AccountId) -> Task<Message> {
-        let added = self.status.text.clone();
+    fn save_added_account_settings(&mut self, account_id: AccountId, added: &str) -> Task<Message> {
         let name = self
             .state
             .accounts
@@ -3157,14 +3153,14 @@ impl PrimeApp {
         }
 
         if self.launcher_capture_in_progress {
-            self.set_status(Status::info(
+            self.set_status(Status::error(
                 "Launcher login capture is already in progress",
             ));
             return true;
         }
 
         if self.launch_in_progress() {
-            self.set_status(Status::info(
+            self.set_status(Status::error(
                 "Wait for VALORANT to finish launching before capturing a login",
             ));
             return true;
@@ -3197,7 +3193,7 @@ impl PrimeApp {
             self.app_update_status,
             AppUpdateStatus::Downloading(_) | AppUpdateStatus::Installing
         ) {
-            self.set_status(Status::info(
+            self.set_status(Status::error(
                 "Wait for the Prime update to finish; Prime restarts to install it",
             ));
             return true;

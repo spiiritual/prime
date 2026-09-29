@@ -4354,6 +4354,39 @@ fn adding_an_account_saves_its_settings_when_asked() {
 }
 
 #[test]
+fn an_account_added_while_its_capture_waits_saves_no_preset_and_keeps_the_error() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.settings_cloning = true;
+    let draft = captured_account_draft(
+        &app.repo.launcher_backups_dir(),
+        "puuid-a",
+        "Player",
+        "NA1",
+        Shard::Na,
+    );
+    let _ = app.update(Message::CurrentAccountCaptureFinished(Ok(draft)));
+    let _ = app.update(Message::SaveSettingsOnAddToggled(true));
+    // The same Riot account arrives another way, such as an import, before the draft is saved.
+    let mut existing = AccountProfile::new("Main", Shard::Na).expect("account");
+    existing
+        .apply_riot_identity("puuid-a", "Player", "NA1")
+        .expect("identity");
+    app.state.push_account(existing);
+
+    let _ = app.update(Message::ConfirmCapturedAccount);
+
+    assert_eq!(app.state.accounts.len(), 1);
+    assert_eq!(app.settings_saving_account, None);
+    assert_eq!(app.status.kind, StatusKind::Error);
+    assert!(
+        app.status.text.starts_with("Duplicate account"),
+        "{}",
+        app.status.text
+    );
+}
+
+#[test]
 fn adding_an_account_leaves_its_settings_unless_asked() {
     for (cloning, checked) in [(true, false), (false, true)] {
         let dir = tempdir().expect("temp dir");
