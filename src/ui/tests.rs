@@ -5607,6 +5607,20 @@ fn escape_does_not_close_an_import_that_is_running() {
 }
 
 #[test]
+fn escape_cancels_a_login_capture_only_once_it_is_waiting() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let target = super::LoginCaptureTarget::NewAccount(AccountId::new());
+    preparing_login_capture(&mut app, target);
+    let _ = app.update(Message::EscapePressed);
+    assert!(app.login_capture.is_some());
+
+    waiting_login_capture(&mut app, target);
+    let _ = app.update(Message::EscapePressed);
+    assert!(app.login_capture.is_none());
+}
+
+#[test]
 fn window_icon_decodes() {
     assert!(
         iced::window::icon::from_file_data(include_bytes!("../../assets/icon.png"), None).is_ok()

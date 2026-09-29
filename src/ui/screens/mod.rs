@@ -11,6 +11,7 @@ use super::{Message, PrimeApp, Tab};
 
 #[cfg(test)]
 pub(super) use accounts::missing_rank_label;
+pub(super) use accounts::{login_saved_label, save_settings_on_add_checkbox};
 pub(super) use game_settings::original_settings;
 
 pub(super) fn tab(app: &PrimeApp, tab: Tab) -> Element<'_, Message> {

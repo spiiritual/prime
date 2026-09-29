@@ -1,4 +1,4 @@
-use iced::widget::{checkbox, column, container, row, space, text, text_input, tooltip};
+use iced::widget::{checkbox, column, container, row, space, text, tooltip};
 use iced::{Color, Element, Length, Padding, Theme, alignment};
 use time::{OffsetDateTime, UtcOffset};
 
@@ -68,7 +68,7 @@ fn accounts_tab(app: &PrimeApp) -> Element<'_, Message> {
         account_cards = account_cards.push(account_card(app, account));
     }
 
-    let mut controls = row![
+    let controls = row![
         add_account_button(app),
         add_current_account_button(app),
         button("Import account").on_press_maybe(
@@ -78,57 +78,13 @@ fn accounts_tab(app: &PrimeApp) -> Element<'_, Message> {
     ]
     .spacing(10);
 
-    if let Some(capture) = &app.login_capture {
-        // Enabled once Riot Client has reopened and the capture is waiting for a sign-in.
-        controls = controls.push(
-            button("Cancel login capture")
-                .style(iced::widget::button::danger)
-                .on_press_maybe(
-                    capture
-                        .wait
-                        .is_some()
-                        .then_some(Message::CancelLoginCapture),
-                ),
-        );
-    }
-
-    let mut content = column![].spacing(12).width(Length::Fill);
-
-    // First, so it is in view when a capture finishes.
-    if let Some(draft) = &app.pending_account {
-        content = content.push(
-            container(
-                column![
-                    text("Confirm captured account").size(22),
-                    text(format!(
-                        "Riot ID: {} | PUUID: {}",
-                        draft
-                            .riot_id()
-                            .unwrap_or_else(|| "not captured".to_string()),
-                        draft.puuid
-                    )),
-                    text_input("Display name", &app.new_display_name)
-                        .on_input(Message::NewDisplayNameChanged)
-                        .on_submit(Message::ConfirmCapturedAccount)
-                        .width(Length::Fill),
-                    save_settings_on_add_checkbox(app),
-                    row![
-                        button("Save account").on_press(Message::ConfirmCapturedAccount),
-                        button("Cancel").on_press(Message::CancelCapturedAccount)
-                    ]
-                    .spacing(10)
-                ]
-                .spacing(10),
-            )
-            .padding(16)
-            .style(iced::widget::container::bordered_box),
-        );
-    }
-
-    content.push(controls).push(account_cards).into()
+    column![controls, account_cards]
+        .spacing(12)
+        .width(Length::Fill)
+        .into()
 }
 
-fn save_settings_on_add_checkbox(app: &PrimeApp) -> Element<'_, Message> {
+pub(in crate::ui) fn save_settings_on_add_checkbox(app: &PrimeApp) -> Element<'_, Message> {
     if !app.settings_cloning {
         return space().into();
     }
@@ -456,12 +412,9 @@ fn last_refreshed_row<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Ele
         .into();
     }
 
-    text(format!(
-        "Login saved: {}",
-        last_refreshed_label(launcher_session_captured_at_unix(account))
-    ))
-    .size(13)
-    .into()
+    text(format!("Login saved: {}", login_saved_label(account)))
+        .size(13)
+        .into()
 }
 
 fn rank_badge_label<'a>(
@@ -566,6 +519,10 @@ pub(super) fn last_refreshed_label(timestamp: Option<i64>) -> String {
     let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
 
     format_refreshed_at(refreshed_at, offset)
+}
+
+pub(in crate::ui) fn login_saved_label(account: &AccountProfile) -> String {
+    last_refreshed_label(launcher_session_captured_at_unix(account))
 }
 
 fn launcher_session_captured_at_unix(account: &AccountProfile) -> Option<i64> {

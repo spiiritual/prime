@@ -1,20 +1,20 @@
 use iced::widget::image::Handle;
 use iced::widget::text::Wrapping;
-use iced::widget::{
-    column, container, image, opaque, row, scrollable, space, stack, text, text_input,
-};
+use iced::widget::{Column, column, container, image, opaque, row, scrollable, space, stack, text};
 use iced::{Color, ContentFit, Element, Length, Padding, Theme, alignment};
 use std::path::PathBuf;
 
 use crate::account::AccountProfile;
 use crate::game_settings::{GameSettingsProfileMetadata, GameSettingsProfilePurpose};
 
-use super::components::{anchored_popover, currency_balance_display, loading_indicator};
+use super::components::{
+    anchored_popover, compact_loading_indicator, currency_balance_display, loading_indicator,
+};
 use super::theme::{self, button};
 use super::{
-    AccountExportOutput, ImageViewerImage, MAIN_PANEL_SCROLLABLE_ID, Message,
-    PendingSettingsChange, PresetNamePrompt, PresetNameTarget, PrimeApp, SettingsChange, Tab,
-    UnavailableLaunchWarning, screens,
+    AccountExportOutput, CapturedAccountDraft, ImageViewerImage, LoginCapture, LoginCaptureTarget,
+    MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange, PresetNamePrompt, PresetNameTarget,
+    PrimeApp, SettingsChange, Tab, UnavailableLaunchWarning, screens,
 };
 use super::{status_bar_visible, status_message_is_error, status_spinner_active};
 
@@ -70,14 +70,21 @@ impl PrimeApp {
         let content: Element<_> = if self.show_add_account_prompt {
             stack![
                 content,
-                add_account_prompt_overlay(
-                    self.capture_prompt_valorant_running,
-                    self.pending_account.is_some()
-                )
+                add_account_prompt_overlay(self.capture_prompt_valorant_running)
             ]
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+        } else if let Some(capture) = &self.login_capture {
+            stack![content, login_capture_overlay(self, capture)]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else if let Some(draft) = &self.pending_account {
+            stack![content, captured_account_overlay(self, draft)]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
         } else if self.show_import_account_prompt {
             stack![content, import_account_prompt_overlay(self)]
                 .width(Length::Fill)
@@ -135,6 +142,26 @@ impl PrimeApp {
             .into()
         } else {
             content.into()
+        };
+
+        // Over the dialogs, so errors from a dialog's action stay readable.
+        let content: Element<_> = if status_bar_visible(self) {
+            stack![
+                content,
+                container(self.status_toast())
+                    .padding(Padding {
+                        bottom: 24.0,
+                        // Lined up with the main panel's content.
+                        left: SIDEBAR_WIDTH + 1.0 + 36.0,
+                        ..Padding::ZERO
+                    })
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_y(alignment::Vertical::Bottom)
+            ]
+            .into()
+        } else {
+            content
         };
 
         if super::image_viewer_enabled()
@@ -328,19 +355,7 @@ impl PrimeApp {
         ]
         .spacing(22);
 
-        if status_visible {
-            stack![
-                panel,
-                container(self.status_toast())
-                    .padding(Padding::ZERO.bottom(24))
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .align_y(alignment::Vertical::Bottom)
-            ]
-            .into()
-        } else {
-            panel.into()
-        }
+        panel.into()
     }
 
     fn main_header(&self) -> Element<'_, Message> {
@@ -628,77 +643,506 @@ fn account_badge_button_style(
     style
 }
 
-fn add_account_prompt_overlay(
-    valorant_running: bool,
-    discards_pending_account: bool,
-) -> Element<'static, Message> {
-    let mut details = column![
-        text("Add Riot account").size(20),
-        text(
-            "Prime will close Riot Client and VALORANT, clear any stale remembered launcher data, and open the Riot login screen."
-        )
-        .size(14),
-        text(
-            "On the Riot login screen, tick \"Stay signed in\" before you sign in. After Riot Client remembers the login, Prime will capture the launcher session and ask you to confirm the profile details."
-        )
-        .size(14)
-    ]
-    .spacing(8)
-    .width(Length::Fill);
+const DIALOG_FOOTER: Color = iced::color!(0x0F1217);
+const DIALOG_SCRIM: Color = iced::color!(0x05060A, 0.8);
 
-    if discards_pending_account {
-        details = details.push(
-            text("The captured account waiting for confirmation will be discarded.").size(14),
+/// The shared dialog frame: an optional coloured kicker, a title and description, an optional
+/// body and a footer of actions, right-aligned, centred over a dark scrim.
+fn dialog<'a>(
+    width: f32,
+    kicker: Option<(String, Color)>,
+    title: String,
+    description: Option<String>,
+    body: Option<Column<'a, Message>>,
+    actions: Vec<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let mut top = column![].spacing(6).width(Length::Fill);
+    if let Some((kicker, color)) = kicker {
+        top = top.push(text(kicker).size(10).font(theme::BOLD_FONT).color(color));
+    }
+    top = top.push(text(title).size(21).font(theme::DISPLAY_FONT));
+    if let Some(description) = description {
+        top = top.push(text(description).size(13).color(theme::MUTED));
+    }
+
+    let mut modal = column![container(top).padding(Padding {
+        top: 24.0,
+        right: 24.0,
+        bottom: 16.0,
+        left: 24.0,
+    })];
+
+    if let Some(body) = body {
+        modal = modal.push(
+            container(body.spacing(12).width(Length::Fill)).padding(Padding {
+                top: 4.0,
+                right: 24.0,
+                bottom: 20.0,
+                left: 24.0,
+            }),
         );
     }
 
-    if valorant_running {
-        details = details.push(running_game_warning());
-    }
-
-    let prompt = container(
-        column![
-            details,
-            row![
-                space().width(Length::Fill),
-                button("Cancel").on_press(Message::CancelAddAccountCapture),
-                button("Continue").on_press(Message::ConfirmAddAccountCapture)
-            ]
-            .spacing(10)
-        ]
-        .spacing(18),
+    let footer = container(
+        row![space().width(Length::Fill)]
+            .extend(actions)
+            .spacing(8)
+            .align_y(alignment::Vertical::Center),
     )
-    .padding(24)
-    .width(720)
-    .style(add_account_prompt_style);
+    .padding([14, 24])
+    .width(Length::Fill)
+    .style(|_| {
+        filled(DIALOG_FOOTER).border(iced::Border {
+            radius: iced::border::bottom(15),
+            ..Default::default()
+        })
+    });
+    modal = modal.push(horizontal_rule()).push(footer);
+
+    let modal = container(modal)
+        .width(width)
+        .style(|_| iced::widget::container::Style {
+            background: Some(theme::SURFACE.into()),
+            text_color: Some(theme::TEXT),
+            border: iced::Border {
+                color: theme::LINE,
+                width: 1.0,
+                radius: 16.0.into(),
+            },
+            shadow: iced::Shadow {
+                color: Color::from_rgba8(0, 0, 0, 0.5),
+                offset: iced::Vector::new(0.0, 24.0),
+                blur_radius: 60.0,
+            },
+            ..Default::default()
+        });
 
     opaque(
-        container(prompt)
+        container(modal)
+            .center(Length::Fill)
             .padding(14)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Center)
-            .style(add_account_prompt_scrim_style),
+            .style(|_| filled(DIALOG_SCRIM)),
     )
 }
 
-fn add_account_prompt_style(theme: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::bordered_box(theme)
+fn horizontal_rule() -> Element<'static, Message> {
+    container(space())
+        .width(Length::Fill)
+        .height(1)
+        .style(|_| filled(theme::LINE))
+        .into()
 }
 
-fn add_account_prompt_scrim_style(_: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(Color::from_rgba8(8, 10, 14, 0.68).into()),
-        ..Default::default()
+/// The dialog's plain secondary button, such as Cancel.
+fn dialog_button(label: &str, on_press: Option<Message>) -> Element<'_, Message> {
+    button(text(label).size(13).font(theme::BOLD_FONT))
+        .padding([9, 16])
+        .on_press_maybe(on_press)
+        .into()
+}
+
+/// The dialog's main action: an icon and label on a solid fill.
+fn dialog_action<'a>(
+    icon: theme::Icon,
+    label: &'a str,
+    style: fn(&Theme, iced::widget::button::Status) -> iced::widget::button::Style,
+    on_press: Option<Message>,
+) -> Element<'a, Message> {
+    button(theme::icon_label(icon, label, theme::BG))
+        .padding([9, 16])
+        .style(style)
+        .on_press_maybe(on_press)
+        .into()
+}
+
+/// A tinted callout with an icon, for warnings inside a dialog.
+fn dialog_note<'a>(
+    icon: theme::Icon,
+    color: Color,
+    message: impl text::IntoFragment<'a>,
+) -> Element<'a, Message> {
+    container(
+        row![
+            theme::icon(icon, 14.0, color),
+            text(message).size(12).width(Length::Fill)
+        ]
+        .spacing(10),
+    )
+    .padding([10, 12])
+    .width(Length::Fill)
+    .style(move |_| {
+        filled(Color { a: 0.08, ..color }).border(iced::Border {
+            color: Color { a: 0.27, ..color },
+            width: 1.0,
+            radius: 8.0.into(),
+        })
+    })
+    .into()
+}
+
+fn running_game_note() -> Element<'static, Message> {
+    dialog_note(
+        theme::Icon::TriangleAlert,
+        theme::GOLD,
+        "VALORANT is running. Continuing will close it, including any match in progress.",
+    )
+}
+
+/// One line of what a dialog is about to do, with its icon in a small tile.
+fn dialog_point<'a>(icon: theme::Icon, label: &'a str) -> Element<'a, Message> {
+    row![
+        container(theme::icon(icon, 14.0, theme::MUTED))
+            .center(28)
+            .style(|_| filled(theme::RAISED).border(iced::border::rounded(8))),
+        text(label).size(13).width(Length::Fill)
+    ]
+    .spacing(10)
+    .align_y(alignment::Vertical::Center)
+    .into()
+}
+
+/// A labelled input with an optional hint underneath.
+fn dialog_field<'a>(
+    label: &'a str,
+    input: impl Into<Element<'a, Message>>,
+    hint: Option<&'a str>,
+) -> Element<'a, Message> {
+    column![
+        text(label)
+            .size(12)
+            .font(theme::SEMIBOLD_FONT)
+            .color(theme::MUTED),
+        input.into()
+    ]
+    .push(hint.map(|hint| text(hint).size(11).color(theme::FAINT)))
+    .spacing(6)
+    .into()
+}
+
+/// The account a dialog acts on: avatar, name and one line of detail.
+fn identity_card<'a>(
+    avatar_name: &str,
+    name: String,
+    detail: String,
+    detail_font: iced::Font,
+) -> Element<'a, Message> {
+    container(
+        row![
+            account_avatar(avatar_name, 36.0, 9.0),
+            column![
+                text(name).size(14).font(theme::SEMIBOLD_FONT),
+                text(detail).size(12).font(detail_font).color(theme::MUTED)
+            ]
+            .spacing(2)
+            .width(Length::Fill)
+        ]
+        .spacing(12)
+        .align_y(alignment::Vertical::Center),
+    )
+    .padding(12)
+    .width(Length::Fill)
+    .style(|_| filled(theme::RAISED).border(iced::border::rounded(10)))
+    .into()
+}
+
+/// A saved account's card: its Riot ID, then rank, level and when its login was saved.
+fn account_identity_card(account: &AccountProfile) -> Element<'_, Message> {
+    let mut detail = Vec::new();
+    if let Some(rank) = &account.competitive_rank {
+        detail.push(rank.rank_name.clone());
     }
+    if let Some(level) = account.account_level.filter(|level| *level > 0) {
+        detail.push(format!("Level {level}"));
+    }
+    detail.push(format!(
+        "login saved {}",
+        screens::login_saved_label(account)
+    ));
+
+    identity_card(
+        &account.display_name,
+        account
+            .riot_id()
+            .unwrap_or_else(|| account.display_name.clone()),
+        detail.join(" · "),
+        theme::BODY_FONT,
+    )
+}
+
+fn add_account_prompt_overlay(valorant_running: bool) -> Element<'static, Message> {
+    let mut body = column![
+        dialog_point(
+            theme::Icon::Power,
+            "Riot Client and VALORANT will be closed"
+        ),
+        dialog_point(
+            theme::Icon::Eraser,
+            "The current remembered login is cleared (other saved accounts are untouched)"
+        ),
+        dialog_point(
+            theme::Icon::MousePointerClick,
+            "Sign in and tick \u{201c}Stay signed in\u{201d}"
+        ),
+    ];
+
+    if valorant_running {
+        body = body.push(running_game_note());
+    }
+
+    dialog(
+        520.0,
+        Some(("STEP 1 OF 3".to_string(), theme::ACCENT)),
+        "Add a Riot account".to_string(),
+        Some("Prime needs a clean Riot Client to capture a new login.".to_string()),
+        Some(body),
+        vec![
+            dialog_button("Cancel", Some(Message::CancelAddAccountCapture)),
+            dialog_action(
+                theme::Icon::ArrowRight,
+                "Continue",
+                theme::primary_button_style,
+                Some(Message::ConfirmAddAccountCapture),
+            ),
+        ],
+    )
+}
+
+/// Shown while a capture waits for a sign-in in Riot Client.
+fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> Element<'a, Message> {
+    let riot_client_open = capture.wait.is_some();
+    let existing = match capture.target {
+        LoginCaptureTarget::NewAccount(_) => None,
+        LoginCaptureTarget::Existing { account_id, .. } => app
+            .state
+            .accounts
+            .iter()
+            .find(|account| account.id == account_id),
+    };
+
+    let close_step = if riot_client_open {
+        capture_step(
+            CaptureStep::Done,
+            "Close Riot Client & VALORANT",
+            "Done",
+            app,
+        )
+    } else {
+        capture_step(
+            CaptureStep::Active,
+            "Close Riot Client & VALORANT",
+            "Closing and clearing the current login\u{2026}",
+            app,
+        )
+    };
+    let sign_in_state = if riot_client_open {
+        CaptureStep::Active
+    } else {
+        CaptureStep::Pending
+    };
+    let sign_in_detail = if riot_client_open {
+        "Waiting for remembered login\u{2026}"
+    } else {
+        "Riot Client opens next"
+    };
+
+    let mut steps = column![
+        close_step,
+        capture_step(
+            sign_in_state,
+            "Sign in and tick \u{201c}Stay signed in\u{201d}",
+            sign_in_detail,
+            app
+        )
+    ];
+    if existing.is_none() {
+        steps = steps.push(capture_step(
+            CaptureStep::Pending,
+            "Name the account",
+            "Choose how it shows in Prime",
+            app,
+        ));
+    }
+
+    let (kicker, title) = match existing {
+        Some(account) => (None, format!("Sign in as {}", account.display_name)),
+        None => (
+            Some(("STEP 2 OF 3".to_string(), theme::ACCENT)),
+            "Sign in to Riot Client".to_string(),
+        ),
+    };
+
+    let body = column![
+        steps,
+        dialog_note(
+            theme::Icon::Info,
+            theme::MUTED,
+            "Without \u{201c}Stay signed in\u{201d}, Riot Client won't remember the login and \
+             capture can't finish.",
+        )
+    ];
+
+    dialog(
+        520.0,
+        kicker,
+        title,
+        Some(
+            "Sign in with the account in Riot Client. Prime never sees your password.".to_string(),
+        ),
+        Some(body),
+        vec![
+            // Cancelling only works once Riot Client is open and the wait has started.
+            dialog_button(
+                "Cancel",
+                riot_client_open.then_some(Message::CancelLoginCapture),
+            ),
+            container(
+                row![
+                    compact_loading_indicator(app.loading_frame),
+                    text("Waiting for login")
+                        .size(13)
+                        .font(theme::BOLD_FONT)
+                        .color(theme::MUTED)
+                ]
+                .spacing(8)
+                .align_y(alignment::Vertical::Center),
+            )
+            .padding([9, 16])
+            .style(|_| filled(theme::RAISED).border(iced::border::rounded(8)))
+            .into(),
+        ],
+    )
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum CaptureStep {
+    Done,
+    Active,
+    Pending,
+}
+
+fn capture_step<'a>(
+    state: CaptureStep,
+    label: &'a str,
+    detail: &'a str,
+    app: &PrimeApp,
+) -> Element<'a, Message> {
+    let badge: Element<_> = match state {
+        CaptureStep::Done => container(theme::icon(theme::Icon::Check, 13.0, theme::OK))
+            .center(24)
+            .style(|_| {
+                filled(Color {
+                    a: 0.15,
+                    ..theme::OK
+                })
+                .border(iced::border::rounded(12))
+            })
+            .into(),
+        CaptureStep::Active => container(compact_loading_indicator(app.loading_frame))
+            .center(24)
+            .style(|_| {
+                filled(theme::ACCENT_SOFT).border(iced::Border {
+                    color: theme::ACCENT,
+                    width: 1.0,
+                    radius: 12.0.into(),
+                })
+            })
+            .into(),
+        CaptureStep::Pending => container(space())
+            .center(24)
+            .style(|_| filled(theme::RAISED).border(iced::border::rounded(12)))
+            .into(),
+    };
+    let (label_color, detail_color) = match state {
+        CaptureStep::Done => (theme::TEXT, theme::FAINT),
+        CaptureStep::Active => (theme::TEXT, theme::ACCENT),
+        CaptureStep::Pending => (theme::MUTED, theme::FAINT),
+    };
+
+    row![
+        badge,
+        column![
+            text(label)
+                .size(13)
+                .font(theme::SEMIBOLD_FONT)
+                .color(label_color),
+            text(detail).size(12).color(detail_color)
+        ]
+        .spacing(2)
+    ]
+    .spacing(12)
+    .padding([10, 0])
+    .align_y(alignment::Vertical::Center)
+    .into()
+}
+
+/// Asks for a display name once a capture has found the account's login.
+fn captured_account_overlay<'a>(
+    app: &'a PrimeApp,
+    draft: &'a CapturedAccountDraft,
+) -> Element<'a, Message> {
+    let riot_id = draft
+        .riot_id()
+        .unwrap_or_else(|| "Riot ID not captured".to_string());
+    let avatar_name = draft.game_name.as_deref().unwrap_or(&riot_id);
+    let puuid = short_puuid(&draft.puuid);
+
+    let mut body = column![
+        identity_card(
+            avatar_name,
+            riot_id.clone(),
+            format!("PUUID {puuid} \u{b7} {} shard", draft.shard),
+            theme::MONO_FONT,
+        ),
+        dialog_field(
+            "Display name",
+            theme::text_input("Display name", &app.new_display_name)
+                .on_input(Message::NewDisplayNameChanged)
+                .on_submit(Message::ConfirmCapturedAccount),
+            Some("Shown in Prime only."),
+        )
+    ];
+    body = body.push(screens::save_settings_on_add_checkbox(app));
+
+    dialog(
+        520.0,
+        None,
+        "Login captured".to_string(),
+        Some(
+            "Riot Client remembered the login. Give the account a name you'll recognise."
+                .to_string(),
+        ),
+        Some(body),
+        vec![
+            dialog_button("Cancel", Some(Message::CancelCapturedAccount)),
+            dialog_action(
+                theme::Icon::Check,
+                "Save account",
+                theme::primary_button_style,
+                (!app.new_display_name.trim().is_empty())
+                    .then_some(Message::ConfirmCapturedAccount),
+            ),
+        ],
+    )
+}
+
+/// The first and last four characters, which is enough to tell PUUIDs apart at a glance.
+fn short_puuid(puuid: &str) -> String {
+    let characters: Vec<char> = puuid.chars().collect();
+    if characters.len() <= 10 {
+        return puuid.to_string();
+    }
+
+    let start: String = characters[..4].iter().collect();
+    let end: String = characters[characters.len() - 4..].iter().collect();
+    format!("{start}\u{2026}{end}")
 }
 
 fn import_account_prompt_overlay(app: &PrimeApp) -> Element<'_, Message> {
     let import_ready =
         !app.import_account_in_progress && !app.import_account_input.trim().is_empty();
-    let mut import_input =
-        text_input("Paste account export", &app.import_account_input).width(Length::Fill);
+    let mut import_input = theme::text_input("Paste account export", &app.import_account_input)
+        .font(theme::MONO_FONT)
+        .size(12);
 
     if !app.import_account_in_progress {
         import_input = import_input.on_input(Message::ImportAccountInputChanged);
@@ -708,127 +1152,106 @@ fn import_account_prompt_overlay(app: &PrimeApp) -> Element<'_, Message> {
         }
     }
 
-    let prompt = container(
-        column![
-            column![
-                text("Import account").size(20),
-                text("Paste an account export from another Prime install.").size(14)
-            ]
-            .spacing(8)
-            .width(Length::Fill),
-            import_input,
-            row![
-                space().width(Length::Fill),
-                button("Cancel").on_press_maybe(
-                    (!app.import_account_in_progress).then_some(Message::CancelImportAccount)
-                ),
-                button(if app.import_account_in_progress {
-                    "Importing..."
+    dialog(
+        520.0,
+        None,
+        "Import account".to_string(),
+        Some("Paste an account export from another Prime install.".to_string()),
+        Some(column![dialog_field("Account export", import_input, None)]),
+        vec![
+            dialog_button(
+                "Cancel",
+                (!app.import_account_in_progress).then_some(Message::CancelImportAccount),
+            ),
+            dialog_action(
+                theme::Icon::Download,
+                if app.import_account_in_progress {
+                    "Importing\u{2026}"
                 } else {
                     "Import"
-                })
-                .on_press_maybe(import_ready.then_some(Message::ConfirmImportAccount))
-            ]
-            .spacing(10)
-        ]
-        .spacing(18),
-    )
-    .padding(24)
-    .width(720)
-    .style(add_account_prompt_style);
-
-    opaque(
-        container(prompt)
-            .padding(14)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Center)
-            .style(add_account_prompt_scrim_style),
+                },
+                theme::primary_button_style,
+                import_ready.then_some(Message::ConfirmImportAccount),
+            ),
+        ],
     )
 }
 
 fn export_account_prompt_overlay(export: &AccountExportOutput) -> Element<'_, Message> {
-    let token_row = row![
-        text_input("Account export", &export.masked_payload)
-            .width(Length::Fill)
-            .size(13),
-        button("Copy").on_press(Message::CopyAccountExport)
-    ]
-    .spacing(10)
-    .align_y(alignment::Vertical::Center);
-
-    let prompt = container(
-        column![
-            column![
-                text(format!("Export {}", export.display_name)).size(20),
-                text(
-                    "Only paste this into your own Prime install. Copying keeps it out of Windows clipboard history."
-                )
-                .size(14),
-                text(format!(
-                    "Warning: anyone with this export can sign in to {} without its password.",
-                    export.display_name
-                ))
-                .size(14)
+    let export_field = container(
+        row![
+            text(&export.masked_payload)
+                .size(12)
+                .font(theme::MONO_FONT)
+                .color(theme::MUTED)
                 .width(Length::Fill)
-                .color(theme::ACCENT)
-            ]
-            .spacing(8)
-            .width(Length::Fill),
-            token_row,
-            row![space().width(Length::Fill), button("Close").on_press(Message::CloseAccountExport)]
-                .spacing(10)
+                .wrapping(Wrapping::None),
+            button(text("Copy").size(11).font(theme::SEMIBOLD_FONT))
+                .padding([4, 10])
+                .on_press(Message::CopyAccountExport)
         ]
-        .spacing(18),
+        .spacing(8)
+        .align_y(alignment::Vertical::Center),
     )
-    .padding(24)
-    .width(760)
-    .style(add_account_prompt_style);
+    .padding(Padding {
+        top: 6.0,
+        right: 6.0,
+        bottom: 6.0,
+        left: 12.0,
+    })
+    .clip(true)
+    .style(|_| {
+        filled(theme::BG).border(iced::Border {
+            color: theme::LINE,
+            width: 1.0,
+            radius: 8.0.into(),
+        })
+    });
 
-    opaque(
-        container(prompt)
-            .padding(14)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Center)
-            .style(add_account_prompt_scrim_style),
+    dialog(
+        520.0,
+        None,
+        format!("Export {}", export.display_name),
+        Some(
+            "Only paste this into your own Prime install. Copying keeps it out of Windows \
+             clipboard history."
+                .to_string(),
+        ),
+        Some(column![
+            export_field,
+            dialog_note(
+                theme::Icon::TriangleAlert,
+                theme::ACCENT,
+                format!(
+                    "Anyone with this export can sign in to {} without its password.",
+                    export.display_name
+                ),
+            )
+        ]),
+        vec![dialog_button("Close", Some(Message::CloseAccountExport))],
     )
 }
 
 fn delete_account_prompt_overlay(account: &AccountProfile) -> Element<'_, Message> {
-    let prompt = container(
-        column![
-            column![
-                text(format!("Delete {}?", account.display_name)).size(20),
-                text("This removes the local profile and captured launcher session data.").size(14)
-            ]
-            .spacing(8)
-            .width(Length::Fill),
-            row![
-                space().width(Length::Fill),
-                button("Cancel").on_press(Message::CancelDeleteAccount),
-                button("Delete")
-                    .style(iced::widget::button::danger)
-                    .on_press(Message::ConfirmDeleteAccount(account.id))
-            ]
-            .spacing(10)
-        ]
-        .spacing(18),
-    )
-    .padding(24)
-    .width(560)
-    .style(add_account_prompt_style);
-
-    opaque(
-        container(prompt)
-            .padding(14)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Center)
-            .style(add_account_prompt_scrim_style),
+    dialog(
+        440.0,
+        None,
+        format!("Delete {}?", account.display_name),
+        Some(
+            "This removes the local profile and its captured launcher session. Your Riot account \
+             itself isn't affected."
+                .to_string(),
+        ),
+        Some(column![account_identity_card(account)]),
+        vec![
+            dialog_button("Cancel", Some(Message::CancelDeleteAccount)),
+            dialog_action(
+                theme::Icon::Trash,
+                "Delete account",
+                theme::danger_button_style,
+                Some(Message::ConfirmDeleteAccount(account.id)),
+            ),
+        ],
     )
 }
 
@@ -843,7 +1266,7 @@ fn settings_change_prompt_overlay<'a>(
         .find(|account| account.id == pending.change.account_id())?;
     let name = &account.display_name;
 
-    let (title, mut details, action) = match &pending.change {
+    let (title, details, action) = match &pending.change {
         SettingsChange::Apply { profile_id, .. } => {
             let profile = app
                 .settings_profiles
@@ -879,23 +1302,41 @@ fn settings_change_prompt_overlay<'a>(
         ),
     };
 
-    let action = match &pending.warning {
-        Some(warning) => {
-            details.push_str(&format!("\n\n{warning}"));
-            format!("{action} anyway")
-        }
-        None => action.to_string(),
+    let mut body = column![];
+    if let Some(warning) = &pending.warning {
+        body = body.push(dialog_note(
+            theme::Icon::TriangleAlert,
+            theme::GOLD,
+            warning.as_str(),
+        ));
+    }
+    if pending.check_failed {
+        body = body.push(dialog_note(
+            theme::Icon::Info,
+            theme::MUTED,
+            format!("Prime couldn't check whether {name} is in VALORANT."),
+        ));
+    }
+    let action = if pending.warning.is_some() {
+        format!("{action} anyway")
+    } else {
+        action.to_string()
     };
-    let note = pending
-        .check_failed
-        .then(|| format!("Prime couldn't check whether {name} is in VALORANT."));
 
-    Some(confirmation_prompt_overlay(
+    Some(dialog(
+        480.0,
+        None,
         title,
-        details,
-        note,
-        Message::CancelSettingsChange,
-        button(text(action)).on_press(Message::ConfirmSettingsChange),
+        Some(details),
+        (pending.warning.is_some() || pending.check_failed).then_some(body),
+        vec![
+            dialog_button("Cancel", Some(Message::CancelSettingsChange)),
+            button(text(action).size(13).font(theme::BOLD_FONT))
+                .padding([9, 16])
+                .style(theme::primary_button_style)
+                .on_press(Message::ConfirmSettingsChange)
+                .into(),
+        ],
     ))
 }
 
@@ -917,14 +1358,21 @@ fn delete_settings_profile_prompt_overlay(
         ),
     };
 
-    confirmation_prompt_overlay(
-        title,
-        details.to_string(),
+    dialog(
+        440.0,
         None,
-        Message::CancelDeleteSettingsProfile,
-        button(action)
-            .style(iced::widget::button::danger)
-            .on_press(Message::ConfirmDeleteSettingsProfile),
+        title,
+        Some(details.to_string()),
+        None,
+        vec![
+            dialog_button("Cancel", Some(Message::CancelDeleteSettingsProfile)),
+            dialog_action(
+                theme::Icon::Trash,
+                action,
+                theme::danger_button_style,
+                Some(Message::ConfirmDeleteSettingsProfile),
+            ),
+        ],
     )
 }
 
@@ -953,78 +1401,27 @@ fn preset_name_prompt_overlay<'a>(
         ),
     };
     let ready = !prompt.name.trim().is_empty();
-    let mut input = text_input("Preset name", &prompt.name)
-        .on_input(Message::PresetNameChanged)
-        .width(Length::Fill);
+    let mut input =
+        theme::text_input("Preset name", &prompt.name).on_input(Message::PresetNameChanged);
     if ready {
         input = input.on_submit(Message::ConfirmPresetName);
     }
 
-    let dialog = container(
-        column![
-            column![text(title).size(20), text(details).size(14)]
-                .spacing(8)
-                .width(Length::Fill),
-            input,
-            row![
-                space().width(Length::Fill),
-                button("Cancel").on_press(Message::CancelPresetName),
-                button(action).on_press_maybe(ready.then_some(Message::ConfirmPresetName))
-            ]
-            .spacing(10)
-        ]
-        .spacing(18),
-    )
-    .padding(24)
-    .width(560)
-    .style(add_account_prompt_style);
-
-    opaque(
-        container(dialog)
-            .padding(14)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Center)
-            .style(add_account_prompt_scrim_style),
-    )
-}
-
-/// A confirmation dialog; `note` is a muted line under the details.
-fn confirmation_prompt_overlay<'a>(
-    title: String,
-    details: String,
-    note: Option<String>,
-    cancel: Message,
-    confirm: iced::widget::Button<'a, Message>,
-) -> Element<'a, Message> {
-    let prompt = container(
-        column![
-            column![text(title).size(20), text(details).size(14)]
-                .push(note.map(|note| text(note).size(14).color(theme::MUTED)))
-                .spacing(8)
-                .width(Length::Fill),
-            row![
-                space().width(Length::Fill),
-                button("Cancel").on_press(cancel),
-                confirm
-            ]
-            .spacing(10)
-        ]
-        .spacing(18),
-    )
-    .padding(24)
-    .width(560)
-    .style(add_account_prompt_style);
-
-    opaque(
-        container(prompt)
-            .padding(14)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Center)
-            .style(add_account_prompt_scrim_style),
+    dialog(
+        480.0,
+        None,
+        title,
+        Some(details),
+        Some(column![dialog_field("Preset name", input, None)]),
+        vec![
+            dialog_button("Cancel", Some(Message::CancelPresetName)),
+            dialog_action(
+                theme::Icon::Check,
+                action,
+                theme::primary_button_style,
+                ready.then_some(Message::ConfirmPresetName),
+            ),
+        ],
     )
 }
 
@@ -1032,90 +1429,54 @@ fn recapture_prompt_overlay(
     account: &AccountProfile,
     valorant_running: bool,
 ) -> Element<'_, Message> {
-    let mut details = column![
-        text(format!("Re-capture login for {}?", account.display_name)).size(20),
-        text(
-            "Prime will close Riot Client and VALORANT, clear the current remembered login, and open the Riot login screen."
-        )
-        .size(14),
-        text(format!(
-            "Tick \"Stay signed in\" and sign in to {}. If you sign in to a different Riot account, the saved login is left unchanged.",
-            account.summary()
-        ))
-        .size(14)
-    ]
-    .spacing(8)
-    .width(Length::Fill);
-
+    let mut body = column![account_identity_card(account)];
     if valorant_running {
-        details = details.push(running_game_warning());
+        body = body.push(running_game_note());
     }
 
-    let prompt = container(
-        column![
-            details,
-            row![
-                space().width(Length::Fill),
-                button("Cancel").on_press(Message::CancelLauncherSessionLogin),
-                button("Continue").on_press(Message::StartLauncherSessionLogin(account.id))
-            ]
-            .spacing(10)
-        ]
-        .spacing(18),
+    dialog(
+        460.0,
+        None,
+        format!("Re-capture login for {}?", account.display_name),
+        Some(format!(
+            "Prime will close Riot Client, clear its current login and wait for you to sign in \
+             as {} again. Tick \u{201c}Stay signed in\u{201d}. If you sign in to a different \
+             Riot account, the saved login is left unchanged.",
+            account.display_name
+        )),
+        Some(body),
+        vec![
+            dialog_button("Cancel", Some(Message::CancelLauncherSessionLogin)),
+            dialog_action(
+                theme::Icon::ArrowRight,
+                "Continue",
+                theme::primary_button_style,
+                Some(Message::StartLauncherSessionLogin(account.id)),
+            ),
+        ],
     )
-    .padding(24)
-    .width(640)
-    .style(add_account_prompt_style);
-
-    opaque(
-        container(prompt)
-            .padding(14)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Center)
-            .style(add_account_prompt_scrim_style),
-    )
-}
-
-fn running_game_warning() -> Element<'static, Message> {
-    text("VALORANT is running. Continuing will close it, including any match in progress.")
-        .size(14)
-        .width(Length::Fill)
-        .color(theme::ACCENT)
-        .into()
 }
 
 fn unavailable_launch_prompt_overlay(warning: &UnavailableLaunchWarning) -> Element<'_, Message> {
-    let prompt = container(
-        column![
-            column![
-                text(format!("Launch {} anyway?", warning.display_name)).size(20),
-                text(&warning.reason).size(14).width(Length::Fill)
-            ]
-            .spacing(8)
-            .width(Length::Fill),
-            row![
-                space().width(Length::Fill),
-                button("Cancel").on_press(Message::CancelUnavailableLaunch),
-                button("Launch anyway").on_press(Message::LaunchAnyway(warning.account_id))
-            ]
-            .spacing(10)
-        ]
-        .spacing(18),
-    )
-    .padding(24)
-    .width(620)
-    .style(add_account_prompt_style);
-
-    opaque(
-        container(prompt)
-            .padding(14)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Center)
-            .style(add_account_prompt_scrim_style),
+    dialog(
+        480.0,
+        None,
+        format!("Launch {} anyway?", warning.display_name),
+        Some("Switching accounts restarts Riot Client and VALORANT.".to_string()),
+        Some(column![dialog_note(
+            theme::Icon::Swords,
+            theme::ACCENT,
+            warning.reason.as_str(),
+        )]),
+        vec![
+            dialog_button("Cancel", Some(Message::CancelUnavailableLaunch)),
+            dialog_action(
+                theme::Icon::Play,
+                "Launch anyway",
+                theme::danger_button_style,
+                Some(Message::LaunchAnyway(warning.account_id)),
+            ),
+        ],
     )
 }
 
@@ -1123,84 +1484,75 @@ fn app_update_prompt_overlay<'a>(
     update: &'a crate::updater::AvailableUpdate,
     blocking_work: Option<&'static str>,
 ) -> Element<'a, Message> {
-    let mut details = column![
-        text(format!("Prime {} is available", update.latest_version)).size(20),
-        text(format!(
-            "You are running Prime {}. Would you like to update to {}?",
-            update.current_version, update.latest_version
-        ))
-        .size(14)
-    ]
-    .spacing(8)
-    .width(Length::Fill);
-
+    let mut body = column![];
     if let Some(changelog) = update.changelog.as_deref() {
-        details = details.push(app_update_changelog(changelog));
+        body = body.push(app_update_changelog(changelog));
     }
-
     if let Some(work) = blocking_work {
-        details = details.push(
-            text(format!(
-                "Prime restarts to install the update. Wait for {work} first."
-            ))
-            .size(14),
-        );
+        body = body.push(dialog_note(
+            theme::Icon::Info,
+            theme::GOLD,
+            format!("Prime restarts to install the update. Wait for {work} first."),
+        ));
     }
 
-    let prompt = container(
-        column![
-            details,
-            row![
-                space().width(Length::Fill),
-                button("Later").on_press(Message::DismissAppUpdate),
-                button("Download and restart").on_press_maybe(
-                    blocking_work
-                        .is_none()
-                        .then_some(Message::DownloadAppUpdate)
-                )
-            ]
-            .spacing(10)
-        ]
-        .spacing(18),
-    )
-    .padding(24)
-    .width(720)
-    .style(add_account_prompt_style);
-
-    opaque(
-        container(prompt)
-            .padding(14)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Center)
-            .style(add_account_prompt_scrim_style),
+    dialog(
+        500.0,
+        Some(("UPDATE".to_string(), theme::OK)),
+        format!("Prime {} is available", update.latest_version),
+        Some(format!("You're running {}.", update.current_version)),
+        (update.changelog.is_some() || blocking_work.is_some()).then_some(body),
+        vec![
+            dialog_button("Later", Some(Message::DismissAppUpdate)),
+            dialog_action(
+                theme::Icon::Download,
+                "Download & restart",
+                theme::success_button_style,
+                blocking_work
+                    .is_none()
+                    .then_some(Message::DownloadAppUpdate),
+            ),
+        ],
     )
 }
 
 fn app_update_changelog(changelog: &str) -> Element<'_, Message> {
-    let changelog_text = text(changelog)
-        .size(13)
-        .width(Length::Fill)
-        .wrapping(iced::widget::text::Wrapping::WordOrGlyph);
-
     let changelog_scroll = scrollable(
-        container(changelog_text)
-            .padding(Padding::ZERO.right(12))
-            .width(Length::Fill),
+        container(
+            text(changelog)
+                .size(13)
+                .color(theme::MUTED)
+                .width(Length::Fill)
+                .wrapping(Wrapping::WordOrGlyph),
+        )
+        .padding(Padding::ZERO.right(12))
+        .width(Length::Fill),
     )
     .width(Length::Fill)
     .height(Length::Shrink);
 
-    column![
-        text("Changelog").size(15),
-        container(changelog_scroll)
-            .width(Length::Fill)
-            .max_height(UPDATE_CHANGELOG_MAX_HEIGHT)
-            .clip(true)
-    ]
-    .spacing(6)
+    container(
+        column![
+            text("CHANGELOG")
+                .size(10)
+                .font(theme::BOLD_FONT)
+                .color(theme::FAINT),
+            container(changelog_scroll)
+                .width(Length::Fill)
+                .max_height(UPDATE_CHANGELOG_MAX_HEIGHT)
+                .clip(true)
+        ]
+        .spacing(10),
+    )
+    .padding(14)
     .width(Length::Fill)
+    .style(|_| {
+        filled(theme::BG).border(iced::Border {
+            color: theme::LINE,
+            width: 1.0,
+            radius: 10.0.into(),
+        })
+    })
     .into()
 }
 
@@ -1223,10 +1575,13 @@ fn image_viewer_overlay(
     };
 
     let header = row![
-        text(&image_to_view.title).size(18).width(Length::Fill),
+        text(&image_to_view.title)
+            .size(18)
+            .font(theme::DISPLAY_FONT)
+            .width(Length::Fill),
         status,
-        button(text("x").size(18))
-            .padding([6, 12])
+        button(theme::icon(theme::Icon::X, 16.0, theme::TEXT))
+            .padding(8)
             .on_press(Message::CloseImageViewer)
     ]
     .spacing(12)
@@ -1249,19 +1604,19 @@ fn image_viewer_overlay(
     .padding(14)
     .width(Length::Fill)
     .height(Length::Fill)
-    .style(image_viewer_panel_style);
+    .style(|_| {
+        filled(theme::SURFACE).border(iced::Border {
+            color: theme::LINE,
+            width: 1.0,
+            radius: 16.0.into(),
+        })
+    });
 
     opaque(
         container(prompt)
             .padding(28)
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(add_account_prompt_scrim_style),
+            .style(|_| filled(DIALOG_SCRIM)),
     )
-}
-
-fn image_viewer_panel_style(theme: &Theme) -> iced::widget::container::Style {
-    let mut style = iced::widget::container::bordered_box(theme);
-    style.background = Some(Color::from_rgba8(10, 12, 16, 0.96).into());
-    style
 }

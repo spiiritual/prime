@@ -160,6 +160,8 @@ impl PrimeApp {
 
     fn dialog_open(&self) -> bool {
         self.show_add_account_prompt
+            || self.login_capture.is_some()
+            || self.pending_account.is_some()
             || self.show_import_account_prompt
             || self.exported_account.is_some()
             || self.confirm_delete_account.is_some()
@@ -179,6 +181,13 @@ impl PrimeApp {
             Message::CloseImageViewer
         } else if self.show_add_account_prompt {
             Message::CancelAddAccountCapture
+        } else if let Some(capture) = &self.login_capture {
+            // Like the dialog's Cancel, only once Riot Client is open and waiting for a sign-in.
+            capture.wait.as_ref()?;
+            Message::CancelLoginCapture
+        } else if self.pending_account.is_some() {
+            // Cancelling throws the captured login away, so it takes the button, not a stray key.
+            return None;
         } else if self.show_import_account_prompt {
             Message::CancelImportAccount
         } else if self.exported_account.is_some() {

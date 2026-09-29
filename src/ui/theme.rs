@@ -4,8 +4,8 @@
 use iced::theme::Palette;
 use iced::theme::palette::{Extended, Pair};
 use iced::widget::button::{Status, Style};
-use iced::widget::svg;
-use iced::{Border, Color, Element, Font, Theme, color, font};
+use iced::widget::{row, svg, text};
+use iced::{Border, Color, Element, Font, Theme, alignment, color, font};
 
 use super::Message;
 
@@ -100,6 +100,95 @@ pub(super) fn button_style(_: &Theme, status: Status) -> Style {
     }
 }
 
+/// The one main action in a dialog or header: light fill, dark text.
+pub(super) fn primary_button_style(_: &Theme, status: Status) -> Style {
+    solid_button_style(TEXT, status)
+}
+
+/// A destructive main action.
+pub(super) fn danger_button_style(_: &Theme, status: Status) -> Style {
+    solid_button_style(ACCENT, status)
+}
+
+/// A main action that installs or confirms something good, such as an update.
+pub(super) fn success_button_style(_: &Theme, status: Status) -> Style {
+    solid_button_style(OK, status)
+}
+
+fn solid_button_style(color: Color, status: Status) -> Style {
+    let alpha = match status {
+        Status::Active => 1.0,
+        Status::Hovered | Status::Pressed => 0.85,
+        Status::Disabled => 0.4,
+    };
+
+    Style {
+        background: Some(Color { a: alpha, ..color }.into()),
+        text_color: Color { a: alpha, ..BG },
+        border: Border {
+            radius: 8.0.into(),
+            ..Border::default()
+        },
+        ..Style::default()
+    }
+}
+
+/// A button label with a leading icon, in the button's text colour.
+pub(super) fn icon_label<'a>(
+    icon_kind: Icon,
+    label: &'a str,
+    color: Color,
+) -> Element<'a, Message> {
+    row![
+        icon(icon_kind, 14.0, color),
+        text(label).size(13).font(BOLD_FONT)
+    ]
+    .spacing(7)
+    .align_y(alignment::Vertical::Center)
+    .into()
+}
+
+/// Iced's `text_input` in the design's field style.
+pub(super) fn text_input<'a>(
+    placeholder: &str,
+    value: &str,
+) -> iced::widget::TextInput<'a, Message> {
+    iced::widget::text_input(placeholder, value)
+        .padding([10, 12])
+        .size(13)
+        .style(input_style)
+}
+
+fn input_style(
+    _: &Theme,
+    status: iced::widget::text_input::Status,
+) -> iced::widget::text_input::Style {
+    use iced::widget::text_input::{Status, Style};
+
+    let border_color = match status {
+        Status::Focused { .. } => ACCENT,
+        Status::Hovered => FAINT,
+        Status::Active | Status::Disabled => LINE,
+    };
+
+    Style {
+        background: BG.into(),
+        border: Border {
+            color: border_color,
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        icon: MUTED,
+        placeholder: FAINT,
+        value: if matches!(status, Status::Disabled) {
+            MUTED
+        } else {
+            TEXT
+        },
+        selection: Color { a: 0.35, ..ACCENT },
+    }
+}
+
 /// One of a set of choices, such as a sidebar tab: flat until hovered, filled when selected.
 /// Ignores `Disabled`, because the selected choice is usually the one that can't be pressed.
 pub(super) fn choice_style(_: &Theme, status: Status, selected: bool) -> Style {
@@ -126,32 +215,50 @@ pub(super) fn choice_style(_: &Theme, status: Status, selected: bool) -> Style {
 pub(super) enum Icon {
     /// Prime's own mark, not a Lucide icon.
     Logo,
+    ArrowRight,
     Check,
     ChevronsUpDown,
+    Download,
+    Eraser,
     Info,
+    MousePointerClick,
+    Play,
     Plus,
+    Power,
     Settings,
     Settings2,
     ShoppingBag,
     Swords,
+    Trash,
     TriangleAlert,
     Users,
+    X,
 }
 
 impl Icon {
     fn svg(self) -> &'static [u8] {
         match self {
             Icon::Logo => include_bytes!("../../assets/logo.svg"),
+            Icon::ArrowRight => include_bytes!("../../assets/icons/arrow-right.svg"),
             Icon::Check => include_bytes!("../../assets/icons/check.svg"),
             Icon::ChevronsUpDown => include_bytes!("../../assets/icons/chevrons-up-down.svg"),
+            Icon::Download => include_bytes!("../../assets/icons/download.svg"),
+            Icon::Eraser => include_bytes!("../../assets/icons/eraser.svg"),
             Icon::Info => include_bytes!("../../assets/icons/info.svg"),
+            Icon::MousePointerClick => {
+                include_bytes!("../../assets/icons/mouse-pointer-click.svg")
+            }
+            Icon::Play => include_bytes!("../../assets/icons/play.svg"),
             Icon::Plus => include_bytes!("../../assets/icons/plus.svg"),
+            Icon::Power => include_bytes!("../../assets/icons/power.svg"),
             Icon::Settings => include_bytes!("../../assets/icons/settings.svg"),
             Icon::Settings2 => include_bytes!("../../assets/icons/settings-2.svg"),
             Icon::ShoppingBag => include_bytes!("../../assets/icons/shopping-bag.svg"),
             Icon::Swords => include_bytes!("../../assets/icons/swords.svg"),
+            Icon::Trash => include_bytes!("../../assets/icons/trash-2.svg"),
             Icon::TriangleAlert => include_bytes!("../../assets/icons/triangle-alert.svg"),
             Icon::Users => include_bytes!("../../assets/icons/users.svg"),
+            Icon::X => include_bytes!("../../assets/icons/x.svg"),
         }
     }
 }
