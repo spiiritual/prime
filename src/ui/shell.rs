@@ -385,7 +385,7 @@ impl PrimeApp {
     fn header_gap(&self) -> f32 {
         match self.active_tab {
             Tab::Accounts => 20.0,
-            Tab::Shop if screens::fills_page(self, Tab::Shop) => 20.0,
+            _ if screens::fills_page(self, self.active_tab) => 20.0,
             Tab::Shop => 26.0,
             Tab::Loadout if self.active_loadout_tab == LoadoutTab::BattlePass => 26.0,
             Tab::Loadout => 20.0,

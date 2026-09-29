@@ -3,8 +3,8 @@ use iced::widget::{Row, column, container, row, space, stack};
 use iced::{Color, Element, Length, Padding, alignment};
 
 use crate::ui::components::{
-    asset_background_image, asset_image, currency_dot, high_res_image_source, radial_glow,
-    skeleton, unavailable_state,
+    asset_background_image, asset_image, card_style, currency_dot, high_res_image_source, mono,
+    outlined, radial_glow, skeleton, unavailable_state,
 };
 use crate::ui::data::shop::{
     AccessoryKind, OfferPrice, RarityTier, StoreAccessoryDisplay, StoreBundleDisplay,
@@ -51,12 +51,12 @@ fn shop(summary: &StoreSummary, now: iced::time::Instant) -> Element<'_, Message
     let mut page = column![
         section(
             "Featured bundles",
-            Some(summary.bundle_remaining_seconds_at(now)),
+            Some(countdown(summary.bundle_remaining_seconds_at(now))),
             bundle_row(summary, now),
         ),
         section(
             "Daily offers",
-            Some(summary.daily_remaining_seconds_at(now)),
+            Some(countdown(summary.daily_remaining_seconds_at(now))),
             offer_row(&summary.daily_offers, false),
         ),
     ]
@@ -68,7 +68,7 @@ fn shop(summary: &StoreSummary, now: iced::time::Instant) -> Element<'_, Message
             "Accessory Store",
             summary
                 .accessory_remaining_seconds
-                .map(|_| summary.accessory_remaining_seconds_at(now)),
+                .map(|_| countdown(summary.accessory_remaining_seconds_at(now))),
             accessory_row(&summary.accessory_offers),
         ));
     }
@@ -78,7 +78,7 @@ fn shop(summary: &StoreSummary, now: iced::time::Instant) -> Element<'_, Message
     } else {
         section(
             "Night Market",
-            Some(summary.night_market_remaining_seconds_at(now)),
+            Some(countdown(summary.night_market_remaining_seconds_at(now))),
             offer_row(&summary.night_market_offers, true),
         )
     });
@@ -86,30 +86,30 @@ fn shop(summary: &StoreSummary, now: iced::time::Instant) -> Element<'_, Message
     page.into()
 }
 
-/// A section's title, its countdown on the right, and its cards.
+/// A section's title, its countdown (or a placeholder for it) on the right, and its cards.
 fn section<'a>(
     title: &'a str,
-    remaining_seconds: Option<i64>,
+    right: Option<Element<'a, Message>>,
     body: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    let mut head = row![
+    let head = row![
         text(title).size(15).font(theme::SEMIBOLD_FONT),
         space().width(Length::Fill),
     ]
+    .push(right)
     .align_y(alignment::Vertical::Center);
 
-    if let Some(seconds) = remaining_seconds {
-        head = head.push(
-            row![
-                theme::icon(Icon::Timer, 13.0, theme::FAINT),
-                mono(format_countdown(seconds), 12).color(theme::MUTED),
-            ]
-            .spacing(6)
-            .align_y(alignment::Vertical::Center),
-        );
-    }
-
     column![head, body].spacing(10).into()
+}
+
+fn countdown<'a>(seconds: i64) -> Element<'a, Message> {
+    row![
+        theme::icon(Icon::Timer, 13.0, theme::FAINT),
+        mono(format_countdown(seconds), 12).color(theme::MUTED),
+    ]
+    .spacing(6)
+    .align_y(alignment::Vertical::Center)
+    .into()
 }
 
 fn bundle_row(summary: &StoreSummary, now: iced::time::Instant) -> Element<'_, Message> {
@@ -149,7 +149,7 @@ fn bundle_card<'a>(
     let remaining = summary.featured_bundle_remaining_seconds_at(bundle, now);
     let mut kicker = vec![bundle.item_count_label()];
     // A bundle leaving before the section resets says so; the others name their tier.
-    if bundle.remaining_seconds.is_some() && remaining < summary.bundle_remaining_seconds_at(now) {
+    if remaining < summary.bundle_remaining_seconds_at(now) {
         kicker.push(format!("leaves in {}", format_time_left(remaining)));
     } else if let Some(tier) = bundle.rarity.as_deref().and_then(RarityTier::from_name) {
         kicker.push(tier.label().to_string());
@@ -279,7 +279,6 @@ fn offer_card(offer: &StoreOfferDisplay, night_market: bool) -> Element<'_, Mess
 
     let mut art = stack![
         radial_glow(
-            theme::SURFACE,
             tier_color,
             OFFER_GLOW_ALPHA,
             0.6,
@@ -398,14 +397,7 @@ fn accessory_card(offer: &StoreAccessoryDisplay) -> Element<'_, Message> {
             )
         };
     let thumb = stack![
-        radial_glow(
-            theme::SURFACE,
-            theme::GOLD,
-            ACCESSORY_GLOW_ALPHA,
-            0.5,
-            (1.4, 1.4),
-            [8.0; 4],
-        ),
+        radial_glow(theme::GOLD, ACCESSORY_GLOW_ALPHA, 0.5, (1.4, 1.4), [8.0; 4],),
         container(picture).padding(8).center(Length::Fill),
     ]
     .width(ACCESSORY_THUMB_SIZE)
@@ -448,13 +440,7 @@ fn night_market_closed<'a>() -> Element<'a, Message> {
     )
     .padding([14, 16])
     .width(Length::Fill)
-    .style(|_| {
-        container::Style::default().border(iced::Border {
-            color: theme::LINE,
-            width: 1.0,
-            radius: 10.0.into(),
-        })
-    })
+    .style(|_| outlined(10.0))
     .into()
 }
 
@@ -467,18 +453,7 @@ fn loading<'a>() -> Element<'a, Message> {
         .spacing(10)
         .into()
     };
-    let placeholder = |title: &'static str, body: Element<'a, Message>| {
-        column![
-            row![
-                text(title).size(15).font(theme::SEMIBOLD_FONT),
-                space().width(Length::Fill),
-                skeleton(74, 14.0, 4.0, 1.0),
-            ]
-            .align_y(alignment::Vertical::Center),
-            body,
-        ]
-        .spacing(10)
-    };
+    let placeholder = |title, body| section(title, Some(skeleton(74, 14.0, 4.0, 1.0)), body);
 
     column![
         placeholder("Featured bundles", fading_row(2, BUNDLE_HEIGHT)),
@@ -552,27 +527,7 @@ fn price(price: Option<&OfferPrice>) -> Element<'_, Message> {
     }
 }
 
-fn mono<'a>(
-    content: impl iced::widget::text::IntoFragment<'a>,
-    size: u32,
-) -> iced::widget::Text<'a> {
-    text(content)
-        .size(size)
-        .font(theme::MONO_FONT)
-        .line_height(theme::MONO_LINE_HEIGHT)
-}
-
 fn tier_color(tier: RarityTier) -> Color {
     let [red, green, blue] = tier.highlight_rgb();
     Color::from_rgb8(red, green, blue)
-}
-
-fn card_style(radius: f32) -> container::Style {
-    container::Style::default()
-        .background(theme::SURFACE)
-        .border(iced::Border {
-            color: theme::LINE,
-            width: 1.0,
-            radius: radius.into(),
-        })
 }

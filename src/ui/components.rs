@@ -494,24 +494,10 @@ pub(super) fn unavailable_state<'a>(
                 })
                 .border(iced::border::rounded(14))
         });
-    let detail = container(
-        text(detail)
-            .size(11)
-            .font(theme::MONO_FONT)
-            .line_height(theme::MONO_LINE_HEIGHT)
-            .color(theme::FAINT),
-    )
-    .padding([8, 12])
-    .max_width(560)
-    .style(|_| {
-        container::Style::default()
-            .background(theme::SURFACE)
-            .border(iced::Border {
-                color: theme::LINE,
-                width: 1.0,
-                radius: 8.0.into(),
-            })
-    });
+    let detail = container(mono(detail, 11).color(theme::FAINT))
+        .padding([8, 12])
+        .max_width(560)
+        .style(|_| card_style(8.0));
 
     container(
         column![
@@ -536,6 +522,31 @@ pub(super) fn unavailable_state<'a>(
     .into()
 }
 
+/// Text in the monospaced font, at its own line height.
+pub(super) fn mono<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+    size: u32,
+) -> iced::widget::Text<'a> {
+    text(content)
+        .size(size)
+        .font(theme::MONO_FONT)
+        .line_height(theme::MONO_LINE_HEIGHT)
+}
+
+/// A box drawn only as its 1px outline.
+pub(super) fn outlined(radius: f32) -> container::Style {
+    container::Style::default().border(iced::Border {
+        color: theme::LINE,
+        width: 1.0,
+        radius: radius.into(),
+    })
+}
+
+/// An outlined card on the surface colour.
+pub(super) fn card_style(radius: f32) -> container::Style {
+    outlined(radius).background(theme::SURFACE)
+}
+
 /// A placeholder block while content loads.
 pub(super) fn skeleton<'a>(
     width: impl Into<Length>,
@@ -557,11 +568,10 @@ pub(super) fn skeleton<'a>(
         .into()
 }
 
-/// A soft radial glow of `color` over an opaque `base`, filling its space, drawn as SVG because
-/// Iced's own gradients are linear only. `center_y` and `scale` are fractions of the box, as the
-/// design sets them; `radii` round the corners clockwise from the top left.
+/// A soft radial glow of `color` over the opaque surface colour, filling its space, drawn as SVG
+/// because Iced's own gradients are linear only. `center_y` and `scale` are fractions of the box,
+/// as the design sets them; `radii` round the corners clockwise from the top left.
 pub(super) fn radial_glow<'a>(
-    base: Color,
     color: Color,
     alpha: f32,
     center_y: f32,
@@ -572,7 +582,7 @@ pub(super) fn radial_glow<'a>(
         let [red, green, blue, _] = color.into_rgba8();
         format!("#{red:02x}{green:02x}{blue:02x}")
     };
-    let (base, color) = (hex(base), hex(color));
+    let (base, color) = (hex(theme::SURFACE), hex(color));
     let (scale_x, scale_y) = scale;
     let [top_left, top_right, bottom_right, bottom_left] = radii;
 
@@ -772,13 +782,7 @@ pub(super) fn currency_balance_display(summary: &StoreSummary) -> Element<'_, Me
 pub(super) fn balances_unavailable<'a>() -> Element<'a, Message> {
     container(text("Balances unavailable").size(12).color(theme::FAINT))
         .padding([8, 12])
-        .style(|_| {
-            container::Style::default().border(iced::Border {
-                color: theme::LINE,
-                width: 1.0,
-                radius: 10.0.into(),
-            })
-        })
+        .style(|_| outlined(10.0))
         .into()
 }
 
