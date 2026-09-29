@@ -56,6 +56,14 @@ pub(super) const DISPLAY_FONT: Font = Font {
     ..Font::with_name("Space Grotesk")
 };
 pub(super) const MONO_FONT: Font = Font::with_name("JetBrains Mono");
+pub(super) const MONO_SEMIBOLD_FONT: Font = Font {
+    weight: iced::font::Weight::Semibold,
+    ..MONO_FONT
+};
+pub(super) const MONO_BOLD_FONT: Font = Font {
+    weight: iced::font::Weight::Bold,
+    ..MONO_FONT
+};
 
 pub(super) fn theme() -> Theme {
     let palette = Palette {
@@ -260,8 +268,10 @@ pub(super) enum Icon {
     Eraser,
     FolderOpen,
     Info,
+    Moon,
     MousePointerClick,
     Play,
+    PlugZap,
     Plus,
     Power,
     RefreshCw,
@@ -270,6 +280,7 @@ pub(super) enum Icon {
     ShoppingBag,
     Sparkles,
     Swords,
+    Timer,
     Trash,
     TriangleAlert,
     Users,
@@ -291,10 +302,12 @@ impl Icon {
             Icon::Eraser => include_bytes!("../../assets/icons/eraser.svg"),
             Icon::FolderOpen => include_bytes!("../../assets/icons/folder-open.svg"),
             Icon::Info => include_bytes!("../../assets/icons/info.svg"),
+            Icon::Moon => include_bytes!("../../assets/icons/moon.svg"),
             Icon::MousePointerClick => {
                 include_bytes!("../../assets/icons/mouse-pointer-click.svg")
             }
             Icon::Play => include_bytes!("../../assets/icons/play.svg"),
+            Icon::PlugZap => include_bytes!("../../assets/icons/plug-zap.svg"),
             Icon::Plus => include_bytes!("../../assets/icons/plus.svg"),
             Icon::Power => include_bytes!("../../assets/icons/power.svg"),
             Icon::RefreshCw => include_bytes!("../../assets/icons/refresh-cw.svg"),
@@ -303,6 +316,7 @@ impl Icon {
             Icon::ShoppingBag => include_bytes!("../../assets/icons/shopping-bag.svg"),
             Icon::Sparkles => include_bytes!("../../assets/icons/sparkles.svg"),
             Icon::Swords => include_bytes!("../../assets/icons/swords.svg"),
+            Icon::Timer => include_bytes!("../../assets/icons/timer.svg"),
             Icon::Trash => include_bytes!("../../assets/icons/trash-2.svg"),
             Icon::TriangleAlert => include_bytes!("../../assets/icons/triangle-alert.svg"),
             Icon::Users => include_bytes!("../../assets/icons/users.svg"),

@@ -3750,6 +3750,20 @@ fn a_failed_shop_load_is_kept_for_the_retry_panel() {
 }
 
 #[test]
+fn only_a_failed_shop_with_no_retry_running_fills_the_page() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, _) = two_account_app(dir.path());
+    app.store_error = Some("boom".to_string());
+
+    assert!(super::screens::fills_page(&app, super::Tab::Shop));
+    assert!(!super::screens::fills_page(&app, super::Tab::Loadout));
+
+    let _ = app.update(Message::RetryShop);
+
+    assert!(!super::screens::fills_page(&app, super::Tab::Shop));
+}
+
+#[test]
 fn trying_the_shop_again_starts_a_new_load() {
     let dir = tempdir().expect("temp dir");
     let (mut app, _, _) = two_account_app(dir.path());

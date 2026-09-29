@@ -8,7 +8,8 @@ use crate::account::AccountProfile;
 use crate::game_settings::{GameSettingsProfileMetadata, GameSettingsProfilePurpose};
 
 use super::components::{
-    anchored_popover, compact_loading_indicator, currency_balance_display, loading_indicator,
+    anchored_popover, balances_unavailable, compact_loading_indicator, currency_balance_display,
+    loading_indicator, wallet_skeleton,
 };
 use super::theme::{self, button, text};
 use super::{
@@ -340,6 +341,18 @@ impl PrimeApp {
         let active_tab = self.active_tab;
         let status_visible = status_bar_visible(self);
         let body = screens::tab(self, self.active_tab);
+        if screens::fills_page(self, active_tab) {
+            // The same inset as the scrolling page, so both centre on the same space.
+            let body = container(body).padding(Padding {
+                top: 0.0,
+                right: 18.0,
+                bottom: 28.0,
+                left: 0.0,
+            });
+            return column![self.main_header(), body]
+                .spacing(self.header_gap())
+                .into();
+        }
         let scroll_body = container(body)
             .padding(Padding {
                 top: 0.0,
@@ -372,6 +385,7 @@ impl PrimeApp {
     fn header_gap(&self) -> f32 {
         match self.active_tab {
             Tab::Accounts => 20.0,
+            Tab::Shop if screens::fills_page(self, Tab::Shop) => 20.0,
             Tab::Shop => 26.0,
             Tab::Loadout if self.active_loadout_tab == LoadoutTab::BattlePass => 26.0,
             Tab::Loadout => 20.0,
@@ -385,15 +399,19 @@ impl PrimeApp {
             .font(theme::DISPLAY_FONT)
             .line_height(theme::DISPLAY_LINE_HEIGHT);
 
-        let header: Element<_> = match (&self.store_summary, self.active_tab) {
-            (Some(summary), Tab::Shop) => row![
-                container(title).width(Length::Fill),
-                currency_balance_display(summary)
-            ]
-            .spacing(12)
-            .align_y(alignment::Vertical::Center)
-            .into(),
-            _ => title.into(),
+        let wallet = match &self.store_summary {
+            _ if self.active_tab != Tab::Shop => None,
+            Some(summary) => Some(currency_balance_display(summary)),
+            None if self.store_request.is_some() => Some(wallet_skeleton()),
+            None if self.store_error.is_some() => Some(balances_unavailable()),
+            None => None,
+        };
+        let header: Element<_> = match wallet {
+            Some(wallet) => row![container(title).width(Length::Fill), wallet]
+                .spacing(12)
+                .align_y(alignment::Vertical::Center)
+                .into(),
+            None => title.into(),
         };
 
         container(header)

@@ -11,7 +11,9 @@ use iced::{
     alignment,
 };
 
-use super::data::shop::{CurrencyBalanceDisplay, StoreSummary, format_whole_number};
+use super::data::shop::{
+    CurrencyBalanceDisplay, CurrencyDisplay, StoreSummary, format_whole_number,
+};
 use super::theme::{self, button, text};
 use super::{ImageViewerRequest, ImageViewerSource, Message, image_viewer_enabled};
 
@@ -352,6 +354,7 @@ pub(super) fn asset_image<'a>(
 pub(super) fn asset_background_image<'a>(
     path: Option<&'a PathBuf>,
     height: f32,
+    radius: f32,
     title: impl Into<String>,
     high_res: Option<ImageViewerSource>,
 ) -> Element<'a, Message> {
@@ -362,6 +365,7 @@ pub(super) fn asset_background_image<'a>(
             image(Handle::from_path(path.clone()))
                 .width(Length::Fill)
                 .height(height)
+                .border_radius(radius)
                 .content_fit(ContentFit::Cover),
             path,
             height,
@@ -465,6 +469,139 @@ pub(super) fn load_error_panel(
     .padding(16)
     .width(Length::Fill)
     .style(container::bordered_box)
+    .into()
+}
+
+/// A page that couldn't load, centred in the space the page would fill: an icon, what failed,
+/// what to do, the actions, and the raw error for reference.
+pub(super) fn unavailable_state<'a>(
+    icon: theme::Icon,
+    title: &'a str,
+    body: String,
+    actions: Vec<Element<'a, Message>>,
+    detail: &'a str,
+) -> Element<'a, Message> {
+    let badge = container(theme::icon(icon, 24.0, theme::ACCENT))
+        .width(52)
+        .height(52)
+        .center_x(52)
+        .center_y(52)
+        .style(|_| {
+            container::Style::default()
+                .background(Color {
+                    a: 0x1F as f32 / 255.0,
+                    ..theme::ACCENT
+                })
+                .border(iced::border::rounded(14))
+        });
+    let detail = container(
+        text(detail)
+            .size(11)
+            .font(theme::MONO_FONT)
+            .line_height(theme::MONO_LINE_HEIGHT)
+            .color(theme::FAINT),
+    )
+    .padding([8, 12])
+    .max_width(560)
+    .style(|_| {
+        container::Style::default()
+            .background(theme::SURFACE)
+            .border(iced::Border {
+                color: theme::LINE,
+                width: 1.0,
+                radius: 8.0.into(),
+            })
+    });
+
+    container(
+        column![
+            badge,
+            text(title)
+                .size(20)
+                .font(theme::DISPLAY_FONT)
+                .line_height(theme::DISPLAY_LINE_HEIGHT),
+            text(body)
+                .size(13)
+                .line_height(1.5)
+                .color(theme::MUTED)
+                .width(440)
+                .align_x(alignment::Horizontal::Center),
+            Row::with_children(actions).spacing(8),
+            detail,
+        ]
+        .spacing(14)
+        .align_x(alignment::Horizontal::Center),
+    )
+    .center(Length::Fill)
+    .into()
+}
+
+/// A placeholder block while content loads.
+pub(super) fn skeleton<'a>(
+    width: impl Into<Length>,
+    height: f32,
+    radius: f32,
+    opacity: f32,
+) -> Element<'a, Message> {
+    container(space())
+        .width(width)
+        .height(height)
+        .style(move |_| {
+            container::Style::default()
+                .background(Color {
+                    a: opacity,
+                    ..theme::RAISED
+                })
+                .border(iced::border::rounded(radius))
+        })
+        .into()
+}
+
+/// A soft radial glow of `color` over an opaque `base`, filling its space, drawn as SVG because
+/// Iced's own gradients are linear only. `center_y` and `scale` are fractions of the box, as the
+/// design sets them; `radii` round the corners clockwise from the top left.
+pub(super) fn radial_glow<'a>(
+    base: Color,
+    color: Color,
+    alpha: f32,
+    center_y: f32,
+    scale: (f32, f32),
+    radii: [f32; 4],
+) -> Element<'a, Message> {
+    let hex = |color: Color| {
+        let [red, green, blue, _] = color.into_rgba8();
+        format!("#{red:02x}{green:02x}{blue:02x}")
+    };
+    let (base, color) = (hex(base), hex(color));
+    let (scale_x, scale_y) = scale;
+    let [top_left, top_right, bottom_right, bottom_left] = radii;
+
+    // Iced rasterizes an SVG at its own aspect ratio, so the SVG takes the box's size. It also
+    // blends the rasterized pixels as if they weren't premultiplied, which fades anything
+    // translucent twice, so the glow is painted over its opaque base instead of left see-through.
+    iced::widget::responsive(move |size| {
+        let (width, height) = (size.width.max(1.0), size.height.max(1.0));
+        let shape = format!(
+            "M{top_left} 0H{}A{top_right} {top_right} 0 0 1 {width} {top_right}V{}             A{bottom_right} {bottom_right} 0 0 1 {} {height}H{bottom_left}             A{bottom_left} {bottom_left} 0 0 1 0 {}V{top_left}A{top_left} {top_left} 0 0 1 {top_left} 0Z",
+            width - top_right,
+            height - bottom_right,
+            width - bottom_right,
+            height - bottom_left,
+        );
+        let svg_source = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">
+<defs><radialGradient id="g" cx="0.5" cy="{center_y}" r="0.5"
+gradientTransform="translate(0.5 {center_y}) scale({scale_x} {scale_y}) translate(-0.5 -{center_y})">
+<stop offset="0" stop-color="{color}" stop-opacity="{alpha}"/>
+<stop offset="1" stop-color="{color}" stop-opacity="0"/>
+</radialGradient></defs><path d="{shape}" fill="{base}"/><path d="{shape}" fill="url(#g)"/></svg>"##
+        );
+
+        iced::widget::svg(iced::widget::svg::Handle::from_memory(svg_source.into_bytes()))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    })
     .into()
 }
 
@@ -625,15 +762,35 @@ fn loading_shape_style(intensity: f32, radius: f32) -> iced::widget::container::
 
 pub(super) fn currency_balance_display(summary: &StoreSummary) -> Element<'_, Message> {
     if summary.currency_balances.is_empty() {
-        let label = if summary.currency_balance_error.is_some() {
-            "Currency balances unavailable"
-        } else {
-            "No currency balances returned"
-        };
-        text(label).size(14).into()
+        balances_unavailable()
     } else {
         currency_balance_row(&summary.currency_balances)
     }
+}
+
+/// The wallet's place in the header when there are no balances to show.
+pub(super) fn balances_unavailable<'a>() -> Element<'a, Message> {
+    container(text("Balances unavailable").size(12).color(theme::FAINT))
+        .padding([8, 12])
+        .style(|_| {
+            container::Style::default().border(iced::Border {
+                color: theme::LINE,
+                width: 1.0,
+                radius: 10.0.into(),
+            })
+        })
+        .into()
+}
+
+/// Skeleton pills in the wallet's place while the shop loads.
+pub(super) fn wallet_skeleton<'a>() -> Element<'a, Message> {
+    row![
+        skeleton(92, 34.0, 8.0, 1.0),
+        skeleton(64, 34.0, 8.0, 1.0),
+        skeleton(84, 34.0, 8.0, 1.0),
+    ]
+    .spacing(8)
+    .into()
 }
 
 fn currency_balance_row<'a>(balances: &'a [CurrencyBalanceDisplay]) -> Element<'a, Message> {
@@ -653,26 +810,41 @@ fn currency_balance_row<'a>(balances: &'a [CurrencyBalanceDisplay]) -> Element<'
         .into()
 }
 
-fn currency_balance_chip(balance: &CurrencyBalanceDisplay) -> Element<'_, Message> {
-    // The wallet already names its currencies VP, Radianite and Kingdom Credits.
-    let (short_name, color) = match balance.currency.display_name.as_str() {
+/// A currency's short name and colour. The wallet already names its currencies VP, Radianite and
+/// Kingdom Credits.
+fn currency_style(currency: &CurrencyDisplay) -> (&str, Color) {
+    match currency.display_name.as_str() {
         "VP" => ("VP", theme::ACCENT),
         "Radianite" => ("RAD", RADIANITE_COLOR),
         "Kingdom Credits" => ("KC", theme::GOLD),
         other => (other, theme::MUTED),
-    };
-    let dot = container(space()).width(8).height(8).style(move |_| {
-        iced::widget::container::Style::default()
-            .background(color)
-            .border(iced::border::rounded(4))
-    });
+    }
+}
+
+/// The small round currency marker in front of an amount.
+pub(super) fn currency_dot<'a>(currency: &CurrencyDisplay, size: f32) -> Element<'a, Message> {
+    let (_, color) = currency_style(currency);
+
+    container(space())
+        .width(size)
+        .height(size)
+        .style(move |_| {
+            iced::widget::container::Style::default()
+                .background(color)
+                .border(iced::border::rounded(size / 2.0))
+        })
+        .into()
+}
+
+fn currency_balance_chip(balance: &CurrencyBalanceDisplay) -> Element<'_, Message> {
+    let (short_name, _) = currency_style(&balance.currency);
 
     container(
         row![
-            dot,
+            currency_dot(&balance.currency, 8.0),
             text(format_whole_number(balance.amount))
                 .size(13)
-                .font(theme::MONO_FONT)
+                .font(theme::MONO_SEMIBOLD_FONT)
                 .line_height(theme::MONO_LINE_HEIGHT),
             text(short_name)
                 .size(11)

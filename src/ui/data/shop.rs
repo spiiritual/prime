@@ -191,7 +191,6 @@ impl StoreSummary {
         remaining_seconds_at(self.daily_remaining_seconds, self.loaded_at, now)
     }
 
-    #[cfg(test)]
     pub(in crate::ui) fn bundle_remaining_seconds_at(&self, now: iced::time::Instant) -> i64 {
         remaining_seconds_at(self.bundle_remaining_seconds, self.loaded_at, now)
     }
@@ -294,7 +293,42 @@ impl StoreOfferDisplay {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct StoreAccessoryDisplay {
     pub(in crate::ui) accessory: AccessoryDisplay,
+    pub(in crate::ui) kind: Option<AccessoryKind>,
     pub(in crate::ui) price: Option<OfferPrice>,
+}
+
+/// What an accessory offer gives, from the store's item type.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum AccessoryKind {
+    Buddy,
+    Spray,
+    PlayerCard,
+    Title,
+    Flex,
+}
+
+impl AccessoryKind {
+    /// Riot's item type IDs, as listed at valapidocs.techchrism.me.
+    fn from_item_type_id(id: &str) -> Option<Self> {
+        match id.to_ascii_lowercase().as_str() {
+            "dd3bf334-87f3-40bd-b043-682a57a8dc3a" => Some(Self::Buddy),
+            "d5f120f8-ff8c-4aac-92ea-f2b5acbe9475" => Some(Self::Spray),
+            "3f296c07-64c3-494c-923b-fe692a4fa1bd" => Some(Self::PlayerCard),
+            "de7caa6b-adf7-4588-bbd1-143831e786c6" => Some(Self::Title),
+            "03a572de-4234-31ed-d344-ababa488f981" => Some(Self::Flex),
+            _ => None,
+        }
+    }
+
+    pub(in crate::ui) fn label(self) -> &'static str {
+        match self {
+            Self::Buddy => "Gun Buddy",
+            Self::Spray => "Spray",
+            Self::PlayerCard => "Player Card",
+            Self::Title => "Title",
+            Self::Flex => "Flex",
+        }
+    }
 }
 
 impl StoreAccessoryDisplay {
@@ -350,6 +384,7 @@ pub(in crate::ui) struct OfferPrice {
 }
 
 impl OfferPrice {
+    #[cfg(test)]
     pub(in crate::ui) fn label(&self) -> String {
         format!(
             "{} {}",
@@ -493,15 +528,18 @@ pub(in crate::ui) fn accessory_store_offer_display(
     accessories: &AccessoryCatalog,
     currencies: &CurrencyCatalog,
 ) -> StoreAccessoryDisplay {
-    let accessory = offer
-        .offer
-        .rewards
-        .first()
+    let reward = offer.offer.rewards.first();
+    let accessory = reward
         .map(|reward| AccessoryDisplay::from(accessories.resolve(&reward.item_id)))
         .unwrap_or_else(|| AccessoryDisplay::from(accessories.resolve(&offer.offer.offer_id)));
+    let kind = reward.and_then(|reward| AccessoryKind::from_item_type_id(&reward.item_type_id));
     let price = offer_price(&offer.offer.cost, currencies);
 
-    StoreAccessoryDisplay { accessory, price }
+    StoreAccessoryDisplay {
+        accessory,
+        kind,
+        price,
+    }
 }
 
 pub(in crate::ui) fn store_bundle_display(
@@ -668,6 +706,16 @@ impl RarityTier {
         }
     }
 
+    pub(in crate::ui) fn label(self) -> &'static str {
+        match self {
+            Self::Select => "Select",
+            Self::Deluxe => "Deluxe",
+            Self::Premium => "Premium",
+            Self::Ultra => "Ultra",
+            Self::Exclusive => "Exclusive",
+        }
+    }
+
     /// The tier's highlight color in the game.
     pub(in crate::ui) fn highlight_rgb(self) -> [u8; 3] {
         match self {
@@ -826,6 +874,41 @@ pub(in crate::ui) fn format_duration(seconds: i64) -> String {
     }
 }
 
+/// A section's countdown as a clock, with days in front once there are any: "3d 04:12:55".
+pub(in crate::ui) fn format_countdown(seconds: i64) -> String {
+    let seconds = seconds.max(0);
+    let days = seconds / 86_400;
+    let clock = format!(
+        "{:02}:{:02}:{:02}",
+        (seconds % 86_400) / 3600,
+        (seconds % 3600) / 60,
+        seconds % 60
+    );
+
+    if days > 0 {
+        format!("{days}d {clock}")
+    } else {
+        clock
+    }
+}
+
+/// A short time left, to the two largest units: "1d 06h", "5h 21m" or "12m".
+pub(in crate::ui) fn format_time_left(seconds: i64) -> String {
+    let seconds = seconds.max(0);
+    let days = seconds / 86_400;
+    let hours = (seconds % 86_400) / 3600;
+    let minutes = (seconds % 3600) / 60;
+
+    if days > 0 {
+        format!("{days}d {hours:02}h")
+    } else if hours > 0 {
+        format!("{hours}h {minutes:02}m")
+    } else {
+        // Under a minute still reads as a minute rather than "0m".
+        format!("{}m", minutes.max(1))
+    }
+}
+
 pub(in crate::ui) async fn fetch_storefront(
     account: AccountProfile,
     client_version: String,
@@ -870,7 +953,34 @@ pub(in crate::ui) async fn fetch_storefront(
 
 #[cfg(test)]
 mod tests {
-    use super::format_duration;
+    use super::{AccessoryKind, format_countdown, format_duration, format_time_left};
+
+    #[test]
+    fn countdowns_read_as_a_clock_with_days_in_front() {
+        assert_eq!(
+            format_countdown(3 * 86_400 + 4 * 3600 + 12 * 60 + 55),
+            "3d 04:12:55"
+        );
+        assert_eq!(format_countdown(14 * 3600 + 22 * 60 + 7), "14:22:07");
+        assert_eq!(format_countdown(-5), "00:00:00");
+    }
+
+    #[test]
+    fn time_left_keeps_the_two_largest_units() {
+        assert_eq!(format_time_left(86_400 + 6 * 3600 + 59), "1d 06h");
+        assert_eq!(format_time_left(5 * 3600 + 21 * 60), "5h 21m");
+        assert_eq!(format_time_left(12 * 60 + 30), "12m");
+        assert_eq!(format_time_left(59), "1m");
+    }
+
+    #[test]
+    fn accessory_kind_comes_from_the_item_type_in_any_case() {
+        assert_eq!(
+            AccessoryKind::from_item_type_id("DD3BF334-87F3-40BD-B043-682A57A8DC3A"),
+            Some(AccessoryKind::Buddy)
+        );
+        assert_eq!(AccessoryKind::from_item_type_id("unknown"), None);
+    }
 
     #[test]
     fn format_duration_includes_ticking_seconds() {

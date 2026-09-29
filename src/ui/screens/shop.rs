@@ -1,209 +1,294 @@
-use iced::widget::{column, container, rich_text, span, stack};
-use iced::{Color, Element, Length, Theme, alignment};
+use iced::widget::text::Wrapping;
+use iced::widget::{Row, column, container, row, space, stack};
+use iced::{Color, Element, Length, Padding, alignment};
 
 use crate::ui::components::{
-    asset_background_image, asset_image, compact_item_name, high_res_image_source,
-    load_error_panel, loading_line,
+    asset_background_image, asset_image, currency_dot, high_res_image_source, radial_glow,
+    skeleton, unavailable_state,
 };
 use crate::ui::data::shop::{
-    OfferPrice, RarityTier, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
-    StoreSummary, format_duration,
+    AccessoryKind, OfferPrice, RarityTier, StoreAccessoryDisplay, StoreBundleDisplay,
+    StoreOfferDisplay, StoreSummary, format_countdown, format_time_left, format_whole_number,
 };
-use crate::ui::theme::{self, text};
+use crate::ui::theme::{self, Icon, button, text};
 use crate::ui::{Message, PrimeApp};
 
-const SHOP_ITEM_NAME_HEIGHT: f32 = 20.0;
-const SHOP_BUNDLE_NAME_HEIGHT: f32 = 24.0;
+const BUNDLE_HEIGHT: f32 = 176.0;
+/// With two featured bundles the design gives the second this width and the first the rest.
+const SECOND_BUNDLE_WIDTH: f32 = 380.0;
+const OFFER_ART_HEIGHT: f32 = 78.0;
+const ACCESSORY_THUMB_SIZE: f32 = 72.0;
+const NIGHT_MARKET_BADGE: Color = iced::color!(0xC79BFF);
+const NIGHT_MARKET_BADGE_TEXT: Color = iced::color!(0x150B22);
+/// The shade under a bundle's art that keeps its name readable.
+const BUNDLE_SCRIM: Color = theme::BG;
+/// An offer's glow, as a fraction of its tier colour's full strength.
+const OFFER_GLOW_ALPHA: f32 = 0x30 as f32 / 255.0;
+const ACCESSORY_GLOW_ALPHA: f32 = 0x28 as f32 / 255.0;
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
-    let mut content = column![].spacing(12).width(Length::Fill);
-
-    if app.store_request.is_some() {
-        content = content.push(loading_line("Loading shop...", app.loading_frame));
-    } else if let Some(error) = &app.store_error {
-        content = content.push(load_error_panel(
-            "Could not load the shop",
-            error,
-            Some(Message::RetryShop),
-        ));
-    } else if app.store_summary.is_none()
-        && let Some(waiting) = super::account_view_waiting(app, "shop")
-    {
-        content = content.push(waiting);
+    if fills_page(app) {
+        return load_error(app);
     }
 
     if let Some(summary) = &app.store_summary {
-        content = content
-            .push(text("Featured bundles"))
-            .push(bundle_row(summary, app.now))
-            .push(text(format!(
-                "Daily offers reset in {}",
-                format_duration(summary.daily_remaining_seconds_at(app.now))
-            )))
-            .push(offer_row(&summary.daily_offers));
-
-        if !summary.night_market_offers.is_empty() {
-            content = content
-                .push(text(format!(
-                    "Night Market expires in {}",
-                    format_duration(summary.night_market_remaining_seconds_at(app.now))
-                )))
-                .push(offer_row(&summary.night_market_offers));
-        }
-
-        if summary.accessory_remaining_seconds.is_some() || !summary.accessory_offers.is_empty() {
-            content = content
-                .push(text(format!(
-                    "Accessories reset in {}",
-                    format_duration(summary.accessory_remaining_seconds_at(app.now))
-                )))
-                .push(accessory_row(&summary.accessory_offers));
-        }
+        return shop(summary, app.now);
     }
 
-    container(content)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    if app.store_request.is_some() {
+        return loading();
+    }
+
+    super::account_view_waiting(app, "shop").unwrap_or_else(|| space().into())
 }
 
-fn offer_row<'a>(offers: &'a [StoreOfferDisplay]) -> Element<'a, Message> {
-    if offers.is_empty() {
-        return text("No offers available").into();
-    }
-
-    let mut cards = iced::widget::Row::new().spacing(10).width(Length::Fill);
-
-    for offer in offers {
-        cards = cards.push(store_offer_card(offer));
-    }
-
-    cards.into()
+/// The load error fills the page, centred, so it can't sit in the scrolling area.
+pub(super) fn fills_page(app: &PrimeApp) -> bool {
+    app.store_error.is_some() && app.store_request.is_none()
 }
 
-fn accessory_row<'a>(offers: &'a [StoreAccessoryDisplay]) -> Element<'a, Message> {
-    if offers.is_empty() {
-        return text("No accessories available").into();
+fn shop(summary: &StoreSummary, now: iced::time::Instant) -> Element<'_, Message> {
+    let mut page = column![
+        section(
+            "Featured bundles",
+            Some(summary.bundle_remaining_seconds_at(now)),
+            bundle_row(summary, now),
+        ),
+        section(
+            "Daily offers",
+            Some(summary.daily_remaining_seconds_at(now)),
+            offer_row(&summary.daily_offers, false),
+        ),
+    ]
+    .spacing(26)
+    .width(Length::Fill);
+
+    if !summary.accessory_offers.is_empty() {
+        page = page.push(section(
+            "Accessory Store",
+            summary
+                .accessory_remaining_seconds
+                .map(|_| summary.accessory_remaining_seconds_at(now)),
+            accessory_row(&summary.accessory_offers),
+        ));
     }
 
-    let mut cards = iced::widget::Row::new().spacing(10).width(Length::Fill);
+    page = page.push(if summary.night_market_offers.is_empty() {
+        night_market_closed()
+    } else {
+        section(
+            "Night Market",
+            Some(summary.night_market_remaining_seconds_at(now)),
+            offer_row(&summary.night_market_offers, true),
+        )
+    });
 
-    for offer in offers {
-        cards = cards.push(store_accessory_card(offer));
+    page.into()
+}
+
+/// A section's title, its countdown on the right, and its cards.
+fn section<'a>(
+    title: &'a str,
+    remaining_seconds: Option<i64>,
+    body: Element<'a, Message>,
+) -> Element<'a, Message> {
+    let mut head = row![
+        text(title).size(15).font(theme::SEMIBOLD_FONT),
+        space().width(Length::Fill),
+    ]
+    .align_y(alignment::Vertical::Center);
+
+    if let Some(seconds) = remaining_seconds {
+        head = head.push(
+            row![
+                theme::icon(Icon::Timer, 13.0, theme::FAINT),
+                mono(format_countdown(seconds), 12).color(theme::MUTED),
+            ]
+            .spacing(6)
+            .align_y(alignment::Vertical::Center),
+        );
     }
 
-    cards.into()
+    column![head, body].spacing(10).into()
 }
 
 fn bundle_row(summary: &StoreSummary, now: iced::time::Instant) -> Element<'_, Message> {
     if summary.featured_bundles.is_empty() {
-        return text("No featured bundles available").into();
+        return text("No featured bundles right now")
+            .size(13)
+            .color(theme::MUTED)
+            .into();
     }
 
-    let mut cards = iced::widget::Row::new().spacing(12).width(Length::Fill);
-
-    for bundle in &summary.featured_bundles {
-        cards = cards.push(store_bundle_card(
-            bundle,
-            summary.featured_bundle_remaining_seconds_at(bundle, now),
-        ));
-    }
-
-    cards.into()
-}
-
-fn store_bundle_card(bundle: &StoreBundleDisplay, remaining_seconds: i64) -> Element<'_, Message> {
-    let rarity_for_style = bundle.rarity.clone();
-    let mut meta = bundle.item_count_label();
-    if bundle.discount_percent > 0 {
-        meta.push_str(&format!(" | {}% off", bundle.discount_percent));
-    }
-    let details = column![
-        compact_item_name(&bundle.bundle.display_name, 20, SHOP_BUNDLE_NAME_HEIGHT),
-        price_line(bundle.price.as_ref(), bundle.original_price.as_ref(), 16),
-        text(format!(
-            "{meta} | Expires in {}",
-            format_duration(remaining_seconds)
-        ))
-        .size(14),
-    ]
-    .spacing(5)
-    .width(Length::Fill);
-    let overlay = container(
-        container(details)
-            .padding([10, 12])
-            .width(Length::Fill)
-            .style(bundle_text_scrim_style),
+    let count = summary.featured_bundles.len();
+    Row::with_children(
+        summary
+            .featured_bundles
+            .iter()
+            .enumerate()
+            .map(|(index, bundle)| {
+                let width = if count == 2 && index == 1 {
+                    Length::Fixed(SECOND_BUNDLE_WIDTH)
+                } else {
+                    Length::Fill
+                };
+                bundle_card(summary, bundle, now, width)
+            }),
     )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_y(alignment::Vertical::Bottom);
-
-    container(
-        stack![
-            asset_background_image(
-                bundle.bundle.cached_icon.as_ref(),
-                214.0,
-                &bundle.bundle.display_name,
-                high_res_image_source(
-                    "viewer-bundles",
-                    &bundle.bundle.uuid,
-                    bundle.bundle.display_icon.as_deref(),
-                    bundle.bundle.viewer_icon.as_deref(),
-                )
-            ),
-            overlay
-        ]
-        .width(Length::Fill)
-        .height(214.0)
-        .clip(true),
-    )
-    .width(Length::Fill)
-    .height(214.0)
-    .clip(true)
-    .style(move |theme| rarity_card_style(theme, rarity_for_style.as_deref()))
+    .spacing(12)
+    .height(BUNDLE_HEIGHT)
     .into()
 }
 
-fn store_accessory_card(offer: &StoreAccessoryDisplay) -> Element<'_, Message> {
-    let price = offer
-        .price
-        .as_ref()
-        .map(OfferPrice::label)
-        .unwrap_or_else(|| "Price unavailable".to_string());
-    let details = column![
-        asset_image(
-            offer.accessory.cached_icon.as_ref(),
-            96.0,
-            &offer.accessory.display_name,
-            high_res_image_source(
-                "viewer-accessories",
-                &offer.accessory.uuid,
-                offer.accessory.display_icon.as_deref(),
-                offer.accessory.viewer_icon.as_deref(),
-            )
-        ),
-        compact_item_name(&offer.accessory.display_name, 16, SHOP_ITEM_NAME_HEIGHT),
-        text(price).size(14),
-    ]
-    .spacing(6)
-    .width(Length::Fill);
+fn bundle_card<'a>(
+    summary: &StoreSummary,
+    bundle: &'a StoreBundleDisplay,
+    now: iced::time::Instant,
+    width: Length,
+) -> Element<'a, Message> {
+    let remaining = summary.featured_bundle_remaining_seconds_at(bundle, now);
+    let mut kicker = vec![bundle.item_count_label()];
+    // A bundle leaving before the section resets says so; the others name their tier.
+    if bundle.remaining_seconds.is_some() && remaining < summary.bundle_remaining_seconds_at(now) {
+        kicker.push(format!("leaves in {}", format_time_left(remaining)));
+    } else if let Some(tier) = bundle.rarity.as_deref().and_then(RarityTier::from_name) {
+        kicker.push(tier.label().to_string());
+    }
+    if bundle.discount_percent > 0 {
+        kicker.push(format!("{}% off", bundle.discount_percent));
+    }
 
-    container(details)
-        .padding(10)
+    let mut info = row![
+        column![
+            text(kicker.join(" · ").to_uppercase())
+                .size(10)
+                .font(theme::BOLD_FONT)
+                .color(Color::from_rgba8(255, 255, 255, 0.7)),
+            // Clipped, so a long name stops short of the price instead of running under it.
+            container(
+                text(&bundle.bundle.display_name)
+                    .size(24)
+                    .font(theme::DISPLAY_FONT)
+                    .line_height(theme::DISPLAY_LINE_HEIGHT)
+                    .wrapping(Wrapping::None),
+            )
+            .width(Length::Fill)
+            .clip(true),
+        ]
+        .spacing(2)
+        .width(Length::Fill),
+    ]
+    .spacing(12)
+    .align_y(alignment::Vertical::Bottom);
+
+    if let Some(price) = &bundle.price {
+        info = info.push(
+            container(
+                row![
+                    currency_dot(&price.currency, 8.0),
+                    mono(format_whole_number(price.amount), 13).font(theme::MONO_BOLD_FONT),
+                ]
+                .spacing(6)
+                .align_y(alignment::Vertical::Center),
+            )
+            .padding([7, 11])
+            .style(|_| {
+                container::Style::default()
+                    .background(Color {
+                        a: 0.7,
+                        ..theme::BG
+                    })
+                    .border(iced::border::rounded(8))
+            }),
+        );
+    }
+
+    let scrim = container(space())
         .width(Length::Fill)
-        .style(iced::widget::container::bordered_box)
+        .height(Length::Fill)
+        .style(|_| {
+            container::Style::default()
+                .background(
+                    iced::gradient::Linear::new(std::f32::consts::PI)
+                        .add_stop(0.15, Color::TRANSPARENT)
+                        .add_stop(
+                            0.7,
+                            Color {
+                                a: 0.8,
+                                ..BUNDLE_SCRIM
+                            },
+                        )
+                        .add_stop(
+                            1.0,
+                            Color {
+                                a: 0.97,
+                                ..BUNDLE_SCRIM
+                            },
+                        ),
+                )
+                .border(iced::border::rounded(11))
+        });
+
+    container(stack![
+        asset_background_image(
+            bundle.bundle.cached_icon.as_ref(),
+            BUNDLE_HEIGHT - 2.0,
+            11.0,
+            &bundle.bundle.display_name,
+            high_res_image_source(
+                "viewer-bundles",
+                &bundle.bundle.uuid,
+                bundle.bundle.display_icon.as_deref(),
+                bundle.bundle.viewer_icon.as_deref(),
+            ),
+        ),
+        scrim,
+        container(info)
+            .padding(17)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_y(alignment::Vertical::Bottom),
+    ])
+    // The border is drawn under the content, so the art sits inside it to leave it showing.
+    .padding(1)
+    .width(width)
+    .height(BUNDLE_HEIGHT)
+    .clip(true)
+    .style(|_| card_style(12.0).background(iced::color!(0x161A22)))
+    .into()
+}
+
+fn offer_row(offers: &[StoreOfferDisplay], night_market: bool) -> Element<'_, Message> {
+    if offers.is_empty() {
+        return text("No offers right now")
+            .size(13)
+            .color(theme::MUTED)
+            .into();
+    }
+
+    Row::with_children(offers.iter().map(|offer| offer_card(offer, night_market)))
+        .spacing(10)
         .into()
 }
 
-fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {
-    let rarity_for_style = offer.skin.rarity.clone();
-    let mut details = iced::widget::Column::new()
-        .spacing(6)
-        .width(Length::Fill)
-        .push(asset_image(
+/// A skin offer: its art over a glow of its tier colour, a bar in that colour, then its name,
+/// tier and price. Night Market offers show their discount and original price instead of the tier.
+fn offer_card(offer: &StoreOfferDisplay, night_market: bool) -> Element<'_, Message> {
+    let tier = offer.skin.rarity.as_deref().and_then(RarityTier::from_name);
+    let tier_color = tier.map_or(theme::LINE, tier_color);
+
+    let mut art = stack![
+        radial_glow(
+            theme::SURFACE,
+            tier_color,
+            OFFER_GLOW_ALPHA,
+            0.6,
+            (1.3, 1.6),
+            [9.0, 9.0, 0.0, 0.0],
+        ),
+        container(asset_image(
             offer.skin.cached_icon.as_ref(),
-            118.0,
+            OFFER_ART_HEIGHT - 25.0,
             &offer.skin.display_name,
             high_res_image_source(
                 "viewer-skins",
@@ -212,81 +297,282 @@ fn store_offer_card(offer: &StoreOfferDisplay) -> Element<'_, Message> {
                 offer.skin.viewer_icon.as_deref(),
             ),
         ))
-        .push(compact_item_name(
-            &offer.skin.display_name,
-            16,
-            SHOP_ITEM_NAME_HEIGHT,
-        ))
-        .push(price_line(
-            offer.price.as_ref(),
-            offer.original_price.as_ref(),
-            14,
-        ));
+        .padding([12, 14]),
+    ]
+    .width(Length::Fill)
+    .height(OFFER_ART_HEIGHT - 1.0);
 
-    if offer.discount_percent > 0 {
-        details = details.push(text(format!("{}% off", offer.discount_percent)).size(13));
+    if night_market && offer.discount_percent > 0 {
+        art = art.push(
+            container(
+                container(
+                    mono(format!("-{}%", offer.discount_percent), 10)
+                        .font(theme::MONO_BOLD_FONT)
+                        .color(NIGHT_MARKET_BADGE_TEXT),
+                )
+                .padding([2, 6])
+                .style(|_| {
+                    container::Style::default()
+                        .background(NIGHT_MARKET_BADGE)
+                        .border(iced::border::rounded(4))
+                }),
+            )
+            .padding(8),
+        );
     }
 
-    container(details)
-        .padding(10)
+    let mut bottom = row![].align_y(alignment::Vertical::Center);
+    if night_market {
+        bottom = bottom.push(space().width(Length::Fill));
+        if let Some(original) = &offer.original_price {
+            bottom = bottom.push(
+                container(mono(format_whole_number(original.amount), 11).color(theme::FAINT))
+                    .padding(Padding::ZERO.right(5)),
+            );
+        }
+    } else {
+        bottom = bottom.push(
+            text(tier.map_or("", RarityTier::label))
+                .size(11)
+                .font(theme::SEMIBOLD_FONT)
+                .color(tier_color)
+                .width(Length::Fill),
+        );
+    }
+    bottom = bottom.push(price(offer.price.as_ref()));
+
+    let bar = container(space())
         .width(Length::Fill)
-        .style(move |theme| rarity_card_style(theme, rarity_for_style.as_deref()))
+        .height(2)
+        .style(move |_| container::Style::default().background(tier_color));
+
+    container(column![
+        art,
+        bar,
+        column![item_name(&offer.skin.display_name), bottom]
+            .spacing(4)
+            .padding(Padding {
+                top: 9.0,
+                right: 11.0,
+                bottom: 8.0,
+                left: 11.0,
+            }),
+    ])
+    // The art is opaque, so it sits inside the border rather than over it.
+    .padding(1)
+    .width(Length::Fill)
+    .clip(true)
+    .style(|_| card_style(10.0))
+    .into()
+}
+
+fn accessory_row(offers: &[StoreAccessoryDisplay]) -> Element<'_, Message> {
+    Row::with_children(offers.iter().map(accessory_card))
+        .spacing(10)
         .into()
 }
 
-/// The price, after the struck-through original price when it's discounted.
-fn price_line(
-    price: Option<&OfferPrice>,
-    original_price: Option<&OfferPrice>,
-    size: u32,
-) -> Element<'static, Message> {
-    let Some(price) = price else {
-        return text("Price unavailable").size(size).into();
+/// An accessory: a thumbnail over a gold glow, then its name, what it is and its price. Titles
+/// have no picture, so their text stands in for one.
+fn accessory_card(offer: &StoreAccessoryDisplay) -> Element<'_, Message> {
+    let picture: Element<_> =
+        if offer.accessory.cached_icon.is_none() && offer.kind == Some(AccessoryKind::Title) {
+            text(offer.accessory.display_name.to_uppercase())
+                .size(11)
+                .font(theme::DISPLAY_FONT)
+                .line_height(1.1)
+                .color(theme::GOLD)
+                .align_x(alignment::Horizontal::Center)
+                .into()
+        } else {
+            asset_image(
+                offer.accessory.cached_icon.as_ref(),
+                ACCESSORY_THUMB_SIZE - 16.0,
+                &offer.accessory.display_name,
+                high_res_image_source(
+                    "viewer-accessories",
+                    &offer.accessory.uuid,
+                    offer.accessory.display_icon.as_deref(),
+                    offer.accessory.viewer_icon.as_deref(),
+                ),
+            )
+        };
+    let thumb = stack![
+        radial_glow(
+            theme::SURFACE,
+            theme::GOLD,
+            ACCESSORY_GLOW_ALPHA,
+            0.5,
+            (1.4, 1.4),
+            [8.0; 4],
+        ),
+        container(picture).padding(8).center(Length::Fill),
+    ]
+    .width(ACCESSORY_THUMB_SIZE)
+    .height(ACCESSORY_THUMB_SIZE);
+
+    let mut info = column![item_name(&offer.accessory.display_name)]
+        .spacing(4)
+        .width(Length::Fill);
+    if let Some(kind) = offer.kind {
+        info = info.push(text(kind.label()).size(11).color(theme::MUTED));
+    }
+    info = info.push(container(price(offer.price.as_ref())).padding(Padding::ZERO.top(4)));
+
+    container(
+        row![thumb, info]
+            .spacing(14)
+            .align_y(alignment::Vertical::Center),
+    )
+    .padding(Padding {
+        top: 8.0,
+        right: 14.0,
+        bottom: 8.0,
+        left: 8.0,
+    })
+    .width(Length::Fill)
+    .style(|_| card_style(10.0))
+    .into()
+}
+
+fn night_market_closed<'a>() -> Element<'a, Message> {
+    container(
+        row![
+            theme::icon(Icon::Moon, 16.0, theme::FAINT),
+            text("Night Market isn't running right now. It'll appear here automatically when it opens.")
+                .size(13)
+                .color(theme::MUTED),
+        ]
+        .spacing(12)
+        .align_y(alignment::Vertical::Center),
+    )
+    .padding([14, 16])
+    .width(Length::Fill)
+    .style(|_| {
+        container::Style::default().border(iced::Border {
+            color: theme::LINE,
+            width: 1.0,
+            radius: 10.0.into(),
+        })
+    })
+    .into()
+}
+
+/// The shop's shape in placeholders, fading along each row, while it loads.
+fn loading<'a>() -> Element<'a, Message> {
+    let fading_row = |count: usize, height: f32| {
+        Row::with_children(
+            (0..count).map(|index| skeleton(Length::Fill, height, 10.0, 1.0 - index as f32 * 0.08)),
+        )
+        .spacing(10)
+        .into()
+    };
+    let placeholder = |title: &'static str, body: Element<'a, Message>| {
+        column![
+            row![
+                text(title).size(15).font(theme::SEMIBOLD_FONT),
+                space().width(Length::Fill),
+                skeleton(74, 14.0, 4.0, 1.0),
+            ]
+            .align_y(alignment::Vertical::Center),
+            body,
+        ]
+        .spacing(10)
     };
 
-    if let Some(original_price) = original_price
-        && original_price != price
-    {
-        return rich_text::<(), Message, Theme, iced::Renderer>([
-            span(original_price.label())
-                .strikethrough(true)
-                .color(theme::MUTED),
-            span(" "),
-            span(price.label()).color(theme::TEXT),
-        ])
+    column![
+        placeholder("Featured bundles", fading_row(2, BUNDLE_HEIGHT)),
+        placeholder("Daily offers", fading_row(4, 133.0)),
+        placeholder("Accessory Store", fading_row(4, 88.0)),
+        placeholder("Night Market", fading_row(6, 133.0)),
+    ]
+    .spacing(26)
+    .into()
+}
+
+fn load_error(app: &PrimeApp) -> Element<'_, Message> {
+    let error = app.store_error.as_deref().unwrap_or_default();
+    let account = app.state.selected_account();
+    let name = account.map_or("this account", |account| account.display_name.as_str());
+
+    let mut actions = vec![
+        button(theme::icon_label(Icon::RefreshCw, "Retry", theme::BG))
+            .padding([9, 16])
+            .style(theme::primary_button_style)
+            .on_press(Message::RetryShop)
+            .into(),
+    ];
+    if let Some(account) = account {
+        actions.push(
+            button(text("Re-capture login").size(13).font(theme::SEMIBOLD_FONT))
+                .padding([9, 16])
+                .on_press_maybe(
+                    (!app.launcher_capture_in_progress && !app.launch_in_progress())
+                        .then_some(Message::RequestLauncherSessionLogin(account.id)),
+                )
+                .into(),
+        );
+    }
+
+    unavailable_state(
+        Icon::PlugZap,
+        "Couldn't load the shop",
+        format!(
+            "Prime couldn't get the shop for {name}. Retry signs in again from the captured \
+             login; if Riot keeps refusing it, re-capture the login."
+        ),
+        actions,
+        error,
+    )
+}
+
+fn item_name(name: &str) -> Element<'_, Message> {
+    container(
+        text(name)
+            .size(12)
+            .font(theme::SEMIBOLD_FONT)
+            .wrapping(Wrapping::None),
+    )
+    .width(Length::Fill)
+    .clip(true)
+    .into()
+}
+
+/// An amount with its currency's dot, or a dash when Riot sent no price.
+fn price(price: Option<&OfferPrice>) -> Element<'_, Message> {
+    match price {
+        Some(price) => row![
+            currency_dot(&price.currency, 7.0),
+            mono(format_whole_number(price.amount), 12).font(theme::MONO_SEMIBOLD_FONT),
+        ]
+        .spacing(5)
+        .align_y(alignment::Vertical::Center)
+        .into(),
+        None => text("—").size(12).color(theme::FAINT).into(),
+    }
+}
+
+fn mono<'a>(
+    content: impl iced::widget::text::IntoFragment<'a>,
+    size: u32,
+) -> iced::widget::Text<'a> {
+    text(content)
         .size(size)
-        .into();
-    }
-
-    text(price.label()).size(size).into()
+        .font(theme::MONO_FONT)
+        .line_height(theme::MONO_LINE_HEIGHT)
 }
 
-fn rarity_card_style(theme: &Theme, rarity: Option<&str>) -> iced::widget::container::Style {
-    let mut style = iced::widget::container::bordered_box(theme);
-
-    if let Some((background, border)) = rarity_colors(rarity) {
-        style.background = Some(background.into());
-        style.border.color = border;
-    }
-
-    style
+fn tier_color(tier: RarityTier) -> Color {
+    let [red, green, blue] = tier.highlight_rgb();
+    Color::from_rgb8(red, green, blue)
 }
 
-fn bundle_text_scrim_style(_: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(Color::from_rgba8(8, 10, 14, 0.78).into()),
-        text_color: Some(Color::WHITE),
-        ..Default::default()
-    }
-}
-
-/// A dark tint of the tier's in-game color for the card, and the color itself for its border.
-fn rarity_colors(rarity: Option<&str>) -> Option<(Color, Color)> {
-    let [red, green, blue] = RarityTier::from_name(rarity?)?.highlight_rgb();
-    let shade = |channel: u8| (f32::from(channel) * 0.36) as u8;
-
-    Some((
-        Color::from_rgba8(shade(red), shade(green), shade(blue), 0.72),
-        Color::from_rgb8(red, green, blue),
-    ))
+fn card_style(radius: f32) -> container::Style {
+    container::Style::default()
+        .background(theme::SURFACE)
+        .border(iced::Border {
+            color: theme::LINE,
+            width: 1.0,
+            radius: radius.into(),
+        })
 }

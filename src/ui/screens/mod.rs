@@ -24,6 +24,11 @@ pub(super) fn tab(app: &PrimeApp, tab: Tab) -> Element<'_, Message> {
     }
 }
 
+/// Whether the tab shows a state that fills the page, centred, instead of scrolling content.
+pub(super) fn fills_page(app: &PrimeApp, tab: Tab) -> bool {
+    tab == Tab::Shop && shop::fills_page(app)
+}
+
 /// A tab's menu that stays beside its scrolling page; only Settings has one.
 pub(super) fn side_nav(app: &PrimeApp, tab: Tab) -> Option<Element<'_, Message>> {
     (tab == Tab::Settings).then(|| settings::section_nav(app))
