@@ -6094,6 +6094,24 @@ fn a_dialog_starts_its_entrance_when_it_opens_or_replaces_another() {
 }
 
 #[test]
+fn a_toast_on_screen_changes_text_without_rising_again() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let _ = app.update(Message::SaveSettings);
+    let appeared = app.toast_appeared_at;
+
+    std::thread::sleep(Duration::from_millis(2));
+    let _ = app.update(Message::SaveSettings);
+    assert_eq!(app.toast_appeared_at, appeared);
+
+    // Once it has gone, the next one rises in.
+    app.status_changed_at -= Duration::from_secs(60);
+    app.now = iced::time::Instant::now();
+    let _ = app.update(Message::SaveSettings);
+    assert!(app.toast_appeared_at > appeared);
+}
+
+#[test]
 fn an_entrance_eases_out_over_its_duration() {
     let start = iced::time::Instant::now();
     assert_eq!(super::appear_progress(start, start), 0.0);

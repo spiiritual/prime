@@ -103,11 +103,13 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
             .push(iced::time::every(SHOP_RESET_CHECK_INTERVAL).map(Message::ShopTimerTick));
     }
 
-    if appearing(app) && !app.window_minimized {
+    let animating = appearing(app) && !app.window_minimized;
+    if animating {
         subscriptions.push(window::frames().map(Message::AnimationFrame));
     }
 
-    if status_flash_active(app) {
+    // While something settles in, its frames already keep `now` current.
+    if status_flash_active(app) && !animating {
         // Only a visible timer bar needs every frame.
         subscriptions.push(
             if !app.window_minimized && status_time_left(app).is_some() {
@@ -395,6 +397,8 @@ struct PrimeApp {
     launch_progress_checking: bool,
     window_minimized: bool,
     status_changed_at: iced::time::Instant,
+    /// When the toast last appeared. A toast already on screen changes text without rising again.
+    toast_appeared_at: iced::time::Instant,
     app_update_status: AppUpdateStatus,
     image_cache_usage: CacheUsage,
     image_cache_clearing: bool,
@@ -718,7 +722,7 @@ fn appearing(app: &PrimeApp) -> bool {
     let settling =
         |since: iced::time::Instant| app.now.saturating_duration_since(since) < APPEAR_DURATION;
     app.dialog_opened.is_some_and(|(_, since)| settling(since))
-        || (status_bar_visible(app) && settling(app.status_changed_at))
+        || (status_bar_visible(app) && settling(app.toast_appeared_at))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

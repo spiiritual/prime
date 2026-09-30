@@ -35,6 +35,11 @@ windows-sys = { version = "0.61.2", features = [
 [dev-dependencies]
 tempfile = "3.27.0"
 
+# Iced and wgpu draw too slowly unoptimized for animations to look smooth, so dev builds
+# optimize dependencies; Prime's own code stays quick to rebuild and debug.
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release]
 opt-level = "z"
 strip = true

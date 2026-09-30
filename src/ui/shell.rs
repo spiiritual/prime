@@ -29,9 +29,8 @@ const MENU_ITEM_SELECTED: Color = iced::color!(0x262C38);
 const STATUS_TOAST_MAX_WIDTH: f32 = 640.0;
 const TOAST_TIMER_HEIGHT: f32 = 2.0;
 const UPDATE_CHANGELOG_MAX_HEIGHT: f32 = 260.0;
-/// How far a dialog rises into place as it opens, and how small it starts.
+/// How far a dialog rises into place as it opens.
 const DIALOG_RISE: f32 = 10.0;
-const DIALOG_START_SCALE: f32 = 0.97;
 /// How far a toast rises into place.
 const TOAST_RISE: f32 = 8.0;
 
@@ -127,7 +126,7 @@ impl PrimeApp {
                 // Bottom right, lined up with the right edge of the page content.
                 container(appear(
                     self.status_toast(),
-                    appear_progress(self.status_changed_at, self.now),
+                    appear_progress(self.toast_appeared_at, self.now),
                     TOAST_RISE
                 ))
                 .padding(Padding {
@@ -852,7 +851,8 @@ fn backdrop(progress: f32, on_press: Option<Message>) -> Element<'static, Messag
     }
 }
 
-/// Rises `rise` pixels into place and grows to full size as `progress` reaches 1.
+/// Rises `rise` pixels into place as `progress` reaches 1. It moves in whole pixels, since text
+/// shimmers when drawn between them.
 fn appear<'a>(
     content: impl Into<Element<'a, Message>>,
     progress: f32,
@@ -861,9 +861,8 @@ fn appear<'a>(
     if progress >= 1.0 {
         return content.into();
     }
-    let offset = rise * (1.0 - progress);
+    let offset = (rise * (1.0 - progress)).round();
     iced::widget::float(content)
-        .scale(DIALOG_START_SCALE + (1.0 - DIALOG_START_SCALE) * progress)
         .translate(move |_, _| iced::Vector::new(0.0, offset))
         .into()
 }

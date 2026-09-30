@@ -125,6 +125,7 @@ impl PrimeApp {
                 launch_progress_checking: false,
                 window_minimized: false,
                 status_changed_at: iced::time::Instant::now(),
+                toast_appeared_at: iced::time::Instant::now(),
                 app_update_status: AppUpdateStatus::Checking,
                 image_cache_usage: CacheUsage::default(),
                 image_cache_clearing: false,
@@ -285,8 +286,12 @@ impl PrimeApp {
     /// Shows a status message. Setting the same text again restarts its display time, so a
     /// repeated action still gets visible feedback.
     fn set_status(&mut self, status: Status) {
+        self.now = iced::time::Instant::now();
+        if !super::status_bar_visible(self) {
+            self.toast_appeared_at = self.now;
+        }
         self.status = status;
-        self.status_changed_at = iced::time::Instant::now();
+        self.status_changed_at = self.now;
     }
 
     /// Ends a progress toast whose result shows on screen by itself. Anything else, such as an
