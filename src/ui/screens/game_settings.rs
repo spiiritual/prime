@@ -12,7 +12,7 @@ use time::{OffsetDateTime, UtcOffset};
 use crate::account::{AccountId, AccountProfile};
 use crate::game_settings::{
     CrosshairLines, CrosshairSummary, GameSettingsProfileMetadata, GameSettingsProfilePurpose,
-    GameSettingsProfileSummary, Rgba, Setting,
+    GameSettingsProfileSummary, Rgba,
 };
 use crate::ui::components::{
     account_avatar, card_style, compact_loading_indicator, mono, outlined,
@@ -22,21 +22,20 @@ use crate::ui::{Message, PrimeApp, SettingsChange};
 
 use super::accounts::{now_unix, relative_time_label};
 
-const DETAIL_LABEL_WIDTH: f32 = 96.0;
-/// How many keybinds the settings list shows in its Keybinds row; the rest are counted.
+/// How many keybinds a card shows at a glance; the rest are counted.
 const SHORT_KEYBIND_LIMIT: usize = 3;
-const CROSSHAIR_PREVIEW_SIZE: f32 = 88.0;
+const CROSSHAIR_PREVIEW_SIZE: f32 = 56.0;
 /// Screen pixels per VALORANT crosshair unit, before shrinking a large crosshair to fit.
 const CROSSHAIR_PREVIEW_SCALE: f32 = 2.0;
-const SWATCH_SIZE: f32 = 12.0;
+const GLANCE_GAP: f32 = 16.0;
+const FACT_ICON_SIZE: f32 = 14.0;
+const FACT_GAP: f32 = 8.0;
+/// The keybinds column's width in the full settings list.
+const KEYBINDS_COLUMN_WIDTH: f32 = 176.0;
+const SETTING_ROW_HEIGHT: f32 = 19.0;
+const SWATCH_SIZE: f32 = 10.0;
 const APPLY_PANEL_WIDTH: f32 = 340.0;
 const PANEL_GAP: f32 = 16.0;
-/// The selected radio's outer size: a 16px circle with a centred 5px stroke.
-const RADIO_SLOT: f32 = 21.0;
-/// The card's left padding, less the radio's overhang so its circle sits where the design's does.
-const CARD_LEFT_PADDING: f32 = 13.5;
-/// Where a card's chips and settings start, from the card's padding: past the radio and its gap.
-const CARD_BODY_INSET: f32 = 16.0 + 26.0 - CARD_LEFT_PADDING;
 /// How long a save reads as "2 days ago" before it reads as a date.
 const RELATIVE_SAVE_SECONDS: i64 = 7 * 86_400;
 const DANGER_TEXT: Color = iced::color!(0xFF8A94);
@@ -159,34 +158,29 @@ fn profile_card<'a>(
     });
 
     let mut top = row![
-        row![
-            radio(selected),
-            column![
-                text(&profile.name)
-                    .size(14)
-                    .font(theme::SEMIBOLD_FONT)
-                    .color(theme::TEXT),
-                row![
-                    account_avatar(
-                        source_name,
-                        source.and_then(|account| app.player_card_art_path(account)),
-                        14.0,
-                        4.0
-                    ),
-                    text(format!(
-                        "From {source_name} · saved {}",
-                        saved_label(profile.captured_at_unix, now_unix())
-                    ))
-                    .size(12)
-                    .color(theme::MUTED)
-                ]
-                .spacing(6)
-                .align_y(alignment::Vertical::Center)
+        column![
+            text(&profile.name)
+                .size(14)
+                .font(theme::SEMIBOLD_FONT)
+                .color(theme::TEXT),
+            row![
+                account_avatar(
+                    source_name,
+                    source.and_then(|account| app.player_card_art_path(account)),
+                    14.0,
+                    4.0
+                ),
+                text(format!(
+                    "From {source_name} · saved {}",
+                    saved_label(profile.captured_at_unix, now_unix())
+                ))
+                .size(12)
+                .color(theme::MUTED)
             ]
-            .spacing(2)
+            .spacing(6)
+            .align_y(alignment::Vertical::Center)
         ]
-        .spacing(16.0 + 26.0 - CARD_LEFT_PADDING - RADIO_SLOT)
-        .align_y(alignment::Vertical::Center)
+        .spacing(2)
         .width(Length::Fill)
     ]
     .spacing(10)
@@ -198,26 +192,24 @@ fn profile_card<'a>(
     // At a glance: the crosshair and the settings people compare presets by. The full list
     // opens below them.
     let summary = &profile.summary;
-    let card = column![
+    let mut card = column![
         top,
-        container(
-            row![
-                crosshair_tile(summary.crosshair.as_ref()),
-                settings_details(&profile.id, summary, expanded)
-            ]
-            .spacing(16)
-            .align_y(if expanded {
-                alignment::Vertical::Top
-            } else {
-                alignment::Vertical::Center
-            }),
-        )
-        .padding(Padding::ZERO.left(CARD_BODY_INSET))
+        row![
+            crosshair_tile(summary.crosshair.as_ref()),
+            glance_facts(&profile.id, summary, expanded)
+        ]
+        .spacing(GLANCE_GAP)
     ]
-    .spacing(10);
+    .spacing(12);
+    if expanded {
+        card = card.push(
+            container(all_settings(summary))
+                .padding(Padding::ZERO.left(CROSSHAIR_PREVIEW_SIZE + GLANCE_GAP)),
+        );
+    }
 
     iced::widget::button(card)
-        .padding(Padding::new(16.0).left(CARD_LEFT_PADDING))
+        .padding([12, 16])
         .width(Length::Fill)
         .style(move |_, _| {
             let style = if selected {
@@ -240,30 +232,12 @@ fn profile_card<'a>(
             iced::widget::button::Style {
                 background: style.background,
                 border: style.border,
+                text_color: theme::TEXT,
                 ..Default::default()
             }
         })
         .on_press(Message::SelectPreset(profile.id.clone()))
         .into()
-}
-
-/// The design centres the radio's stroke on its 16px circle, so the ring reaches 2.5px past it.
-fn radio(selected: bool) -> Element<'static, Message> {
-    let (size, width, color) = if selected {
-        (RADIO_SLOT, 5.0, theme::ACCENT)
-    } else {
-        (17.5, 1.5, theme::FAINT)
-    };
-
-    container(container(space()).width(size).height(size).style(move |_| {
-        container::Style::default().border(iced::Border {
-            color,
-            width,
-            radius: (size / 2.0).into(),
-        })
-    }))
-    .center(RADIO_SLOT)
-    .into()
 }
 
 fn saving_card(app: &PrimeApp, account_id: AccountId) -> Element<'_, Message> {
@@ -616,120 +590,135 @@ fn divider() -> Element<'static, Message> {
         .into()
 }
 
-/// The preset's settings as labelled rows, and when expanded, every setting it copies. Missing
-/// values are VALORANT's defaults.
-fn settings_details<'a>(
+/// The preset's settings, one line each behind an icon, and a link to every setting it copies.
+/// Missing values are VALORANT's defaults.
+fn glance_facts<'a>(
     profile_id: &str,
     summary: &'a GameSettingsProfileSummary,
     expanded: bool,
 ) -> Element<'a, Message> {
-    let mut details = column![
-        detail_row("Sensitivity", sensitivity_value(summary)),
-        detail_row("Crosshair", crosshair_value(summary)),
-        detail_row("Keybinds", keybinds_value(summary)),
-        detail_row(
-            "Minimap",
-            if summary.minimap.is_empty() {
-                default_value()
-            } else {
-                text(summary.minimap.join(" · "))
-                    .size(13)
-                    .color(theme::TEXT)
-                    .into()
-            }
-        ),
+    let mut facts = column![
+        fact(Icon::Mouse, 17.0, sensitivity_value(summary)),
+        fact(Icon::Crosshair, 15.0, crosshair_value(summary)),
+        // Beside the first line of keybinds, which are as tall as their key chips.
+        fact(Icon::Keyboard, SETTING_ROW_HEIGHT, keybinds_value(summary)),
+        fact(Icon::Map, 15.0, minimap_value(summary)),
     ]
-    .spacing(8)
+    .spacing(7)
     .width(Length::Fill);
 
     let listed =
         summary.keybinds.len() + summary.audio_settings.len() + summary.other_settings.len();
     if listed == 0 {
-        return details.into();
+        return facts.into();
     }
 
-    details = details.push(
-        iced::widget::button(
-            text(if expanded {
-                "Show less".to_string()
-            } else {
-                format!("Show all settings ({listed})")
-            })
-            .size(12)
-            .color(theme::MUTED),
-        )
-        .padding([3, 6])
-        .style(|_, status| iced::widget::button::Style {
-            background: matches!(
-                status,
-                iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+    let (label, chevron) = if expanded {
+        ("Hide settings".to_string(), Icon::ChevronUp)
+    } else {
+        (format!("Show all settings ({listed})"), Icon::ChevronDown)
+    };
+    facts = facts.push(
+        container(
+            iced::widget::button(
+                row![
+                    text(label).size(12).font(theme::MEDIUM_FONT),
+                    theme::icon(chevron, 12.0, theme::MUTED)
+                ]
+                .spacing(4)
+                .align_y(alignment::Vertical::Center),
             )
-            .then(|| theme::RAISED.into()),
-            border: border::rounded(5),
-            ..Default::default()
-        })
-        .on_press(Message::TogglePresetSettings(profile_id.to_string())),
+            .padding(Padding::ZERO.top(1))
+            .style(|_, status| iced::widget::button::Style {
+                text_color: if matches!(
+                    status,
+                    iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+                ) {
+                    theme::TEXT
+                } else {
+                    theme::MUTED
+                },
+                ..Default::default()
+            })
+            .on_press(Message::TogglePresetSettings(profile_id.to_string())),
+        )
+        .padding(Padding::ZERO.left(FACT_ICON_SIZE + FACT_GAP)),
     );
-    if expanded {
-        details = details.push(all_settings(summary));
-    }
 
-    details.into()
+    facts.into()
 }
 
-/// Every keybind and every other setting a preset copies, as labelled groups.
-fn all_settings(summary: &GameSettingsProfileSummary) -> Element<'_, Message> {
-    let groups = [
-        (
-            "All keybinds",
-            summary
-                .keybinds
-                .iter()
-                .map(|keybind| (keybind.action.as_str(), keybind.key.as_str()))
-                .collect::<Vec<_>>(),
-        ),
-        ("Audio", setting_pairs(&summary.audio_settings)),
-        ("Other", setting_pairs(&summary.other_settings)),
-    ];
+/// One line of the glance: an icon centred on the value's first line of `line_height`.
+fn fact<'a>(icon: Icon, line_height: f32, value: Element<'a, Message>) -> Element<'a, Message> {
+    row![
+        container(theme::icon(icon, FACT_ICON_SIZE, theme::FAINT))
+            .height(line_height)
+            .align_y(alignment::Vertical::Center),
+        value
+    ]
+    .spacing(FACT_GAP)
+    .into()
+}
 
-    let mut list = column![].spacing(12).width(Length::Fill);
-    for (title, settings) in groups {
+/// Every keybind and every other setting a preset copies, in three columns.
+fn all_settings(summary: &GameSettingsProfileSummary) -> Element<'_, Message> {
+    let mut columns = row![].spacing(20);
+
+    if !summary.keybinds.is_empty() {
+        let rows = summary
+            .keybinds
+            .iter()
+            .map(|keybind| setting_row(&keybind.action, key_chip(&keybind.key)));
+        columns = columns.push(settings_group("All keybinds", rows).width(KEYBINDS_COLUMN_WIDTH));
+    }
+    for (title, settings) in [
+        ("Audio", &summary.audio_settings),
+        ("Other", &summary.other_settings),
+    ] {
         if settings.is_empty() {
             continue;
         }
-
-        let mut group = column![text(title.to_uppercase()).size(11).color(theme::MUTED)]
-            .spacing(4)
-            .width(Length::Fill);
-        for (label, value) in settings {
-            group = group.push(
-                row![
-                    text(label).size(13).width(Length::Fill),
-                    text(value).size(13).color(theme::TEXT)
-                ]
-                .spacing(12),
-            );
-        }
-        list = list.push(group);
+        let rows = settings.iter().map(|setting| {
+            setting_row(
+                &setting.label,
+                mono(&setting.value, 11).color(theme::TEXT).into(),
+            )
+        });
+        columns = columns.push(settings_group(title, rows).width(Length::Fill));
     }
 
-    list.into()
+    container(columns)
+        .padding([10, 12])
+        .width(Length::Fill)
+        .style(|_| {
+            container::Style::default()
+                .background(theme::BG)
+                .border(border::rounded(8).width(1).color(theme::LINE))
+        })
+        .into()
 }
 
-fn setting_pairs(settings: &[Setting]) -> Vec<(&str, &str)> {
-    settings
-        .iter()
-        .map(|setting| (setting.label.as_str(), setting.value.as_str()))
-        .collect()
-}
-
-fn detail_row<'a>(label: &'a str, value: Element<'a, Message>) -> Element<'a, Message> {
-    row![
-        text(label.to_uppercase())
+fn settings_group<'a>(
+    title: &'a str,
+    rows: impl Iterator<Item = Element<'a, Message>>,
+) -> iced::widget::Column<'a, Message> {
+    column![
+        text(title)
             .size(11)
+            .font(theme::SEMIBOLD_FONT)
             .color(theme::MUTED)
-            .width(DETAIL_LABEL_WIDTH),
-        value
+    ]
+    .extend(rows)
+    .spacing(5)
+}
+
+fn setting_row<'a>(label: &'a str, value: Element<'a, Message>) -> Element<'a, Message> {
+    row![
+        text(label).size(12).color(theme::MUTED).width(Length::Fill),
+        // Rows are at least a key chip tall, and grow when a long label wraps.
+        container(value)
+            .height(SETTING_ROW_HEIGHT)
+            .align_y(alignment::Vertical::Center)
     ]
     .spacing(8)
     .align_y(alignment::Vertical::Center)
@@ -737,30 +726,50 @@ fn detail_row<'a>(label: &'a str, value: Element<'a, Message>) -> Element<'a, Me
 }
 
 fn default_value() -> Element<'static, Message> {
-    text("Default").size(13).color(theme::MUTED).into()
+    text("Default").size(12).color(theme::MUTED).into()
+}
+
+/// The pieces of a line, with a dot between each.
+fn dotted<'a>(pieces: impl IntoIterator<Item = Element<'a, Message>>) -> Element<'a, Message> {
+    let mut line = row![]
+        .spacing(FACT_GAP)
+        .align_y(alignment::Vertical::Center);
+    for (index, piece) in pieces.into_iter().enumerate() {
+        if index > 0 {
+            line = line.push(text("·").size(12).color(theme::FAINT));
+        }
+        line = line.push(piece);
+    }
+    line.into()
 }
 
 fn sensitivity_value(summary: &GameSettingsProfileSummary) -> Element<'static, Message> {
+    let multiplier = |label: &'static str, value: f64| -> Element<'static, Message> {
+        row![
+            text(label).size(12).color(theme::MUTED),
+            mono(format!("{}×", format_number(value)), 12).color(theme::TEXT)
+        ]
+        .spacing(FACT_GAP)
+        .align_y(alignment::Vertical::Center)
+        .into()
+    };
     let parts = [
-        summary
-            .sensitivity
-            .map(|value| value_chip(None, format_number(value))),
-        summary
-            .ads_multiplier
-            .map(|value| value_chip(Some("ADS"), format!("{}×", format_number(value)))),
+        summary.sensitivity.map(|value| {
+            mono(format_number(value), 13)
+                .font(theme::MONO_SEMIBOLD_FONT)
+                .color(theme::TEXT)
+                .into()
+        }),
+        summary.ads_multiplier.map(|value| multiplier("ADS", value)),
         summary
             .scoped_multiplier
-            .map(|value| value_chip(Some("Scoped"), format!("{}×", format_number(value)))),
+            .map(|value| multiplier("Scoped", value)),
     ];
 
     if parts.iter().all(Option::is_none) {
         return default_value();
     }
-
-    row(parts.into_iter().flatten())
-        .spacing(6)
-        .align_y(alignment::Vertical::Center)
-        .into()
+    dotted(parts.into_iter().flatten())
 }
 
 fn crosshair_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message> {
@@ -768,31 +777,34 @@ fn crosshair_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message>
         return default_value();
     };
 
-    let mut value = row![
-        color_swatch(crosshair.color),
-        text(crosshair.color.label()).size(13).color(theme::TEXT)
-    ]
-    .spacing(6)
-    .align_y(alignment::Vertical::Center);
-
+    let mut pieces: Vec<Element<'_, Message>> = vec![
+        row![
+            color_swatch(crosshair.color),
+            text(crosshair.color.label())
+                .size(12)
+                .font(theme::MEDIUM_FONT)
+                .color(theme::TEXT)
+        ]
+        .spacing(FACT_GAP)
+        .align_y(alignment::Vertical::Center)
+        .into(),
+    ];
     if let Some(name) = &crosshair.name {
-        value = value
-            .push(separator())
-            .push(text(name).size(13).color(theme::TEXT));
+        pieces.push(text(name).size(12).color(theme::MUTED).into());
     }
-
     if summary.crosshair_profile_count > 1 {
-        value = value.push(separator()).push(
+        pieces.push(
             text(format!(
                 "{} saved crosshairs",
                 summary.crosshair_profile_count
             ))
-            .size(13)
-            .color(theme::MUTED),
+            .size(12)
+            .color(theme::FAINT)
+            .into(),
         );
     }
 
-    value.into()
+    dotted(pieces)
 }
 
 fn keybinds_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message> {
@@ -800,13 +812,13 @@ fn keybinds_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message> 
         return default_value();
     }
 
-    let mut value = row![].spacing(12).align_y(alignment::Vertical::Center);
-
+    let mut value = row![].spacing(14).align_y(alignment::Vertical::Center);
     for keybind in summary.keybinds.iter().take(SHORT_KEYBIND_LIMIT) {
         value = value.push(
             row![
-                keycap(&keybind.key),
-                text(&keybind.action).size(13).color(theme::TEXT)
+                key_chip(&keybind.key),
+                text("→").size(11).color(theme::FAINT),
+                text(&keybind.action).size(12).color(theme::TEXT)
             ]
             .spacing(6)
             .align_y(alignment::Vertical::Center),
@@ -815,28 +827,39 @@ fn keybinds_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message> 
 
     let hidden = summary.keybinds.len().saturating_sub(SHORT_KEYBIND_LIMIT);
     if hidden > 0 {
-        value = value.push(text(format!("+{hidden} more")).size(13).color(theme::MUTED));
+        value = value.push(text(format!("+{hidden} more")).size(12).color(theme::FAINT));
     }
 
     // Wraps whole keybinds onto the next line when the card is narrow.
-    value.wrap().vertical_spacing(6).into()
+    value.wrap().vertical_spacing(4).into()
 }
 
-/// A value with an optional small label, such as `ADS 0.6×`.
-fn value_chip(label: Option<&'static str>, value: String) -> Element<'static, Message> {
-    let mut content = row![].spacing(5).align_y(alignment::Vertical::Center);
-    if let Some(label) = label {
-        content = content.push(text(label).size(11).color(theme::MUTED));
+fn minimap_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message> {
+    if summary.minimap.is_empty() {
+        return default_value();
     }
-    content = content.push(text(value).size(13).color(theme::TEXT));
-
-    container(content).padding([2, 8]).style(chip_style).into()
+    dotted(
+        summary
+            .minimap
+            .iter()
+            .map(|value| text(value).size(12).color(theme::TEXT).into()),
+    )
 }
 
-fn keycap(key: &str) -> Element<'_, Message> {
-    container(text(key).size(12).color(theme::TEXT))
-        .padding([1, 7])
-        .style(keycap_style)
+/// A key as a chip, or an outline when the action has no key.
+fn key_chip(key: &str) -> Element<'_, Message> {
+    let unbound = key == "Unbound";
+    container(mono(key, 11).color(if unbound { theme::FAINT } else { theme::TEXT }))
+        .padding([2, 6])
+        .style(move |_| {
+            if unbound {
+                container::Style::default().border(border::rounded(5).width(1).color(theme::LINE))
+            } else {
+                container::Style::default()
+                    .background(theme::RAISED)
+                    .border(border::rounded(5))
+            }
+        })
         .into()
 }
 
@@ -846,16 +869,15 @@ fn color_swatch(color: Rgba) -> Element<'static, Message> {
         .height(SWATCH_SIZE)
         .style(move |_| iced::widget::container::Style {
             background: Some(Color::from_rgb8(color.r, color.g, color.b).into()),
-            border: border::rounded(3)
-                .width(1)
-                .color(Color::from_rgba(1.0, 1.0, 1.0, 0.35)),
+            border: border::rounded(3).width(1).color(Color::from_rgba8(
+                255,
+                255,
+                255,
+                0x26 as f32 / 255.0,
+            )),
             ..Default::default()
         })
         .into()
-}
-
-fn separator() -> Element<'static, Message> {
-    text("·").size(13).color(theme::MUTED).into()
 }
 
 /// `0.34`, `0.6` and `1` rather than `0.340` or `1.0`.
@@ -867,7 +889,7 @@ fn format_number(value: f64) -> String {
         .to_string()
 }
 
-/// The crosshair drawn on a grey tile, or VALORANT's default one when the preset has none.
+/// The crosshair drawn on a dark tile, or VALORANT's default one when the preset has none.
 fn crosshair_tile(crosshair: Option<&CrosshairSummary>) -> Element<'static, Message> {
     let crosshair = crosshair
         .cloned()
@@ -879,7 +901,11 @@ fn crosshair_tile(crosshair: Option<&CrosshairSummary>) -> Element<'static, Mess
             .height(CROSSHAIR_PREVIEW_SIZE),
     )
     .clip(true)
-    .style(crosshair_tile_style)
+    .style(|_| {
+        container::Style::default()
+            .background(theme::BG)
+            .border(border::rounded(8).width(1).color(theme::LINE))
+    })
     .into()
 }
 
@@ -1073,33 +1099,6 @@ pub(in crate::ui) fn original_settings(app: &PrimeApp) -> Vec<&GameSettingsProfi
     }
 
     originals
-}
-
-fn crosshair_tile_style(_: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        // A mid grey, like a wall in game, so light and dark crosshairs both show.
-        background: Some(Color::from_rgb8(92, 98, 106).into()),
-        border: border::rounded(6)
-            .width(1)
-            .color(Color::from_rgba8(255, 255, 255, 0.12)),
-        ..Default::default()
-    }
-}
-
-fn chip_style(_: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(theme::RAISED.into()),
-        border: border::rounded(4).width(1).color(theme::LINE),
-        ..Default::default()
-    }
-}
-
-fn keycap_style(_: &Theme) -> iced::widget::container::Style {
-    iced::widget::container::Style {
-        background: Some(theme::LINE.into()),
-        border: border::rounded(4).width(1).color(theme::FAINT),
-        ..Default::default()
-    }
 }
 
 #[cfg(test)]
