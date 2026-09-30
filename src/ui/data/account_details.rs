@@ -510,27 +510,27 @@ async fn fetch_resolved_account_activity(
     let pregame = async {
         match detail {
             ActivityDetail::Full => {
-                account_activity_probe(api.pregame_player(credentials, region).await)
+                account_activity_probe(&api.pregame_player(credentials, region).await)
             }
             // Agent select is covered by the party request: players stay in their party.
             ActivityDetail::InGame => AccountActivityProbe::NotFound,
         }
     };
     let (current_game, pregame, party) = iced::futures::join!(
-        async { account_activity_probe(api.current_game_player(credentials, region).await) },
+        async { account_activity_probe(&api.current_game_player(credentials, region).await) },
         pregame,
-        async { account_activity_probe(api.party_player(credentials, region).await) },
+        async { account_activity_probe(&api.party_player(credentials, region).await) },
     );
 
     classify_account_activity(current_game, pregame, party)
 }
 
-fn account_activity_probe(
-    result: Result<PlayerActivityEndpointPresence, crate::riot::client::RiotApiError>,
+pub(in crate::ui) fn account_activity_probe<T>(
+    result: &Result<Option<T>, crate::riot::client::RiotApiError>,
 ) -> AccountActivityProbe {
     match result {
-        Ok(PlayerActivityEndpointPresence::Present) => AccountActivityProbe::Present,
-        Ok(PlayerActivityEndpointPresence::Missing) => AccountActivityProbe::NotFound,
+        Ok(Some(_)) => AccountActivityProbe::Present,
+        Ok(None) => AccountActivityProbe::NotFound,
         Err(_) => AccountActivityProbe::Failed(ACCOUNT_ACTIVITY_FAILED_REASON.to_string()),
     }
 }
@@ -563,7 +563,7 @@ async fn fetch_account_rank(
     let account_id = account.id;
     let resolved = resolve_credentials(api, &account, client_version).await?;
     let rank = api
-        .player_mmr(&resolved.credentials)
+        .player_mmr(&resolved.credentials, &resolved.credentials.puuid)
         .await
         .map(|response| competitive_rank_from_mmr(&response))
         .map_err(|error| error.to_string());

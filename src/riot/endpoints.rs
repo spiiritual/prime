@@ -118,6 +118,38 @@ pub fn party_player_url(region: ValorantRegion, shard: Shard, puuid: &str) -> St
     format!("{}/parties/v1/players/{puuid}", glz_base_url(region, shard))
 }
 
+pub fn current_game_match_url(region: ValorantRegion, shard: Shard, match_id: &str) -> String {
+    format!(
+        "{}/core-game/v1/matches/{match_id}",
+        glz_base_url(region, shard)
+    )
+}
+
+pub fn current_game_loadouts_url(region: ValorantRegion, shard: Shard, match_id: &str) -> String {
+    format!(
+        "{}/core-game/v1/matches/{match_id}/loadouts",
+        glz_base_url(region, shard)
+    )
+}
+
+pub fn pregame_match_url(region: ValorantRegion, shard: Shard, match_id: &str) -> String {
+    format!(
+        "{}/pregame/v1/matches/{match_id}",
+        glz_base_url(region, shard)
+    )
+}
+
+pub fn pregame_loadouts_url(region: ValorantRegion, shard: Shard, match_id: &str) -> String {
+    format!(
+        "{}/pregame/v1/matches/{match_id}/loadouts",
+        glz_base_url(region, shard)
+    )
+}
+
+pub fn name_service_url(shard: Shard) -> String {
+    format!("{}/name-service/v2/players", pd_base_url(shard))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +231,30 @@ mod tests {
         assert_eq!(
             party_player_url(ValorantRegion::Ap, Shard::Ap, "puuid"),
             "https://glz-ap-1.ap.a.pvp.net/parties/v1/players/puuid"
+        );
+    }
+
+    #[test]
+    fn builds_glz_match_urls() {
+        assert_eq!(
+            current_game_match_url(ValorantRegion::Na, Shard::Na, "match"),
+            "https://glz-na-1.na.a.pvp.net/core-game/v1/matches/match"
+        );
+        assert_eq!(
+            current_game_loadouts_url(ValorantRegion::Na, Shard::Na, "match"),
+            "https://glz-na-1.na.a.pvp.net/core-game/v1/matches/match/loadouts"
+        );
+        assert_eq!(
+            pregame_match_url(ValorantRegion::Eu, Shard::Eu, "match"),
+            "https://glz-eu-1.eu.a.pvp.net/pregame/v1/matches/match"
+        );
+        assert_eq!(
+            pregame_loadouts_url(ValorantRegion::Eu, Shard::Eu, "match"),
+            "https://glz-eu-1.eu.a.pvp.net/pregame/v1/matches/match/loadouts"
+        );
+        assert_eq!(
+            name_service_url(Shard::Na),
+            "https://pd.na.a.pvp.net/name-service/v2/players"
         );
     }
 

@@ -504,6 +504,168 @@ pub struct LoadoutIdentity {
     pub hide_account_level: bool,
 }
 
+/// Current game or pre-game player: which match the player is in.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct GamePlayerResponse {
+    #[serde(rename = "MatchID")]
+    pub match_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct CoreGameMatchResponse {
+    #[serde(rename = "MatchID")]
+    pub match_id: String,
+    #[serde(rename = "MapID", default)]
+    pub map_id: String,
+    #[serde(rename = "ProvisioningFlow", default)]
+    pub provisioning_flow: String,
+    #[serde(rename = "GamePodID", default)]
+    pub game_pod_id: String,
+    #[serde(rename = "Players", default)]
+    pub players: Vec<CoreGamePlayer>,
+    /// Null in some matches, such as custom games.
+    #[serde(rename = "MatchmakingData", default)]
+    pub matchmaking_data: Option<MatchmakingData>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct MatchmakingData {
+    #[serde(rename = "QueueID", default)]
+    pub queue_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct CoreGamePlayer {
+    #[serde(rename = "Subject")]
+    pub subject: String,
+    #[serde(rename = "TeamID", default)]
+    pub team_id: String,
+    #[serde(rename = "CharacterID", default)]
+    pub character_id: String,
+    #[serde(rename = "PlayerIdentity", default)]
+    pub player_identity: MatchPlayerIdentity,
+    #[serde(rename = "IsCoach", default)]
+    pub is_coach: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+pub struct MatchPlayerIdentity {
+    #[serde(rename = "PlayerCardID", default)]
+    pub player_card_id: String,
+    #[serde(rename = "AccountLevel", default)]
+    pub account_level: i64,
+    /// The player hides their name in game (streamer mode).
+    #[serde(rename = "Incognito", default)]
+    pub incognito: bool,
+    #[serde(rename = "HideAccountLevel", default)]
+    pub hide_account_level: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct PregameMatchResponse {
+    #[serde(rename = "ID")]
+    pub id: String,
+    #[serde(rename = "MapID", default)]
+    pub map_id: String,
+    #[serde(rename = "QueueID", default)]
+    pub queue_id: String,
+    #[serde(rename = "GamePodID", default)]
+    pub game_pod_id: String,
+    #[serde(rename = "ProvisioningFlowID", default)]
+    pub provisioning_flow_id: String,
+    #[serde(rename = "AllyTeam", default)]
+    pub ally_team: Option<PregameTeam>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct PregameTeam {
+    #[serde(rename = "Players", default)]
+    pub players: Vec<PregamePlayer>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct PregamePlayer {
+    #[serde(rename = "Subject")]
+    pub subject: String,
+    #[serde(rename = "CharacterID", default)]
+    pub character_id: String,
+    /// "", "selected" or "locked".
+    #[serde(rename = "CharacterSelectionState", default)]
+    pub character_selection_state: String,
+    #[serde(rename = "PlayerIdentity", default)]
+    pub player_identity: MatchPlayerIdentity,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct CoreGameLoadoutsResponse {
+    #[serde(rename = "Loadouts", default)]
+    pub loadouts: Vec<CoreGameLoadout>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct CoreGameLoadout {
+    #[serde(rename = "Loadout")]
+    pub loadout: MatchLoadout,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct PregameLoadoutsResponse {
+    #[serde(rename = "Loadouts", default)]
+    pub loadouts: Vec<MatchLoadout>,
+    #[serde(rename = "LoadoutsValid", default)]
+    pub loadouts_valid: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct MatchLoadout {
+    #[serde(rename = "Subject")]
+    pub subject: String,
+    #[serde(rename = "Items", default)]
+    pub items: HashMap<String, MatchLoadoutItem>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct MatchLoadoutItem {
+    #[serde(rename = "Sockets", default)]
+    pub sockets: HashMap<String, MatchLoadoutSocket>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct MatchLoadoutSocket {
+    #[serde(rename = "Item")]
+    pub item: MatchLoadoutSocketItem,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct MatchLoadoutSocketItem {
+    #[serde(rename = "ID")]
+    pub id: String,
+}
+
+impl MatchLoadout {
+    /// The item in a weapon's socket, such as its skin. Riot's IDs are compared without case.
+    pub fn socket_item(&self, weapon_id: &str, socket_id: &str) -> Option<&str> {
+        let (_, item) = self
+            .items
+            .iter()
+            .find(|(id, _)| id.eq_ignore_ascii_case(weapon_id))?;
+        item.sockets
+            .iter()
+            .find(|(id, _)| id.eq_ignore_ascii_case(socket_id))
+            .map(|(_, socket)| socket.item.id.as_str())
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct NameServiceEntry {
+    #[serde(rename = "Subject")]
+    pub subject: String,
+    #[serde(rename = "GameName", default)]
+    pub game_name: String,
+    #[serde(rename = "TagLine", default)]
+    pub tag_line: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -953,5 +1115,163 @@ mod tests {
             penalties.infractions[0].rating_name,
             "Queue Dodge".to_string()
         );
+    }
+
+    fn core_game_match_json(matchmaking_data: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "MatchID": "match",
+            "Version": 1,
+            "State": "IN_PROGRESS",
+            "MapID": "/Game/Maps/Ascent/Ascent",
+            "ModeID": "/Game/GameModes/Bomb/BombGameMode.BombGameMode_C",
+            "ProvisioningFlow": "Matchmaking",
+            "GamePodID": "aresriot.aws-rclusterprod-use1-1.na-gp-ashburn-1",
+            "AllMUCName": "all",
+            "TeamMUCName": "team",
+            "TeamVoiceID": "voice",
+            "IsReconnectable": true,
+            "ConnectionDetails": {},
+            "PostGameDetails": null,
+            "Players": [{
+                "Subject": "self",
+                "TeamID": "Blue",
+                "CharacterID": "agent",
+                "PlayerIdentity": {
+                    "Subject": "self",
+                    "PlayerCardID": "card",
+                    "PlayerTitleID": "title",
+                    "AccountLevel": 214,
+                    "PreferredLevelBorderID": "border",
+                    "Incognito": true,
+                    "HideAccountLevel": false
+                },
+                "SeasonalBadgeInfo": {},
+                "IsCoach": false,
+                "IsAssociated": true
+            }],
+            "MatchmakingData": matchmaking_data
+        })
+    }
+
+    #[test]
+    fn deserializes_core_game_match_with_and_without_matchmaking_data() {
+        let without: CoreGameMatchResponse =
+            serde_json::from_value(core_game_match_json(serde_json::Value::Null))
+                .expect("match without matchmaking data");
+        assert_eq!(without.matchmaking_data, None);
+        assert_eq!(without.map_id, "/Game/Maps/Ascent/Ascent");
+        let player = &without.players[0];
+        assert_eq!(player.team_id, "Blue");
+        assert!(player.player_identity.incognito);
+        assert_eq!(player.player_identity.account_level, 214);
+
+        let with: CoreGameMatchResponse = serde_json::from_value(core_game_match_json(
+            serde_json::json!({"QueueID": "competitive", "IsRanked": true}),
+        ))
+        .expect("match with matchmaking data");
+        assert_eq!(
+            with.matchmaking_data
+                .and_then(|data| data.queue_id)
+                .as_deref(),
+            Some("competitive")
+        );
+    }
+
+    #[test]
+    fn deserializes_pregame_match_ally_team() {
+        let json = serde_json::json!({
+            "ID": "match",
+            "Version": 1,
+            "Teams": [],
+            "AllyTeam": {
+                "TeamID": "Red",
+                "Players": [{
+                    "Subject": "self",
+                    "CharacterID": "",
+                    "CharacterSelectionState": "",
+                    "PregamePlayerState": "joined",
+                    "CompetitiveTier": 0,
+                    "PlayerIdentity": {"PlayerCardID": "card", "AccountLevel": 3},
+                    "IsCaptain": false
+                }]
+            },
+            "EnemyTeam": null,
+            "MapID": "/Game/Maps/Bonsai/Bonsai",
+            "GamePodID": "pod",
+            "Mode": "/Game/GameModes/Bomb/BombGameMode.BombGameMode_C",
+            "QueueID": "unrated",
+            "ProvisioningFlowID": "Matchmaking",
+            "IsRanked": false
+        });
+
+        let pregame: PregameMatchResponse = serde_json::from_value(json).expect("pregame");
+
+        assert_eq!(pregame.queue_id, "unrated");
+        let players = pregame.ally_team.expect("ally team").players;
+        assert_eq!(players[0].subject, "self");
+        assert_eq!(players[0].character_selection_state, "");
+        assert!(!players[0].player_identity.incognito);
+    }
+
+    fn loadout_json() -> serde_json::Value {
+        serde_json::json!({
+            "Subject": "self",
+            "Sprays": {},
+            "Items": {
+                "9C82E19D-4575-0200-1A81-3EACF00CF872": {
+                    "ID": "9c82e19d-4575-0200-1a81-3eacf00cf872",
+                    "TypeID": "weapon",
+                    "Sockets": {
+                        "bcef87d6-209b-46c6-8b19-fbe40bd95abc": {
+                            "ID": "bcef87d6-209b-46c6-8b19-fbe40bd95abc",
+                            "Item": {"ID": "skin", "TypeID": "skin-type"}
+                        }
+                    }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn reads_match_loadouts_in_both_shapes() {
+        let core: CoreGameLoadoutsResponse = serde_json::from_value(serde_json::json!({
+            "Loadouts": [{"CharacterID": "agent", "Loadout": loadout_json()}]
+        }))
+        .expect("core-game loadouts");
+        let pregame: PregameLoadoutsResponse = serde_json::from_value(serde_json::json!({
+            "Loadouts": [loadout_json()],
+            "LoadoutsValid": true
+        }))
+        .expect("pregame loadouts");
+
+        assert!(pregame.loadouts_valid);
+        for loadout in [&core.loadouts[0].loadout, &pregame.loadouts[0]] {
+            assert_eq!(loadout.subject, "self");
+            assert_eq!(
+                loadout.socket_item(
+                    "9c82e19d-4575-0200-1a81-3eacf00cf872",
+                    "BCEF87D6-209B-46C6-8B19-FBE40BD95ABC"
+                ),
+                Some("skin")
+            );
+            assert_eq!(
+                loadout.socket_item("other-weapon", "bcef87d6-209b-46c6-8b19-fbe40bd95abc"),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn deserializes_name_service_entries() {
+        let entries: Vec<NameServiceEntry> = serde_json::from_value(serde_json::json!([{
+            "DisplayName": "",
+            "Subject": "self",
+            "GameName": "Player",
+            "TagLine": "NA1"
+        }]))
+        .expect("names");
+
+        assert_eq!(entries[0].game_name, "Player");
+        assert_eq!(entries[0].tag_line, "NA1");
     }
 }

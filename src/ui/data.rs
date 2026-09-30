@@ -14,7 +14,7 @@ use crate::launch::{
     launch_riot_login_capture, launch_target_window_is_visible, launch_valorant,
     riot_client_window_is_visible,
 };
-use crate::riot::client::{ApiCredentials, PlayerActivityEndpointPresence, RiotApi};
+use crate::riot::client::{ApiCredentials, RiotApi};
 use crate::riot::content::{
     AccessoryCatalog, BundleCatalog, ContractCatalog, CurrencyCatalog, ResolvedAccessory,
     ResolvedBundle, ResolvedContract, ResolvedContractReward, ResolvedCurrency, ResolvedSkin,
