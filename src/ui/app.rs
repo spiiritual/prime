@@ -97,6 +97,7 @@ impl PrimeApp {
                 loadout_error: None,
                 live_match: None,
                 live_match_request: None,
+                live_match_in_flight: false,
                 live_match_error: None,
                 respect_streamer_mode: true,
                 next_request_id: 0,
@@ -1280,12 +1281,9 @@ impl PrimeApp {
                     cached_session |= self.cache_refreshed_api_context(refreshed);
                 }
 
-                // Live Match opened while this poll ran waits for it rather than signing in at the
-                // same time.
-                let live_match = if self.active_tab == Tab::LiveMatch
-                    && self.live_match.is_none()
-                    && self.live_match_error.is_none()
-                {
+                // Live Match, opened or shown again while this poll ran, waited for it rather than
+                // signing in at the same time.
+                let live_match = if self.active_tab == Tab::LiveMatch {
                     self.poll_live_match()
                 } else {
                     Task::none()
@@ -2862,7 +2860,7 @@ impl PrimeApp {
     /// token.
     fn availability_poll_blocked(&self) -> bool {
         self.account_availability_loading
-            || self.live_match_request.is_some()
+            || self.live_match_in_flight
             || self.launch_preflight_account.is_some()
             || self.settings_work_in_progress()
     }
@@ -2990,6 +2988,7 @@ impl PrimeApp {
 
         let request = self.next_view_request(account.id);
         self.live_match_request = Some(request);
+        self.live_match_in_flight = true;
         let previous = self
             .live_match
             .clone()
@@ -3013,9 +3012,19 @@ impl PrimeApp {
         let is_current_request = self
             .live_match_request
             .is_some_and(|request| request.id == request_id);
-        if is_current_request {
+        // With no current request, this was the one signing in.
+        let left_behind = self.live_match_request.is_none();
+        if is_current_request || left_behind {
             self.live_match_request = None;
+            self.live_match_in_flight = false;
         }
+        // A reply left behind by an account switch frees the sign-in, so the page's own load
+        // can start.
+        let follow_up = if left_behind && self.active_tab == Tab::LiveMatch {
+            self.poll_live_match()
+        } else {
+            Task::none()
+        };
 
         let result = match result {
             Ok(result) => result,
@@ -3030,7 +3039,7 @@ impl PrimeApp {
                     }
                     self.live_match_error = Some(error);
                 }
-                return Task::none();
+                return follow_up;
             }
         };
 
@@ -3043,7 +3052,7 @@ impl PrimeApp {
             Task::none()
         };
         if !is_current_request {
-            return save;
+            return Task::batch([save, follow_up]);
         }
 
         self.account_availability

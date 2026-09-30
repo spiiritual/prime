@@ -99,6 +99,9 @@ pub async fn match_score(puuid: &str) -> Result<MatchScore, ScoreUnavailable> {
     let client = reqwest::Client::builder()
         .timeout(LOCAL_TIMEOUT)
         .tls_danger_accept_invalid_certs(true)
+        // Certificates aren't checked, so the password must only ever reach this PC.
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(failed)?;
     let body = client

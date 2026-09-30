@@ -183,6 +183,19 @@ pub(in crate::ui) struct ApiSession {
     pub(in crate::ui) launcher_session: Option<LauncherSessionBackup>,
 }
 
+/// Whether the account has a login Prime could sign in with: an unexpired token of its own, or
+/// a complete captured launcher session.
+pub(in crate::ui) fn has_saved_login(account: &AccountProfile) -> bool {
+    account.session.as_ref().is_some_and(|session| {
+        !session.is_expired()
+            && crate::riot::auth::jwt_subject(&session.access_token)
+                .is_none_or(|subject| account.check_puuid(&subject).is_ok())
+    }) || account
+        .launcher_session
+        .as_ref()
+        .is_some_and(|backup| backup.is_ready())
+}
+
 pub(in crate::ui) async fn active_api_session(
     api: &RiotApi,
     account: &AccountProfile,

@@ -1,7 +1,7 @@
-use super::*;
 use super::image_assets::{cache_store_images, fetch_store_metadata};
 use super::loadout::SkinDisplay;
 use super::session::{ApiIdentity, resolve_credentials};
+use super::*;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct StorefrontResult {

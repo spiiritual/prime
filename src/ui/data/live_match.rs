@@ -15,7 +15,7 @@ use super::image_assets::{
     cache_map_art, cache_skin_icon, fetch_match_catalog, fetch_weapon_content,
 };
 use super::loadout::{SkinDisplay, resolve_current_skin};
-use super::session::resolve_credentials;
+use super::session::{has_saved_login, resolve_credentials};
 
 /// The weapons whose skins the page shows, in its column order: Vandal, Phantom, Sheriff,
 /// Operator.
@@ -34,7 +34,7 @@ const RANK_NOT_LOADED: &str = "not loaded yet";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum LiveMatchError {
-    /// The account's saved login didn't work; polling stops until the user acts.
+    /// The account has no login to sign in with; polling stops until the user acts.
     SignIn(String),
     /// A Riot request failed; the next poll tries again.
     Request(String),
@@ -128,9 +128,15 @@ pub(in crate::ui) async fn fetch_live_match(
 ) -> Result<LiveMatchResult, LiveMatchError> {
     let request = |error: RiotApiError| LiveMatchError::Request(error.to_string());
     let api = RiotApi::shared().map_err(request)?;
+    if !has_saved_login(&account) {
+        return Err(LiveMatchError::SignIn(
+            "it has no captured login or saved Riot token".to_string(),
+        ));
+    }
+    // A failed sign-in may be a network drop or a Riot outage, so the next poll tries again.
     let resolved = resolve_credentials(&api, &account, client_version)
         .await
-        .map_err(LiveMatchError::SignIn)?;
+        .map_err(LiveMatchError::Request)?;
     let region = resolved.region.ok_or_else(|| {
         LiveMatchError::Request("Riot didn't report this account's region".to_string())
     })?;

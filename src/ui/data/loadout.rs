@@ -1,4 +1,4 @@
-﻿use super::*;
+use super::*;
 
 use super::image_assets::{LoadoutMetadata, cache_loadout_images, fetch_loadout_metadata};
 use super::session::{ApiIdentity, resolve_credentials};
@@ -374,13 +374,7 @@ fn battle_pass_reward_groups(
 
     for level in &definition.reward_levels {
         if let Some(reward) = &level.premium_reward {
-            let display = battle_pass_reward_display(
-                reward,
-                level,
-                skins,
-                accessories,
-                currencies,
-            );
+            let display = battle_pass_reward_display(reward, level, skins, accessories, currencies);
 
             if !paid_pass_owned {
                 locked_paid_rewards.push(display);
@@ -392,13 +386,7 @@ fn battle_pass_reward_groups(
         }
 
         for reward in &level.free_rewards {
-            let display = battle_pass_reward_display(
-                reward,
-                level,
-                skins,
-                accessories,
-                currencies,
-            );
+            let display = battle_pass_reward_display(reward, level, skins, accessories, currencies);
 
             if level.tier <= level_reached {
                 earned_rewards.push(display);

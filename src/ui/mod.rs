@@ -356,6 +356,8 @@ struct PrimeApp {
     /// The selected account's last live match: agent select or a match in progress.
     live_match: Option<LiveMatch>,
     live_match_request: Option<ViewRequest>,
+    /// Whether a Live Match load is signing in, even one an account switch left behind.
+    live_match_in_flight: bool,
     live_match_error: Option<LiveMatchError>,
     /// Whether players who hide their name in game stay hidden. On at every start.
     respect_streamer_mode: bool,

@@ -38,7 +38,8 @@ use super::data::shop::{
 use super::{
     Message, PendingSettingsChange, PendingSettingsCheck, PresetNamePrompt, PresetNameTarget,
     PrimeApp, SettingsChange, Status, StatusKind, countdown_timer_active,
-    masked_account_export_payload, status_bar_visible, status_spinner_active, status_time_left, status_visible_at,
+    masked_account_export_payload, status_bar_visible, status_spinner_active, status_time_left,
+    status_visible_at,
 };
 use crate::account::{
     AccountId, AccountPenalty, AccountPenaltyDuration, AccountPenaltyStatus, AccountProfile,
@@ -6011,7 +6012,10 @@ fn an_account_with_no_rank_reads_unranked_and_a_failed_one_unavailable() {
         "Rank unavailable"
     );
     // The failure's reason is kept for the label's tooltip, and cleared once the rank loads.
-    assert_eq!(app.rank_errors.get(&alt.id).map(String::as_str), Some("offline"));
+    assert_eq!(
+        app.rank_errors.get(&alt.id).map(String::as_str),
+        Some("offline")
+    );
     assert!(!app.rank_errors.contains_key(&main.id));
 
     let _ = app.update(rank_result(alt.id, Ok(None)));
@@ -6102,7 +6106,10 @@ fn a_toast_on_screen_changes_text_without_rising_again() {
 fn an_entrance_eases_out_over_its_duration() {
     let start = iced::time::Instant::now();
     assert_eq!(super::appear_progress(start, start), 0.0);
-    assert_eq!(super::appear_progress(start, start + Duration::from_secs(1)), 1.0);
+    assert_eq!(
+        super::appear_progress(start, start + Duration::from_secs(1)),
+        1.0
+    );
     let halfway = super::appear_progress(start, start + super::APPEAR_DURATION / 2);
     // Most of the motion happens early.
     assert!(halfway > 0.8 && halfway < 1.0, "{halfway}");
@@ -6305,6 +6312,7 @@ fn a_live_match_reply_for_an_old_request_only_keeps_its_session() {
     let _ = app.update(Message::TabSelected(super::Tab::LiveMatch));
     let first = app.live_match_request.expect("request").id;
     app.live_match_request = None;
+    app.live_match_in_flight = false;
     let _ = app.update(live_tick());
     let latest = app.live_match_request.expect("latest request");
 
@@ -6441,7 +6449,10 @@ fn the_live_match_indicator_shows_only_in_agent_select_or_a_match() {
         app.live_match_indicator(),
         Some(("IN A MATCH", "View match".to_string()))
     );
-    set(&mut app, AccountAvailability::Unavailable(Busy::AgentSelect));
+    set(
+        &mut app,
+        AccountAvailability::Unavailable(Busy::AgentSelect),
+    );
     assert_eq!(
         app.live_match_indicator(),
         Some(("AGENT SELECT", "View match".to_string()))
@@ -6494,4 +6505,26 @@ fn the_live_match_page_fills_the_page_for_states() {
     assert!(!fills(&app), "a match with an update error");
     app.live_match_error = Some(LiveMatchError::SignIn("signed out".to_string()));
     assert!(fills(&app), "sign-in error");
+}
+
+#[test]
+fn a_live_match_load_left_by_an_account_switch_blocks_sign_ins_until_it_answers() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, alt) = live_match_app(dir.path());
+    let _ = app.update(Message::TabSelected(super::Tab::LiveMatch));
+    let first = app.live_match_request.expect("request").id;
+
+    // The old account's load still signs in, so neither the new one nor an availability poll
+    // starts yet.
+    let _ = app.update(Message::SelectAccount(alt.id));
+    assert_eq!(app.live_match_request, None);
+    assert!(app.live_match_in_flight);
+
+    let task = app.update(Message::LiveMatchLoaded(
+        first,
+        Err(LiveMatchError::Request("offline".to_string())),
+    ));
+    assert_eq!(task.units(), 1);
+    assert!(app.live_match_request.is_some());
+    assert_eq!(app.live_match_error, None);
 }

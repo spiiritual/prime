@@ -1,5 +1,5 @@
-use super::*;
 use super::session::reauth_launcher_backup;
+use super::*;
 
 #[derive(Clone, Debug)]
 pub(in crate::ui) struct LoadedAccounts {
