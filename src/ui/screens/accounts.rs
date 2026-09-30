@@ -183,11 +183,15 @@ fn hero<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, Messa
             .spacing(6)
             .align_y(alignment::Vertical::Center)
             .into(),
-        (None, icon) => row![rank_icon(icon, 18.0)]
-            .push(meta_value(missing_rank_label(app, account.id)).color(theme::MUTED))
-            .spacing(6)
-            .align_y(alignment::Vertical::Center)
-            .into(),
+        (None, icon) => with_rank_error(
+            app,
+            account.id,
+            row![rank_icon(icon, 18.0)]
+                .push(meta_value(missing_rank_label(app, account.id)).color(theme::MUTED))
+                .spacing(6)
+                .align_y(alignment::Vertical::Center)
+                .into(),
+        ),
     };
     let level: Element<_> = match account.account_level.filter(|level| *level > 0) {
         Some(level) => mono(level.to_string(), 14)
@@ -821,7 +825,7 @@ fn rank_cell<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, 
         None => (missing_rank_label(app, account.id), theme::MUTED),
     };
 
-    row![rank_icon(icon, 22.0)]
+    let cell = row![rank_icon(icon, 22.0)]
         .push(
             text(label)
                 .size(13)
@@ -831,7 +835,28 @@ fn rank_cell<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, 
         )
         .spacing(8)
         .align_y(alignment::Vertical::Center)
-        .into()
+        .into();
+    if account.competitive_rank.is_some() {
+        cell
+    } else {
+        with_rank_error(app, account.id, cell)
+    }
+}
+
+/// Shows why the account's rank couldn't load when the pointer is over it.
+fn with_rank_error<'a>(
+    app: &'a PrimeApp,
+    account_id: AccountId,
+    content: Element<'a, Message>,
+) -> Element<'a, Message> {
+    let Some(error) = app.rank_errors.get(&account_id) else {
+        return content;
+    };
+    let tip = container(text(error).size(12))
+        .padding([6, 8])
+        .max_width(420)
+        .style(|_| popover_style(&Theme::Dark));
+    tooltip(content, tip, tooltip::Position::Top).into()
 }
 
 fn rank_icon(path: Option<&std::path::PathBuf>, size: f32) -> Option<Element<'static, Message>> {

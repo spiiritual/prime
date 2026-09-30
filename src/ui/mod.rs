@@ -349,6 +349,8 @@ struct PrimeApp {
     account_ranks_loading: HashSet<AccountId>,
     /// Accounts whose rank loaded and turned out to be none.
     unranked_accounts: HashSet<AccountId>,
+    /// Why each account's last rank lookup failed, shown on hover over "Rank unavailable".
+    rank_errors: HashMap<AccountId, String>,
     /// When the last all-account details and availability loads started, so reopening the
     /// Accounts tab doesn't refetch everything each time.
     account_details_loaded_at: Option<iced::time::Instant>,

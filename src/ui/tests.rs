@@ -2785,6 +2785,7 @@ fn current_account_capture_success_populates_confirmation_fields() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
     app.launcher_capture_in_progress = true;
+    app.status = Status::progress("Capturing the Riot account currently signed in");
     let draft = captured_account_draft(
         &app.repo.launcher_backups_dir(),
         "puuid-a",
@@ -3433,6 +3434,8 @@ fn selecting_an_account_refreshes_it_without_a_full_reload() {
     app.state.push_account(main);
     app.state.push_account(alt.clone());
     app.client_version_input = "release-1".to_string();
+    // A shop-reset toast for the account left behind would otherwise stay.
+    app.status = Status::progress("Shop reset reached; loading updated shop");
 
     let _ = app.update(Message::SelectAccount(alt.id));
 
@@ -4150,6 +4153,7 @@ fn a_manual_client_version_refresh_replaces_the_field() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
     app.client_version_input = "x".to_string();
+    app.status = Status::progress("Refreshing Riot client version");
 
     let _ = app.update(Message::ClientVersionLoaded {
         user_requested: true,
@@ -4159,6 +4163,21 @@ fn a_manual_client_version_refresh_replaces_the_field() {
     assert_eq!(app.client_version_input, "release-2");
     // The field shows the version, so no toast repeats it.
     assert_eq!(app.status, Status::default());
+}
+
+#[test]
+fn a_finished_load_leaves_launch_progress_on_screen() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account) = accounts_tab_app(dir.path());
+    app.launching_account = Some(account.id);
+    app.status = Status::progress("Launching Main");
+
+    let _ = app.update(Message::ClientVersionLoaded {
+        user_requested: true,
+        result: Ok("release-2".to_string()),
+    });
+
+    assert_eq!(app.status, Status::progress("Launching Main"));
 }
 
 #[test]
@@ -6004,6 +6023,12 @@ fn an_account_with_no_rank_reads_unranked_and_a_failed_one_unavailable() {
         super::screens::missing_rank_label(&app, alt.id),
         "Rank unavailable"
     );
+    // The failure's reason is kept for the label's tooltip, and cleared once the rank loads.
+    assert_eq!(app.rank_errors.get(&alt.id).map(String::as_str), Some("offline"));
+    assert!(!app.rank_errors.contains_key(&main.id));
+
+    let _ = app.update(rank_result(alt.id, Ok(None)));
+    assert!(!app.rank_errors.contains_key(&alt.id));
 }
 
 fn key_press(key: iced::keyboard::Key) -> iced::keyboard::Event {

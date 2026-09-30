@@ -121,7 +121,12 @@ pub struct MmrQueueSkills {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct MmrQueueSkill {
-    #[serde(default, rename = "SeasonalInfoBySeasonID")]
+    // Riot sends null here for an account that has never played competitive.
+    #[serde(
+        default,
+        rename = "SeasonalInfoBySeasonID",
+        deserialize_with = "null_as_default"
+    )]
     pub seasonal_info_by_season_id: HashMap<String, MmrSeasonInfo>,
 }
 
@@ -402,6 +407,14 @@ pub struct AccessoryStore {
 #[serde(rename_all = "PascalCase")]
 pub struct AccessoryStoreOffer {
     pub offer: StoreOffer,
+}
+
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 fn deserialize_discount_percent<'de, D>(deserializer: D) -> Result<i64, D::Error>
@@ -857,6 +870,28 @@ mod tests {
                 .as_ref()
                 .map(|update| update.season_id.as_str()),
             Some("season-a")
+        );
+    }
+
+    #[test]
+    fn a_never_ranked_players_mmr_has_no_seasons() {
+        let json = serde_json::json!({
+            "Version": 1,
+            "Subject": "puuid",
+            "QueueSkills": {
+                "competitive": { "SeasonalInfoBySeasonID": null }
+            },
+            "LatestCompetitiveUpdate": null
+        });
+
+        let mmr: PlayerMmrResponse = serde_json::from_value(json).expect("mmr response");
+
+        assert!(
+            mmr.queue_skills
+                .competitive
+                .expect("competitive")
+                .seasonal_info_by_season_id
+                .is_empty()
         );
     }
 

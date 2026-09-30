@@ -97,6 +97,7 @@ impl PrimeApp {
                 profile_identity_refreshing: Default::default(),
                 account_ranks_loading: Default::default(),
                 unranked_accounts: Default::default(),
+                rank_errors: Default::default(),
                 account_details_loaded_at: None,
                 account_availability: Default::default(),
                 account_availability_loading: false,
@@ -262,7 +263,7 @@ impl PrimeApp {
     /// Ends a progress toast whose result shows on screen by itself. Anything else, such as an
     /// error, stays.
     fn clear_progress_status(&mut self) {
-        if self.status.kind == StatusKind::Progress {
+        if self.status.kind == StatusKind::Progress && !self.progress_pinned() {
             self.status = Status::default();
         }
     }
@@ -384,6 +385,8 @@ impl PrimeApp {
                 self.close_account_surfaces();
                 self.unavailable_launch_warning = None;
                 self.clear_selected_account_views();
+                // Ends a "loading updated shop" toast for the account just left.
+                self.clear_progress_status();
                 Task::batch([self.save_task(), self.load_account_tab(id)])
             }
             Message::NewDisplayNameChanged(value) => {
@@ -1074,6 +1077,14 @@ impl PrimeApp {
                     } else {
                         self.unranked_accounts.remove(&account_id);
                     }
+                    match &rank {
+                        Err(error) => {
+                            self.rank_errors.insert(account_id, error.clone());
+                        }
+                        Ok(_) => {
+                            self.rank_errors.remove(&account_id);
+                        }
+                    }
 
                     if let Some(account) = self
                         .state
@@ -1621,7 +1632,6 @@ impl PrimeApp {
             Message::CancelSettingsChange => {
                 self.settings_check = None;
                 self.confirm_settings_change = None;
-                self.clear_progress_status();
                 Task::none()
             }
             Message::ConfirmSettingsChange => {
