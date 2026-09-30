@@ -31,7 +31,8 @@ use super::data::session::{
     ApiIdentity, api_identity, needs_player_info, needs_player_info_after_geo,
 };
 use super::data::shop::{
-    StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay, StoreSummary, format_whole_number,
+    AccessoryKind, BundleItem, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
+    StoreSummary, format_whole_number,
 };
 use super::{
     Message, PendingSettingsChange, PendingSettingsCheck, PresetNamePrompt, PresetNameTarget,
@@ -5662,6 +5663,80 @@ fn a_bundle_at_full_price_shows_no_discount() {
 
     assert_eq!(bundle.original_price, None);
     assert_eq!(bundle.discount_percent, 0);
+}
+
+#[test]
+fn a_bundles_items_keep_their_own_prices_and_say_what_they_are() {
+    let title = serde_json::json!({
+        "Item": {
+            "ItemTypeID": "de7caa6b-adf7-4588-bbd1-143831e786c6",
+            "ItemID": "title",
+            "Amount": 1
+        },
+        "BasePrice": 0,
+        "CurrencyID": "vp",
+        "DiscountPercent": 0,
+        "DiscountedPrice": 0,
+        "IsPromoItem": false
+    });
+    let summary = summary_with_bundles(
+        vec![priced_bundle_json(
+            Some(2_175),
+            Some(1_740),
+            serde_json::json!([bundle_item_json(2_175, 20, 1_740), title]),
+        )],
+        3_600,
+        iced::time::Instant::now(),
+    );
+    let items = &summary.featured_bundles[0].items;
+
+    assert!(matches!(items[0].item, BundleItem::Skin(_)));
+    assert_eq!(
+        items[0].price.as_ref().map(|price| price.amount),
+        Some(2_175)
+    );
+    assert!(matches!(
+        items[1].item,
+        BundleItem::Accessory {
+            kind: Some(AccessoryKind::Title),
+            ..
+        }
+    ));
+    // A title only comes with the bundle.
+    assert_eq!(items[1].price, None);
+}
+
+#[test]
+fn a_bundles_details_open_for_that_bundle_and_close_with_escape_or_a_tab_change() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let loaded_at = iced::time::Instant::now();
+    app.store_summary = Some(summary_with_bundles(
+        vec![
+            featured_bundle_json("first", 3_600),
+            featured_bundle_json("second", 7_200),
+        ],
+        7_200,
+        loaded_at,
+    ));
+
+    let _ = app.update(Message::ShowBundleDetails("second".to_string()));
+    assert_eq!(
+        app.open_bundle_details()
+            .map(|bundle| bundle.store_id.as_str()),
+        Some("second")
+    );
+
+    let _ = app.update(Message::EscapePressed);
+    assert!(app.open_bundle_details().is_none());
+
+    let _ = app.update(Message::ShowBundleDetails("first".to_string()));
+    let _ = app.update(Message::TabSelected(super::Tab::Loadout));
+    assert!(app.open_bundle_details().is_none());
+
+    // A bundle the shop no longer has shows nothing.
+    let _ = app.update(Message::ShowBundleDetails("gone".to_string()));
+    assert!(app.open_bundle_details().is_none());
 }
 
 #[test]

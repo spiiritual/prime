@@ -261,14 +261,19 @@ pub struct WeaponContent {
 
 impl WeaponContent {
     pub fn from_weapons_and_tiers(mut weapons: Vec<Weapon>, tiers: &ContentTierCatalog) -> Self {
-        let skins = weapons
+        let skins: Vec<_> = weapons
             .iter_mut()
-            .flat_map(|weapon| std::mem::take(&mut weapon.skins))
+            .flat_map(|weapon| {
+                let name = weapon.display_name.clone();
+                std::mem::take(&mut weapon.skins)
+                    .into_iter()
+                    .map(move |skin| (Some(name.clone()), skin))
+            })
             .collect();
 
         Self {
             weapons: WeaponCatalog::from_weapons(weapons),
-            skins: SkinCatalog::from_skins_and_tiers(skins, tiers),
+            skins: SkinCatalog::from_weapon_skins(skins, tiers),
         }
     }
 }
@@ -344,9 +349,17 @@ impl SkinCatalog {
     }
 
     pub fn from_skins_and_tiers(skins: Vec<WeaponSkin>, tiers: &ContentTierCatalog) -> Self {
+        Self::from_weapon_skins(skins.into_iter().map(|skin| (None, skin)), tiers)
+    }
+
+    /// Skins paired with the name of the weapon they're for.
+    fn from_weapon_skins(
+        skins: impl IntoIterator<Item = (Option<String>, WeaponSkin)>,
+        tiers: &ContentTierCatalog,
+    ) -> Self {
         let mut by_uuid = HashMap::new();
 
-        for skin in skins {
+        for (weapon_name, skin) in skins {
             let viewer_icon = skin
                 .chromas
                 .iter()
@@ -362,6 +375,7 @@ impl SkinCatalog {
                 display_icon: skin.display_icon.clone(),
                 viewer_icon: viewer_icon.clone(),
                 rarity: rarity.clone(),
+                weapon_name: weapon_name.clone(),
                 level_label: None,
                 chroma_label: None,
             };
@@ -384,6 +398,7 @@ impl SkinCatalog {
                         display_icon: level.display_icon.or_else(|| skin.display_icon.clone()),
                         viewer_icon: viewer_icon.clone(),
                         rarity: rarity.clone(),
+                        weapon_name: weapon_name.clone(),
                         chroma_label: None,
                     },
                 );
@@ -410,6 +425,7 @@ impl SkinCatalog {
                             .or_else(|| skin_info.display_icon.clone()),
                         viewer_icon: chroma_viewer_icon,
                         rarity: rarity.clone(),
+                        weapon_name: weapon_name.clone(),
                         level_label: None,
                         chroma_label,
                     },
@@ -435,6 +451,8 @@ pub struct ResolvedSkin {
     pub display_icon: Option<String>,
     pub viewer_icon: Option<String>,
     pub rarity: Option<String>,
+    /// The weapon the skin is for, when the catalog was built from weapons.
+    pub weapon_name: Option<String>,
     pub level_label: Option<String>,
     /// The variant's name, for any chroma but the skin's base look.
     pub chroma_label: Option<String>,
@@ -448,6 +466,7 @@ impl ResolvedSkin {
             display_icon: None,
             viewer_icon: None,
             rarity: None,
+            weapon_name: None,
             level_label: None,
             chroma_label: None,
         }
@@ -1274,6 +1293,10 @@ mod tests {
         assert_eq!(
             content.skins.resolve("level-uuid").display_name,
             "Prime Vandal Level 2"
+        );
+        assert_eq!(
+            content.skins.resolve("level-uuid").weapon_name.as_deref(),
+            Some("Vandal")
         );
     }
 

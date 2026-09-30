@@ -280,6 +280,8 @@ struct PrimeApp {
     /// What the Accounts list is filtered by.
     account_filter: String,
     image_viewer: Option<ImageViewerImage>,
+    /// The store ID of the featured bundle whose details are open.
+    bundle_details: Option<String>,
     state: StoredState,
     /// False until accounts.json loads successfully; saving is refused until then so an empty
     /// in-memory state can never overwrite the user's saved accounts.
@@ -897,6 +899,9 @@ enum Message {
     OpenImageViewer(ImageViewerRequest),
     ImageViewerImageLoaded(ImageViewerSource, Result<PathBuf, String>),
     CloseImageViewer,
+    /// Opens a featured bundle's details, by its store ID.
+    ShowBundleDetails(String),
+    CloseBundleDetails,
     RiotClientPathChanged(String),
     BrowseRiotClientPath,
     RiotClientPathPicked(Option<PathBuf>),

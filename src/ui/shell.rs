@@ -141,6 +141,16 @@ impl PrimeApp {
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+        } else if let (Some(bundle), Some(summary)) =
+            (self.open_bundle_details(), self.store_summary.as_ref())
+        {
+            stack![
+                content,
+                super::screens::bundle_details(summary, bundle, self.now)
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
         } else {
             content.into()
         };

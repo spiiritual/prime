@@ -62,6 +62,7 @@ impl PrimeApp {
                 player_card_art: Default::default(),
                 account_filter: String::new(),
                 image_viewer: None,
+                bundle_details: None,
                 state: StoredState::default(),
                 accounts_loaded: false,
                 active_tab: Tab::Accounts,
@@ -181,6 +182,17 @@ impl PrimeApp {
             || self.unavailable_launch_warning.is_some()
             || self.app_update_status.prompt_update().is_some()
             || (super::image_viewer_enabled() && self.image_viewer.is_some())
+            || self.open_bundle_details().is_some()
+    }
+
+    /// The featured bundle whose details are open, while the shop still has it.
+    pub(super) fn open_bundle_details(&self) -> Option<&super::data::shop::StoreBundleDisplay> {
+        let store_id = self.bundle_details.as_ref()?;
+        self.store_summary
+            .as_ref()?
+            .featured_bundles
+            .iter()
+            .find(|bundle| &bundle.store_id == store_id)
     }
 
     /// What Escape does: cancel the dialog on top, in the order the view stacks them, or else close
@@ -215,6 +227,8 @@ impl PrimeApp {
             Message::CancelUnavailableLaunch
         } else if self.app_update_status.prompt_update().is_some() {
             Message::DismissAppUpdate
+        } else if self.open_bundle_details().is_some() {
+            Message::CloseBundleDetails
         } else if self.account_switcher_open || self.open_account_menu.is_some() {
             Message::DismissPopovers
         } else if self.settings_check.is_some() {
@@ -305,6 +319,7 @@ impl PrimeApp {
                 // Countdowns don't tick on other tabs, so bring them up to date.
                 self.now = iced::time::Instant::now();
                 self.image_viewer = None;
+                self.bundle_details = None;
                 self.close_account_surfaces();
                 self.unavailable_launch_warning = None;
                 Task::batch([
@@ -1934,6 +1949,14 @@ impl PrimeApp {
                 self.handle_image_viewer_image_loaded(source, result)
             }
             Message::CloseImageViewer => self.close_image_viewer(),
+            Message::ShowBundleDetails(store_id) => {
+                self.bundle_details = Some(store_id);
+                Task::none()
+            }
+            Message::CloseBundleDetails => {
+                self.bundle_details = None;
+                Task::none()
+            }
             Message::RiotClientPathChanged(value) => {
                 self.riot_client_path_input = value;
                 Task::none()
@@ -2611,6 +2634,7 @@ impl PrimeApp {
     /// replies only cache the session they obtained.
     fn clear_selected_account_views(&mut self) {
         self.store_summary = None;
+        self.bundle_details = None;
         self.loadout_summary = None;
         self.store_request = None;
         self.loadout_request = None;

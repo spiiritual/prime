@@ -720,6 +720,7 @@ pub(in crate::ui) struct SkinDisplay {
     pub(in crate::ui) display_icon: Option<String>,
     pub(in crate::ui) viewer_icon: Option<String>,
     pub(in crate::ui) rarity: Option<String>,
+    pub(in crate::ui) weapon_name: Option<String>,
     pub(in crate::ui) cached_icon: Option<PathBuf>,
 }
 
@@ -731,6 +732,7 @@ impl From<ResolvedSkin> for SkinDisplay {
             display_icon: skin.display_icon,
             viewer_icon: skin.viewer_icon,
             rarity: skin.rarity,
+            weapon_name: skin.weapon_name,
             cached_icon: None,
         }
     }

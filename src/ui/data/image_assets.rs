@@ -10,7 +10,7 @@ use iced::futures::stream::{self, StreamExt};
 use crate::riot::content::{ContentError, WeaponContent};
 
 use super::loadout::{BattlePassRewardDisplay, LoadoutSummary, SkinDisplay};
-use super::shop::{AccessoryDisplay, BundleDisplay, StoreSummary};
+use super::shop::{AccessoryDisplay, BundleDisplay, BundleItem, StoreSummary};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(in crate::ui) struct StoreMetadata {
@@ -104,6 +104,14 @@ pub(in crate::ui) async fn cache_store_images(
 
     for bundle in &mut summary.featured_bundles {
         downloads.push(Box::pin(cache_bundle_icon(&mut bundle.bundle, image_cache)));
+        for item in &mut bundle.items {
+            downloads.push(match &mut item.item {
+                BundleItem::Skin(skin) => Box::pin(cache_skin_icon(skin, image_cache)),
+                BundleItem::Accessory { accessory, .. } => {
+                    Box::pin(cache_accessory_icon(accessory, image_cache))
+                }
+            });
+        }
     }
 
     for offer in summary

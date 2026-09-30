@@ -110,14 +110,14 @@ impl StoreSummary {
     ) -> Self {
         let featured_bundles = if response.featured_bundle.bundles.is_empty() {
             std::iter::once(&response.featured_bundle.bundle)
-                .map(|bundle| store_bundle_display(bundle, skins, bundles, currencies))
+                .map(|bundle| store_bundle_display(bundle, skins, bundles, currencies, accessories))
                 .collect()
         } else {
             response
                 .featured_bundle
                 .bundles
                 .iter()
-                .map(|bundle| store_bundle_display(bundle, skins, bundles, currencies))
+                .map(|bundle| store_bundle_display(bundle, skins, bundles, currencies, accessories))
                 .collect()
         };
         let night_market_remaining_seconds = response
@@ -342,6 +342,8 @@ impl StoreAccessoryDisplay {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct StoreBundleDisplay {
+    /// The storefront's own ID, which tells apart two bundles with the same content.
+    pub(in crate::ui) store_id: String,
     pub(in crate::ui) bundle: BundleDisplay,
     pub(in crate::ui) price: Option<OfferPrice>,
     pub(in crate::ui) original_price: Option<OfferPrice>,
@@ -350,6 +352,24 @@ pub(in crate::ui) struct StoreBundleDisplay {
     pub(in crate::ui) rarity: Option<String>,
     /// Seconds left when the shop loaded, if Riot reported this bundle's own end time.
     pub(in crate::ui) remaining_seconds: Option<i64>,
+    pub(in crate::ui) items: Vec<BundleItemDisplay>,
+}
+
+/// One thing a bundle gives, with its price when bought on its own.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::ui) struct BundleItemDisplay {
+    pub(in crate::ui) item: BundleItem,
+    /// `None` when the item only comes with the bundle, such as a title.
+    pub(in crate::ui) price: Option<OfferPrice>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum BundleItem {
+    Skin(SkinDisplay),
+    Accessory {
+        accessory: AccessoryDisplay,
+        kind: Option<AccessoryKind>,
+    },
 }
 
 impl StoreBundleDisplay {
@@ -543,6 +563,7 @@ pub(in crate::ui) fn store_bundle_display(
     skins: &SkinCatalog,
     bundles: &BundleCatalog,
     currencies: &CurrencyCatalog,
+    accessories: &AccessoryCatalog,
 ) -> StoreBundleDisplay {
     let direct = bundles.resolve(&bundle.data_asset_id);
     let resolved = if direct.display_name != bundle.data_asset_id {
@@ -566,7 +587,26 @@ pub(in crate::ui) fn store_bundle_display(
         _ => 0,
     };
 
+    let items = bundle
+        .items
+        .iter()
+        .map(|item| BundleItemDisplay {
+            item: match AccessoryKind::from_item_type_id(&item.item.item_type_id) {
+                Some(kind) => BundleItem::Accessory {
+                    accessory: AccessoryDisplay::from(accessories.resolve(&item.item.item_id)),
+                    kind: Some(kind),
+                },
+                None => BundleItem::Skin(SkinDisplay::from(skins.resolve(&item.item.item_id))),
+            },
+            price: (item.base_price > 0).then(|| OfferPrice {
+                amount: item.base_price,
+                currency: currency_display_for_id(&item.currency_id, currencies),
+            }),
+        })
+        .collect();
+
     StoreBundleDisplay {
+        store_id: bundle.id.clone(),
         bundle: BundleDisplay::from(resolved),
         price,
         original_price,
@@ -575,6 +615,7 @@ pub(in crate::ui) fn store_bundle_display(
         rarity,
         remaining_seconds: Some(bundle.duration_remaining_in_seconds)
             .filter(|seconds| *seconds > 0),
+        items,
     }
 }
 
