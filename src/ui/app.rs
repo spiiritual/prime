@@ -129,6 +129,7 @@ impl PrimeApp {
                 unavailable_launch_warning: None,
                 launching_account: None,
                 launch_progress_checking: false,
+                launch_client_open: false,
                 window_minimized: false,
                 status_changed_at: iced::time::Instant::now(),
                 toast_appeared_at: iced::time::Instant::now(),
@@ -2186,9 +2187,7 @@ impl PrimeApp {
                 self.close_account_surfaces();
                 self.unavailable_launch_warning = None;
                 self.launch_preflight_account = Some(id);
-                self.set_status(Status::progress(format!(
-                    "Checking availability for {summary}"
-                )));
+                self.clear_progress_status();
 
                 Task::perform(
                     check_account_in_game(account, self.client_version_input.clone()),
@@ -2253,16 +2252,15 @@ impl PrimeApp {
                         ));
                         Task::none()
                     }
-                    LaunchPreflightDecision::Launch => {
-                        let summary = account.summary();
-                        self.start_account_launch(account, format!("Launching {summary}"))
-                    }
+                    LaunchPreflightDecision::Launch => self.start_account_launch(account),
                     LaunchPreflightDecision::LaunchInconclusive => {
                         let summary = account.summary();
-                        self.start_account_launch(
-                            account,
-                            format!("Activity check inconclusive; launching {summary}"),
-                        )
+                        let launch = self.start_account_launch(account);
+                        // The button can't say the check failed, so this stays a toast.
+                        self.set_status(Status::warning(format!(
+                            "Couldn't check whether {summary} is in a match; launching anyway"
+                        )));
+                        launch
                     }
                 }
             }
@@ -2308,8 +2306,7 @@ impl PrimeApp {
                     return Task::none();
                 };
 
-                let summary = account.summary();
-                self.start_account_launch(account, format!("Launching {summary} anyway"))
+                self.start_account_launch(account)
             }
             Message::LaunchProgressTick => {
                 if self.launching_account.is_none() || self.launch_progress_checking {
@@ -2330,9 +2327,7 @@ impl PrimeApp {
                 }
 
                 if matches!(result, Ok(true)) {
-                    self.set_status(Status::progress(
-                        "Riot Client is open; waiting for VALORANT",
-                    ));
+                    self.launch_client_open = true;
                 }
 
                 Task::none()
@@ -2356,18 +2351,15 @@ impl PrimeApp {
                         saved_backup = true;
                     }
 
-                    self.set_status(match (result.sync_warning, result.previous_account_sync_warning)
-                    {
-                        (Some(warning), _) => Status::error(format!(
+                    match (result.sync_warning, result.previous_account_sync_warning) {
+                        (Some(warning), _) => self.set_status(Status::error(format!(
                             "Could not sync launcher session after VALORANT window detected: {warning}"
-                        )),
-                        (None, Some(warning)) => Status::error(format!(
+                        ))),
+                        (None, Some(warning)) => self.set_status(Status::error(format!(
                             "VALORANT window detected, but the previous account's login could not be saved: {warning}"
-                        )),
-                        (None, None) => {
-                            Status::success("VALORANT window detected; launcher session updated")
-                        }
-                    });
+                        ))),
+                        (None, None) => self.clear_progress_status(),
+                    }
 
                     if saved_backup {
                         self.save_task()
@@ -3176,8 +3168,7 @@ impl PrimeApp {
         true
     }
 
-    fn start_account_launch(&mut self, account: AccountProfile, status: String) -> Task<Message> {
-        let status = Status::progress(status);
+    fn start_account_launch(&mut self, account: AccountProfile) -> Task<Message> {
         let id = account.id;
         let config = LaunchConfig {
             riot_client_path: self.state.riot_client_path.clone(),
@@ -3190,9 +3181,10 @@ impl PrimeApp {
         self.state.select_account(id);
         // Dialogs were closed when the launch was asked for; any open now were opened since.
         self.unavailable_launch_warning = None;
+        self.clear_progress_status();
         self.launching_account = Some(id);
         self.launch_progress_checking = false;
-        self.set_status(status);
+        self.launch_client_open = false;
 
         // Shop and Loadout show the selected account, so they reload when launching switched it.
         let reload = if selection_changed {

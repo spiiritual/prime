@@ -406,6 +406,8 @@ struct PrimeApp {
     unavailable_launch_warning: Option<UnavailableLaunchWarning>,
     launching_account: Option<AccountId>,
     launch_progress_checking: bool,
+    /// Riot Client's window is up and the launch waits for VALORANT's.
+    launch_client_open: bool,
     window_minimized: bool,
     status_changed_at: iced::time::Instant,
     /// When the toast last appeared. A toast already on screen changes text without rising again.

@@ -363,7 +363,11 @@ fn meta_value<'a>(value: impl iced::widget::text::IntoFragment<'a>) -> iced::wid
 /// Launch, or Capture login when there's no login to launch with.
 fn launch_button<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, Message> {
     let busy_label = if app.launching_account == Some(account.id) {
-        Some("Launching…")
+        Some(if app.launch_client_open {
+            "Waiting for VALORANT…"
+        } else {
+            "Launching…"
+        })
     } else if app.launch_preflight_account == Some(account.id) {
         Some("Checking…")
     } else {

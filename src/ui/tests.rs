@@ -3880,11 +3880,9 @@ fn launching_another_account_reloads_the_open_tab_for_it() {
         app.store_request
             .is_some_and(|request| request.account_id == alt.id)
     );
-    assert!(
-        app.status.text.starts_with("Launching"),
-        "{}",
-        app.status.text
-    );
+    assert_eq!(app.launching_account, Some(alt.id));
+    // The Launch button says it's launching, so no toast repeats it.
+    assert!(app.status.text.is_empty(), "{}", app.status.text);
 }
 
 fn loaded_loadout() -> LoadoutSummary {
