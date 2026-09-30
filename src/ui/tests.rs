@@ -6071,6 +6071,39 @@ fn escape_closes_the_open_dialog() {
 }
 
 #[test]
+fn a_dialog_starts_its_entrance_when_it_opens_or_replaces_another() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, main, _) = two_account_app(dir.path());
+
+    let _ = app.update(Message::OpenImportAccount);
+    let (dialog, opened) = app.dialog_opened.expect("import dialog");
+    assert_eq!(dialog, super::Dialog::ImportAccount);
+
+    // Typing in the open dialog doesn't restart it.
+    let _ = app.update(Message::ImportAccountInputChanged("x".to_string()));
+    assert_eq!(app.dialog_opened, Some((dialog, opened)));
+
+    let _ = app.update(Message::CancelImportAccount);
+    assert_eq!(app.dialog_opened, None);
+
+    let _ = app.update(Message::RequestDeleteAccount(main.id));
+    assert_eq!(
+        app.dialog_opened.map(|(dialog, _)| dialog),
+        Some(super::Dialog::DeleteAccount)
+    );
+}
+
+#[test]
+fn an_entrance_eases_out_over_its_duration() {
+    let start = iced::time::Instant::now();
+    assert_eq!(super::appear_progress(start, start), 0.0);
+    assert_eq!(super::appear_progress(start, start + Duration::from_secs(1)), 1.0);
+    let halfway = super::appear_progress(start, start + super::APPEAR_DURATION / 2);
+    // Most of the motion happens early.
+    assert!(halfway > 0.8 && halfway < 1.0, "{halfway}");
+}
+
+#[test]
 fn escape_closes_an_open_account_menu() {
     let dir = tempdir().expect("temp dir");
     let (mut app, main, _) = two_account_app(dir.path());

@@ -62,6 +62,7 @@ impl PrimeApp {
                 player_card_art: Default::default(),
                 account_filter: String::new(),
                 image_viewer: None,
+                dialog_opened: None,
                 bundle_details: None,
                 state: StoredState::default(),
                 accounts_loaded: false,
@@ -167,24 +168,52 @@ impl PrimeApp {
             self.close_popovers();
         }
 
+        // A dialog that opens, or replaces another, starts its entrance.
+        let dialog = self.open_dialog();
+        if dialog != self.dialog_opened.map(|(open, _)| open) {
+            self.dialog_opened = dialog.map(|dialog| (dialog, iced::time::Instant::now()));
+        }
+
         task
     }
 
     fn dialog_open(&self) -> bool {
-        self.show_add_account_prompt
-            || self.login_capture.is_some()
-            || self.pending_account.is_some()
-            || self.show_import_account_prompt
-            || self.exported_account.is_some()
-            || self.confirm_delete_account.is_some()
-            || self.confirm_recapture_account.is_some()
-            || self.confirm_settings_change.is_some()
-            || self.confirm_delete_settings_profile.is_some()
-            || self.preset_name_prompt.is_some()
-            || self.unavailable_launch_warning.is_some()
-            || self.app_update_status.prompt_update().is_some()
+        self.open_dialog().is_some()
             || (super::image_viewer_enabled() && self.image_viewer.is_some())
-            || self.open_bundle_details().is_some()
+    }
+
+    /// The dialog the shell shows, when one is open. Only one shows at a time; earlier ones win.
+    pub(super) fn open_dialog(&self) -> Option<super::Dialog> {
+        use super::Dialog;
+        [
+            (self.show_add_account_prompt, Dialog::AddAccount),
+            (self.login_capture.is_some(), Dialog::LoginCapture),
+            (self.pending_account.is_some(), Dialog::CapturedAccount),
+            (self.show_import_account_prompt, Dialog::ImportAccount),
+            (self.exported_account.is_some(), Dialog::ExportAccount),
+            (self.confirm_delete_account.is_some(), Dialog::DeleteAccount),
+            (self.confirm_recapture_account.is_some(), Dialog::Recapture),
+            (
+                self.confirm_settings_change.is_some(),
+                Dialog::SettingsChange,
+            ),
+            (
+                self.confirm_delete_settings_profile.is_some(),
+                Dialog::DeleteSettingsProfile,
+            ),
+            (self.preset_name_prompt.is_some(), Dialog::PresetName),
+            (
+                self.unavailable_launch_warning.is_some(),
+                Dialog::UnavailableLaunch,
+            ),
+            (
+                self.app_update_status.prompt_update().is_some(),
+                Dialog::AppUpdate,
+            ),
+            (self.open_bundle_details().is_some(), Dialog::BundleDetails),
+        ]
+        .into_iter()
+        .find_map(|(open, dialog)| open.then_some(dialog))
     }
 
     /// The featured bundle whose details are open, while the shop still has it.
@@ -1148,6 +1177,10 @@ impl PrimeApp {
                 }
 
                 self.fetch_account_availabilities_task()
+            }
+            Message::AnimationFrame(now) => {
+                self.now = now;
+                Task::none()
             }
             Message::StatusTimerTick(now) => {
                 self.now = now;

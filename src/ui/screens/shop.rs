@@ -20,7 +20,6 @@ const DETAILS_BANNER_HEIGHT: f32 = 200.0;
 /// The art's height in an item card, with the tier bar's top pixel.
 const DETAILS_ART_HEIGHT: f32 = 97.0;
 const DETAILS_COLUMNS: usize = 3;
-const DETAILS_SCRIM: Color = iced::color!(0x05060A, 0.8);
 const CLOSE_BUTTON: Color = iced::color!(0x191D25);
 const OFFER_ART_HEIGHT: f32 = 78.0;
 const ACCESSORY_THUMB_SIZE: f32 = 72.0;
@@ -405,16 +404,11 @@ pub(in crate::ui) fn bundle_details<'a>(
         ..Default::default()
     });
 
-    // A click on the scrim closes it; one on the dialog doesn't.
-    iced::widget::opaque(
-        iced::widget::mouse_area(
-            container(iced::widget::opaque(modal))
-                .center(Length::Fill)
-                .padding(14)
-                .style(|_| container::Style::default().background(DETAILS_SCRIM)),
-        )
-        .on_press(Message::CloseBundleDetails),
-    )
+    // Opaque, so a click on the dialog doesn't reach the backdrop, which closes it.
+    container(iced::widget::opaque(modal))
+        .center(Length::Fill)
+        .padding(14)
+        .into()
 }
 
 /// One of a bundle's items, like a daily offer: a skin glows in its tier colour and names its

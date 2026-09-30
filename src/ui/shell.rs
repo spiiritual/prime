@@ -17,7 +17,7 @@ use super::{
     LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange, PresetNamePrompt,
     PresetNameTarget, PrimeApp, SettingsChange, Tab, UnavailableLaunchWarning, screens,
 };
-use super::{StatusKind, status_bar_visible, status_spinner_active};
+use super::{Dialog, StatusKind, appear_progress, status_bar_visible, status_spinner_active};
 
 /// Without its one-pixel border line.
 const SIDEBAR_WIDTH: f32 = 231.0;
@@ -29,6 +29,11 @@ const MENU_ITEM_SELECTED: Color = iced::color!(0x262C38);
 const STATUS_TOAST_MAX_WIDTH: f32 = 640.0;
 const TOAST_TIMER_HEIGHT: f32 = 2.0;
 const UPDATE_CHANGELOG_MAX_HEIGHT: f32 = 260.0;
+/// How far a dialog rises into place as it opens, and how small it starts.
+const DIALOG_RISE: f32 = 10.0;
+const DIALOG_START_SCALE: f32 = 0.97;
+/// How far a toast rises into place.
+const TOAST_RISE: f32 = 8.0;
 
 impl PrimeApp {
     pub(super) fn view(&self) -> Element<'_, Message> {
@@ -46,108 +51,67 @@ impl PrimeApp {
         ]
         .height(Length::Fill);
 
-        let pending_delete_account = self.confirm_delete_account.and_then(|account_id| {
-            self.state
-                .accounts
-                .iter()
-                .find(|account| account.id == account_id)
+        let dialog = self.open_dialog().and_then(|dialog| {
+            let overlay = match dialog {
+                Dialog::AddAccount => {
+                    add_account_prompt_overlay(self.capture_prompt_valorant_running)
+                }
+                Dialog::LoginCapture => login_capture_overlay(self, self.login_capture.as_ref()?),
+                Dialog::CapturedAccount => {
+                    captured_account_overlay(self, self.pending_account.as_ref()?)
+                }
+                Dialog::ImportAccount => import_account_prompt_overlay(self),
+                Dialog::ExportAccount => {
+                    export_account_prompt_overlay(self.exported_account.as_ref()?)
+                }
+                Dialog::DeleteAccount => {
+                    delete_account_prompt_overlay(self.account_by_id(self.confirm_delete_account?)?)
+                }
+                Dialog::Recapture => recapture_prompt_overlay(
+                    self.account_by_id(self.confirm_recapture_account?)?,
+                    self.capture_prompt_valorant_running,
+                ),
+                Dialog::SettingsChange => {
+                    settings_change_prompt_overlay(self, self.confirm_settings_change.as_ref()?)?
+                }
+                Dialog::DeleteSettingsProfile => {
+                    let profile_id = self.confirm_delete_settings_profile.as_ref()?;
+                    delete_settings_profile_prompt_overlay(
+                        self.settings_profiles
+                            .iter()
+                            .find(|profile| &profile.id == profile_id)?,
+                    )
+                }
+                Dialog::PresetName => {
+                    preset_name_prompt_overlay(self, self.preset_name_prompt.as_ref()?)
+                }
+                Dialog::UnavailableLaunch => {
+                    unavailable_launch_prompt_overlay(self.unavailable_launch_warning.as_ref()?)
+                }
+                Dialog::AppUpdate => app_update_prompt_overlay(
+                    self.app_update_status.prompt_update()?,
+                    self.work_blocking_update(),
+                ),
+                Dialog::BundleDetails => super::screens::bundle_details(
+                    self.store_summary.as_ref()?,
+                    self.open_bundle_details()?,
+                    self.now,
+                ),
+            };
+            // Clicking beside bundle details closes them; other dialogs need a choice.
+            let backdrop_press =
+                (dialog == Dialog::BundleDetails).then_some(Message::CloseBundleDetails);
+            Some((overlay, backdrop_press))
         });
 
-        let pending_recapture_account = self.confirm_recapture_account.and_then(|account_id| {
-            self.state
-                .accounts
-                .iter()
-                .find(|account| account.id == account_id)
-        });
-
-        let pending_settings_delete =
-            self.confirm_delete_settings_profile
-                .as_ref()
-                .and_then(|profile_id| {
-                    self.settings_profiles
-                        .iter()
-                        .find(|profile| &profile.id == profile_id)
-                });
-
-        let content: Element<_> = if self.show_add_account_prompt {
+        let content: Element<_> = if let Some((overlay, backdrop_press)) = dialog {
+            let progress = self
+                .dialog_opened
+                .map_or(1.0, |(_, since)| appear_progress(since, self.now));
             stack![
                 content,
-                add_account_prompt_overlay(self.capture_prompt_valorant_running)
-            ]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-        } else if let Some(capture) = &self.login_capture {
-            stack![content, login_capture_overlay(self, capture)]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else if let Some(draft) = &self.pending_account {
-            stack![content, captured_account_overlay(self, draft)]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else if self.show_import_account_prompt {
-            stack![content, import_account_prompt_overlay(self)]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else if let Some(export) = &self.exported_account {
-            stack![content, export_account_prompt_overlay(export)]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else if let Some(account) = pending_delete_account {
-            stack![content, delete_account_prompt_overlay(account)]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else if let Some(account) = pending_recapture_account {
-            stack![
-                content,
-                recapture_prompt_overlay(account, self.capture_prompt_valorant_running)
-            ]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-        } else if let Some(prompt) = self
-            .confirm_settings_change
-            .as_ref()
-            .and_then(|pending| settings_change_prompt_overlay(self, pending))
-        {
-            stack![content, prompt]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else if let Some(profile) = pending_settings_delete {
-            stack![content, delete_settings_profile_prompt_overlay(profile)]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else if let Some(prompt) = &self.preset_name_prompt {
-            stack![content, preset_name_prompt_overlay(self, prompt)]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else if let Some(warning) = &self.unavailable_launch_warning {
-            stack![content, unavailable_launch_prompt_overlay(warning)]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else if let Some(update) = self.app_update_status.prompt_update() {
-            stack![
-                content,
-                app_update_prompt_overlay(update, self.work_blocking_update())
-            ]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-        } else if let (Some(bundle), Some(summary)) =
-            (self.open_bundle_details(), self.store_summary.as_ref())
-        {
-            stack![
-                content,
-                super::screens::bundle_details(summary, bundle, self.now)
+                backdrop(progress, backdrop_press),
+                appear(overlay, progress, DIALOG_RISE)
             ]
             .width(Length::Fill)
             .height(Length::Fill)
@@ -161,16 +125,20 @@ impl PrimeApp {
             stack![
                 content,
                 // Bottom right, lined up with the right edge of the page content.
-                container(self.status_toast())
-                    .padding(Padding {
-                        bottom: 24.0,
-                        right: 36.0,
-                        ..Padding::ZERO
-                    })
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .align_x(alignment::Horizontal::Right)
-                    .align_y(alignment::Vertical::Bottom)
+                container(appear(
+                    self.status_toast(),
+                    appear_progress(self.status_changed_at, self.now),
+                    TOAST_RISE
+                ))
+                .padding(Padding {
+                    bottom: 24.0,
+                    right: 36.0,
+                    ..Padding::ZERO
+                })
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(alignment::Horizontal::Right)
+                .align_y(alignment::Vertical::Bottom)
             ]
             .into()
         } else {
@@ -187,6 +155,13 @@ impl PrimeApp {
         } else {
             content
         }
+    }
+
+    fn account_by_id(&self, account_id: crate::account::AccountId) -> Option<&AccountProfile> {
+        self.state
+            .accounts
+            .iter()
+            .find(|account| account.id == account_id)
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
@@ -858,12 +833,39 @@ fn dialog<'a>(
             ..Default::default()
         });
 
-    opaque(
-        container(modal)
-            .center(Length::Fill)
-            .padding(14)
-            .style(|_| filled(DIALOG_SCRIM)),
-    )
+    container(modal).center(Length::Fill).padding(14).into()
+}
+
+/// The dark layer behind a dialog, fading in with it. It keeps clicks from the page under it.
+fn backdrop(progress: f32, on_press: Option<Message>) -> Element<'static, Message> {
+    let scrim = Color {
+        a: DIALOG_SCRIM.a * progress,
+        ..DIALOG_SCRIM
+    };
+    let layer = container(space())
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(move |_| filled(scrim));
+    match on_press {
+        Some(message) => opaque(iced::widget::mouse_area(layer).on_press(message)),
+        None => opaque(layer),
+    }
+}
+
+/// Rises `rise` pixels into place and grows to full size as `progress` reaches 1.
+fn appear<'a>(
+    content: impl Into<Element<'a, Message>>,
+    progress: f32,
+    rise: f32,
+) -> Element<'a, Message> {
+    if progress >= 1.0 {
+        return content.into();
+    }
+    let offset = rise * (1.0 - progress);
+    iced::widget::float(content)
+        .scale(DIALOG_START_SCALE + (1.0 - DIALOG_START_SCALE) * progress)
+        .translate(move |_, _| iced::Vector::new(0.0, offset))
+        .into()
 }
 
 fn horizontal_rule() -> Element<'static, Message> {

@@ -103,6 +103,10 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
             .push(iced::time::every(SHOP_RESET_CHECK_INTERVAL).map(Message::ShopTimerTick));
     }
 
+    if appearing(app) && !app.window_minimized {
+        subscriptions.push(window::frames().map(Message::AnimationFrame));
+    }
+
     if status_flash_active(app) {
         // Only a visible timer bar needs every frame.
         subscriptions.push(
@@ -303,6 +307,8 @@ struct PrimeApp {
     /// What the Accounts list is filtered by.
     account_filter: String,
     image_viewer: Option<ImageViewerImage>,
+    /// The dialog on screen and when it opened, for its entrance.
+    dialog_opened: Option<(Dialog, iced::time::Instant)>,
     /// The store ID of the featured bundle whose details are open.
     bundle_details: Option<String>,
     state: StoredState,
@@ -679,6 +685,42 @@ impl AppUpdateStatus {
     }
 }
 
+/// The dialog on screen, one at a time, in the order the shell picks them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Dialog {
+    AddAccount,
+    LoginCapture,
+    CapturedAccount,
+    ImportAccount,
+    ExportAccount,
+    DeleteAccount,
+    Recapture,
+    SettingsChange,
+    DeleteSettingsProfile,
+    PresetName,
+    UnavailableLaunch,
+    AppUpdate,
+    BundleDetails,
+}
+
+/// How long a dialog or toast takes to settle in.
+const APPEAR_DURATION: Duration = Duration::from_millis(180);
+
+/// How far an appearance that started at `since` has got, from 0 to 1, easing out.
+fn appear_progress(since: iced::time::Instant, now: iced::time::Instant) -> f32 {
+    let t = (now.saturating_duration_since(since).as_secs_f32() / APPEAR_DURATION.as_secs_f32())
+        .clamp(0.0, 1.0);
+    1.0 - (1.0 - t).powi(3)
+}
+
+/// Whether a dialog or toast is still settling in, so frames keep coming.
+fn appearing(app: &PrimeApp) -> bool {
+    let settling =
+        |since: iced::time::Instant| app.now.saturating_duration_since(since) < APPEAR_DURATION;
+    app.dialog_opened.is_some_and(|(_, since)| settling(since))
+        || (status_bar_visible(app) && settling(app.status_changed_at))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Tab {
     Accounts,
@@ -875,6 +917,8 @@ enum Message {
     Tray(tray::TrayAction),
     MinimizeOnCloseToggled(bool),
     StatusTimerTick(iced::time::Instant),
+    /// A frame while a dialog or toast settles in.
+    AnimationFrame(iced::time::Instant),
     AccountAvailabilitiesLoaded(AccountAvailabilityRefresh),
     GameSettingsProfilesLoaded(Result<Vec<GameSettingsProfileMetadata>, String>),
     RequestDeleteSettingsProfile(String),
