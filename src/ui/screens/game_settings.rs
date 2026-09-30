@@ -15,12 +15,13 @@ use crate::game_settings::{
     GameSettingsProfileSummary, Rgba,
 };
 use crate::ui::components::{
-    account_avatar, card_style, compact_loading_indicator, mono, outlined,
+    account_avatar, anchored_popover, card_style, compact_loading_indicator, mono, outlined,
 };
+use crate::ui::shell::popover_style;
 use crate::ui::theme::{self, Icon, button, text};
 use crate::ui::{Message, PrimeApp, SettingsChange};
 
-use super::accounts::{now_unix, relative_time_label};
+use super::accounts::{menu_item, now_unix, relative_time_label};
 
 /// How many keybinds a card shows at a glance; the rest are counted.
 const SHORT_KEYBIND_LIMIT: usize = 3;
@@ -38,6 +39,10 @@ const SETTINGS_COLUMN_SHARE: u16 = 3;
 const SETTING_ROW_HEIGHT: f32 = 19.0;
 const SWATCH_SIZE: f32 = 10.0;
 const APPLY_PANEL_WIDTH: f32 = 340.0;
+const PRESET_MENU_WIDTH: f32 = 180.0;
+/// The menu opens just under the card's ⋯ button.
+const PRESET_MENU_TOP_OFFSET: f32 = 46.0;
+const PRESET_MENU_RIGHT_INSET: f32 = 10.0;
 const PANEL_GAP: f32 = 16.0;
 /// How long a save reads as "2 days ago" before it reads as a date.
 const RELATIVE_SAVE_SECONDS: i64 = 7 * 86_400;
@@ -191,6 +196,26 @@ fn profile_card<'a>(
     if let Some(version) = profile.settings_version {
         top = top.push(mono(format!("v{version}"), 11).color(theme::FAINT));
     }
+    let menu_open = app.open_preset_menu.as_ref() == Some(&profile.id);
+    top = top.push(
+        iced::widget::button(
+            container(theme::icon(Icon::Ellipsis, 16.0, theme::MUTED))
+                .center_x(28)
+                .center_y(28),
+        )
+        .padding(0)
+        .style(move |_, status| iced::widget::button::Style {
+            background: (menu_open
+                || matches!(
+                    status,
+                    iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+                ))
+            .then(|| theme::RAISED.into()),
+            border: border::rounded(7),
+            ..Default::default()
+        })
+        .on_press(Message::TogglePresetMenu(profile.id.clone())),
+    );
 
     // At a glance: the crosshair and the settings people compare presets by. The full list
     // opens below them.
@@ -211,7 +236,7 @@ fn profile_card<'a>(
         );
     }
 
-    iced::widget::button(card)
+    let card = iced::widget::button(card)
         .padding([12, 16])
         .width(Length::Fill)
         .style(move |_, _| {
@@ -239,8 +264,44 @@ fn profile_card<'a>(
                 ..Default::default()
             }
         })
-        .on_press(Message::SelectPreset(profile.id.clone()))
-        .into()
+        .on_press(Message::SelectPreset(profile.id.clone()));
+
+    anchored_popover(
+        card,
+        preset_menu(app, profile),
+        menu_open,
+        PRESET_MENU_TOP_OFFSET,
+        PRESET_MENU_RIGHT_INSET,
+    )
+}
+
+/// Rename and Delete for one preset, from its card's ⋯ button.
+fn preset_menu(app: &PrimeApp, profile: &GameSettingsProfileMetadata) -> Element<'static, Message> {
+    let menu = column![
+        menu_item(
+            Icon::Pencil,
+            "Rename",
+            false,
+            Some(Message::RequestRenamePreset(profile.id.clone())),
+        ),
+        menu_item(
+            Icon::Trash,
+            "Delete preset",
+            true,
+            (!settings_busy(app))
+                .then(|| Message::RequestDeleteSettingsProfile(profile.id.clone())),
+        ),
+    ]
+    .spacing(1)
+    .width(Length::Fill);
+
+    // Opaque, so clicks on its gaps don't reach the card under it.
+    iced::widget::opaque(
+        container(menu)
+            .padding(6)
+            .width(PRESET_MENU_WIDTH)
+            .style(popover_style),
+    )
 }
 
 fn saving_card(app: &PrimeApp, account_id: AccountId) -> Element<'_, Message> {
@@ -278,20 +339,6 @@ fn apply_panel<'a>(
     )
     .width(Length::Fill);
 
-    let footer = row![
-        panel_button(
-            "Rename",
-            theme::TEXT,
-            Some(Message::RequestRenamePreset(profile.id.clone()))
-        ),
-        panel_button(
-            "Delete",
-            DANGER_TEXT,
-            (!busy).then(|| Message::RequestDeleteSettingsProfile(profile.id.clone()))
-        ),
-    ]
-    .spacing(8);
-
     // Inset by the border, since the dividers draw over it.
     container(column![
         container(head).padding([13, 15]).width(Length::Fill),
@@ -301,8 +348,6 @@ fn apply_panel<'a>(
                 Scrollbar::new().width(4).scroller_width(4).margin(2),
             ))
             .height(Length::Fill),
-        divider(),
-        container(footer).padding(15).width(Length::Fill),
     ])
     .padding(1)
     .width(APPLY_PANEL_WIDTH)
@@ -401,26 +446,6 @@ fn apply_row<'a>(
     .height(44)
     .align_y(alignment::Vertical::Center)
     .width(Length::Fill)
-    .into()
-}
-
-fn panel_button(
-    label: &'static str,
-    color: Color,
-    on_press: Option<Message>,
-) -> Element<'static, Message> {
-    let enabled = on_press.is_some();
-    button(
-        text(label)
-            .size(13)
-            .font(theme::BOLD_FONT)
-            .color(if enabled { color } else { theme::FAINT })
-            .width(Length::Fill)
-            .align_x(alignment::Horizontal::Center),
-    )
-    .padding([10, 0])
-    .width(Length::Fill)
-    .on_press_maybe(on_press)
     .into()
 }
 

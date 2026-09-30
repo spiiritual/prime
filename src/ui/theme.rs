@@ -275,6 +275,7 @@ pub(super) enum Icon {
     Moon,
     Mouse,
     MousePointerClick,
+    Pencil,
     Play,
     PlugZap,
     Plus,
@@ -328,6 +329,7 @@ impl Icon {
             Icon::MousePointerClick => {
                 include_bytes!("../../assets/icons/mouse-pointer-click.svg")
             }
+            Icon::Pencil => include_bytes!("../../assets/icons/pencil.svg"),
             Icon::Play => include_bytes!("../../assets/icons/play.svg"),
             Icon::PlugZap => include_bytes!("../../assets/icons/plug-zap.svg"),
             Icon::Plus => include_bytes!("../../assets/icons/plus.svg"),

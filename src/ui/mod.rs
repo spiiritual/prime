@@ -43,6 +43,8 @@ const BACKGROUND_SESSION_REFRESH_INTERVAL: Duration = Duration::from_secs(30 * 6
 /// Opening the Accounts tab reloads every account's details only when they are older than this.
 const ACCOUNTS_TAB_RELOAD_AFTER: Duration = Duration::from_secs(60);
 const STATUS_FLASH_DURATION: Duration = Duration::from_secs(4);
+/// How often a hidden window checks whether its toast has expired; a visible one redraws each
+/// frame so the toast's timer bar moves smoothly.
 const STATUS_FLASH_TICK_INTERVAL: Duration = Duration::from_millis(500);
 const CLIENT_VERSION_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 const MAIN_PANEL_SCROLLABLE_ID: &str = "main-panel-scrollable";
@@ -102,8 +104,11 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
     }
 
     if status_flash_active(app) {
-        subscriptions
-            .push(iced::time::every(STATUS_FLASH_TICK_INTERVAL).map(Message::StatusTimerTick));
+        subscriptions.push(if app.window_minimized {
+            iced::time::every(STATUS_FLASH_TICK_INTERVAL).map(Message::StatusTimerTick)
+        } else {
+            window::frames().map(Message::StatusTimerTick)
+        });
     }
 
     // Nobody sees the spinner while minimized, and a stuck progress status would keep it ticking.
@@ -263,6 +268,21 @@ fn status_visible_at(
             || now.saturating_duration_since(changed_at) < STATUS_FLASH_DURATION)
 }
 
+/// How much of a closing-by-itself toast's time is left, from 1 down to 0, or `None` for a
+/// toast that stays: an error, or progress that is still running.
+fn status_time_left(app: &PrimeApp) -> Option<f32> {
+    if !matches!(
+        app.status.kind,
+        StatusKind::Info | StatusKind::Success | StatusKind::Warning
+    ) || status_spinner_active(app)
+        || !status_flash_active(app)
+    {
+        return None;
+    }
+    let elapsed = app.now.saturating_duration_since(app.status_changed_at);
+    Some((1.0 - elapsed.as_secs_f32() / STATUS_FLASH_DURATION.as_secs_f32()).clamp(0.0, 1.0))
+}
+
 fn status_flash_active(app: &PrimeApp) -> bool {
     app.status.kind != StatusKind::Error
         && status_visible_at(&app.status, app.status_changed_at, app.now)
@@ -342,6 +362,8 @@ struct PrimeApp {
     settings_profiles: Vec<GameSettingsProfileMetadata>,
     /// Presets whose cards list all their settings.
     expanded_presets: HashSet<String>,
+    /// The preset whose Rename and Delete menu is open.
+    open_preset_menu: Option<String>,
     /// The preset the Apply panel is for; the first one when unset or deleted.
     selected_preset: Option<String>,
     /// The name dialog for saving or renaming a preset.
@@ -859,6 +881,7 @@ enum Message {
     RequestRenamePreset(String),
     /// Opens or closes the full list of a preset's settings.
     TogglePresetSettings(String),
+    TogglePresetMenu(String),
     /// Shows this preset in the Apply panel.
     SelectPreset(String),
     PresetNameChanged(String),

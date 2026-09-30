@@ -1033,7 +1033,7 @@ fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Me
     )
 }
 
-fn menu_item(
+pub(super) fn menu_item(
     icon: Icon,
     label: &'static str,
     danger: bool,

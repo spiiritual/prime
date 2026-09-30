@@ -37,7 +37,7 @@ use super::data::shop::{
 use super::{
     Message, PendingSettingsChange, PendingSettingsCheck, PresetNamePrompt, PresetNameTarget,
     PrimeApp, SettingsChange, Status, StatusKind, countdown_timer_active,
-    masked_account_export_payload, status_bar_visible, status_spinner_active, status_visible_at,
+    masked_account_export_payload, status_bar_visible, status_spinner_active, status_time_left, status_visible_at,
 };
 use crate::account::{
     AccountId, AccountPenalty, AccountPenaltyDuration, AccountPenaltyStatus, AccountProfile,
@@ -1311,6 +1311,22 @@ fn changing_the_status_restarts_its_display_time() {
 
     assert_eq!(app.status, Status::success("Saved settings"));
     assert!(status_bar_visible(&app));
+}
+
+#[test]
+fn a_toast_that_closes_by_itself_counts_down_and_an_error_does_not() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let _ = app.update(Message::SaveSettings);
+    app.now = app.status_changed_at;
+    assert_eq!(status_time_left(&app), Some(1.0));
+
+    app.now = app.status_changed_at + Duration::from_secs(2);
+    assert_eq!(status_time_left(&app), Some(0.5));
+
+    app.status = Status::error("Could not save settings");
+    app.now = app.status_changed_at;
+    assert_eq!(status_time_left(&app), None);
 }
 
 #[test]
@@ -4674,6 +4690,26 @@ fn renaming_a_preset_starts_from_its_name() {
         app.status,
         Status::success("Renamed preset to Old crosshair")
     );
+}
+
+#[test]
+fn a_presets_menu_opens_from_its_card_and_closes_with_escape_or_a_choice() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = settings_app(dir.path());
+    let preset =
+        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
+    app.settings_profiles = vec![preset.clone()];
+
+    let _ = app.update(Message::TogglePresetMenu(preset.id.clone()));
+    assert_eq!(app.open_preset_menu.as_ref(), Some(&preset.id));
+
+    let _ = app.update(Message::EscapePressed);
+    assert_eq!(app.open_preset_menu, None);
+
+    let _ = app.update(Message::TogglePresetMenu(preset.id.clone()));
+    let _ = app.update(Message::RequestRenamePreset(preset.id.clone()));
+    assert_eq!(app.open_preset_menu, None);
+    assert!(app.preset_name_prompt.is_some());
 }
 
 #[test]

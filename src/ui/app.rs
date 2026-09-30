@@ -106,6 +106,7 @@ impl PrimeApp {
                 save_settings_on_add: false,
                 settings_profiles: Vec::new(),
                 expanded_presets: std::collections::HashSet::new(),
+                open_preset_menu: None,
                 selected_preset: None,
                 preset_name_prompt: None,
                 settings_saving_account: None,
@@ -229,7 +230,10 @@ impl PrimeApp {
             Message::DismissAppUpdate
         } else if self.open_bundle_details().is_some() {
             Message::CloseBundleDetails
-        } else if self.account_switcher_open || self.open_account_menu.is_some() {
+        } else if self.account_switcher_open
+            || self.open_account_menu.is_some()
+            || self.open_preset_menu.is_some()
+        {
             Message::DismissPopovers
         } else if self.settings_check.is_some() {
             Message::CancelSettingsChange
@@ -245,6 +249,7 @@ impl PrimeApp {
     fn close_popovers(&mut self) {
         self.account_switcher_open = false;
         self.open_account_menu = None;
+        self.open_preset_menu = None;
     }
 
     /// Shows a status message. Setting the same text again restarts its display time, so a
@@ -1264,17 +1269,27 @@ impl PrimeApp {
                 });
                 Task::none()
             }
+            Message::TogglePresetMenu(profile_id) => {
+                self.open_preset_menu = match self.open_preset_menu.take() {
+                    Some(open) if open == profile_id => None,
+                    _ => Some(profile_id),
+                };
+                Task::none()
+            }
             Message::TogglePresetSettings(profile_id) => {
+                self.open_preset_menu = None;
                 if !self.expanded_presets.remove(&profile_id) {
                     self.expanded_presets.insert(profile_id);
                 }
                 Task::none()
             }
             Message::SelectPreset(profile_id) => {
+                self.open_preset_menu = None;
                 self.selected_preset = Some(profile_id);
                 Task::none()
             }
             Message::RequestRenamePreset(profile_id) => {
+                self.open_preset_menu = None;
                 if !self.settings_cloning {
                     return Task::none();
                 }
@@ -1441,6 +1456,7 @@ impl PrimeApp {
                 None => Task::none(),
             },
             Message::RequestDeleteSettingsProfile(profile_id) => {
+                self.open_preset_menu = None;
                 if !self.settings_cloning || self.settings_work_in_progress() {
                     return Task::none();
                 }

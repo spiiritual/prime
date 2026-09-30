@@ -27,6 +27,7 @@ const ACCOUNT_SWITCHER_MENU_WIDTH: f32 = 280.0;
 const POPOVER_BORDER: Color = iced::color!(0x2E3542);
 const MENU_ITEM_SELECTED: Color = iced::color!(0x262C38);
 const STATUS_TOAST_MAX_WIDTH: f32 = 640.0;
+const TOAST_TIMER_HEIGHT: f32 = 2.0;
 const UPDATE_CHANGELOG_MAX_HEIGHT: f32 = 260.0;
 
 impl PrimeApp {
@@ -470,16 +471,30 @@ impl PrimeApp {
             .on_press(Message::DismissStatus)
         });
 
-        container(
+        let content = container(
             row![lead, text(&self.status.text).size(12)]
                 .push(close)
                 .spacing(10)
                 .align_y(alignment::Vertical::Center),
         )
-        .padding([10, 14])
-        .max_width(STATUS_TOAST_MAX_WIDTH)
-        .style(move |theme| status_toast_style(theme, kind))
-        .into()
+        .padding([10, 14]);
+        // A toast that closes by itself shows how long it has left.
+        let content: Element<'_, Message> = match super::status_time_left(self) {
+            Some(left) => stack![
+                content.padding(Padding::new(10.0).horizontal(14.0).bottom(13.0)),
+                container(toast_timer_bar(left, kind))
+                    .padding(Padding::ZERO.horizontal(12.0).bottom(5.0))
+                    .height(Length::Fill)
+                    .align_y(alignment::Vertical::Bottom)
+            ]
+            .into(),
+            None => content.into(),
+        };
+
+        container(content)
+            .max_width(STATUS_TOAST_MAX_WIDTH)
+            .style(move |theme| status_toast_style(theme, kind))
+            .into()
     }
 
     /// The account's player card art for its avatar, once cached.
@@ -665,6 +680,28 @@ fn rule(color: Color) -> Element<'static, Message> {
         .height(Length::Fill)
         .style(move |_| filled(color))
         .into()
+}
+
+/// A thin bar that empties as the toast's time runs out, in the toast's colour.
+fn toast_timer_bar(left: f32, kind: StatusKind) -> Element<'static, Message> {
+    let color = match kind {
+        StatusKind::Success => theme::OK,
+        StatusKind::Warning => theme::GOLD,
+        _ => theme::MUTED,
+    };
+    let bar = |color: Color| {
+        container(space())
+            .height(TOAST_TIMER_HEIGHT)
+            .style(move |_| filled(color))
+    };
+    // Thousandths, so the bar moves smoothly.
+    let done = (left * 1000.0).round() as u16;
+    row![
+        bar(color).width(Length::FillPortion(done.max(1))),
+        bar(theme::LINE).width(Length::FillPortion((1000 - done).max(1)))
+    ]
+    .width(Length::Fill)
+    .into()
 }
 
 /// The design's toast: a lighter shadow than popovers, and a green, gold or red border for a
