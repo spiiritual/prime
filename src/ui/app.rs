@@ -34,6 +34,7 @@ use super::data::launch_flow::{
     finish_verified_launcher_session_login, launch_account, load_accounts, prepare_login_capture,
     start_current_account_capture, valorant_is_running,
 };
+use super::data::live_match::{LiveMatchError, fetch_live_match};
 use super::data::loadout::fetch_loadout;
 use super::data::shop::fetch_storefront;
 use super::data::{cache_account_api_context, typed_riot_client_path};
@@ -94,6 +95,10 @@ impl PrimeApp {
                 loadout_request: None,
                 store_error: None,
                 loadout_error: None,
+                live_match: None,
+                live_match_request: None,
+                live_match_error: None,
+                respect_streamer_mode: true,
                 next_request_id: 0,
                 profile_identity_refreshing: Default::default(),
                 account_ranks_loading: Default::default(),
@@ -1176,6 +1181,9 @@ impl PrimeApp {
             Message::AccountAvailabilityTimerTick(now) => {
                 self.now = now;
 
+                if self.active_tab == Tab::LiveMatch && !background_refresh_active(self) {
+                    return self.poll_live_match();
+                }
                 let polling = self.active_tab == Tab::Accounts || background_refresh_active(self);
                 if !polling || self.availability_poll_blocked() {
                     return Task::none();
@@ -1272,10 +1280,21 @@ impl PrimeApp {
                     cached_session |= self.cache_refreshed_api_context(refreshed);
                 }
 
-                if cached_session {
-                    self.save_task()
+                // Live Match opened while this poll ran waits for it rather than signing in at the
+                // same time.
+                let live_match = if self.active_tab == Tab::LiveMatch
+                    && self.live_match.is_none()
+                    && self.live_match_error.is_none()
+                {
+                    self.poll_live_match()
                 } else {
                     Task::none()
+                };
+
+                if cached_session {
+                    Task::batch([self.save_task(), live_match])
+                } else {
+                    live_match
                 }
             }
             Message::GameSettingsProfilesLoaded(result) => {
@@ -1849,6 +1868,17 @@ impl PrimeApp {
                 }
 
                 self.fetch_loadout_task()
+            }
+            Message::RetryLiveMatch => {
+                self.live_match_error = None;
+                self.poll_live_match()
+            }
+            Message::StreamerModeToggled => {
+                self.respect_streamer_mode = !self.respect_streamer_mode;
+                Task::none()
+            }
+            Message::LiveMatchLoaded(request_id, result) => {
+                self.handle_live_match_loaded(request_id, result)
             }
             Message::ShopTimerTick(now) => {
                 self.now = now;
@@ -2714,6 +2744,9 @@ impl PrimeApp {
         self.loadout_request = None;
         self.store_error = None;
         self.loadout_error = None;
+        self.live_match = None;
+        self.live_match_request = None;
+        self.live_match_error = None;
     }
 
     /// Loads the active tab after one account changed (selected, added, imported, re-captured or
@@ -2787,6 +2820,11 @@ impl PrimeApp {
             }
             // Every Shop and Loadout load can add images, so the size is read again here.
             Tab::Settings => self.image_cache_size_task(),
+            // Opening the page checks at once, and tries again after a sign-in failure.
+            Tab::LiveMatch => {
+                self.live_match_error = None;
+                self.poll_live_match()
+            }
             Tab::Loadout
                 if !self.selected_account_is_loadout_loading()
                     && self.loadout_summary.as_ref().is_none_or(|summary| {
@@ -2812,14 +2850,19 @@ impl PrimeApp {
         if self.active_tab == Tab::Accounts && !self.availability_poll_blocked() {
             return self.fetch_account_availabilities_task();
         }
+        if self.active_tab == Tab::LiveMatch {
+            return self.poll_live_match();
+        }
 
         Task::none()
     }
 
     /// Whether an availability poll must not start: one is running, or a Launch check or settings
-    /// work (check, save or apply) is signing in with the same refresh token.
+    /// work (check, save or apply), or a Live Match load is signing in with the same refresh
+    /// token.
     fn availability_poll_blocked(&self) -> bool {
         self.account_availability_loading
+            || self.live_match_request.is_some()
             || self.launch_preflight_account.is_some()
             || self.settings_work_in_progress()
     }
@@ -2928,6 +2971,90 @@ impl PrimeApp {
         )
     }
 
+    /// Loads the selected account's live match, unless another request is signing in with the
+    /// same refresh token or its login failed; a sign-in failure waits for Try again or for the
+    /// page to open again.
+    fn poll_live_match(&mut self) -> Task<Message> {
+        if self.window_minimized
+            || self.availability_poll_blocked()
+            || matches!(self.live_match_error, Some(LiveMatchError::SignIn(_)))
+        {
+            return Task::none();
+        }
+        let Some(account) = self.state.selected_account().cloned() else {
+            return Task::none();
+        };
+        if self.client_version_input.trim().is_empty() {
+            return Task::none();
+        }
+
+        let request = self.next_view_request(account.id);
+        self.live_match_request = Some(request);
+        let previous = self
+            .live_match
+            .clone()
+            .filter(|live| live.account_id == account.id);
+        Task::perform(
+            fetch_live_match(
+                account,
+                self.client_version_input.clone(),
+                self.image_cache.clone(),
+                previous,
+            ),
+            move |result| Message::LiveMatchLoaded(request.id, result),
+        )
+    }
+
+    fn handle_live_match_loaded(
+        &mut self,
+        request_id: u64,
+        result: Result<super::LiveMatchResult, LiveMatchError>,
+    ) -> Task<Message> {
+        let is_current_request = self
+            .live_match_request
+            .is_some_and(|request| request.id == request_id);
+        if is_current_request {
+            self.live_match_request = None;
+        }
+
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                if is_current_request {
+                    // A match already on screen stays; the toast says it's out of date.
+                    if self.live_match.is_some() && matches!(error, LiveMatchError::Request(_)) {
+                        self.set_view_status(Status::error(format!(
+                            "Live match didn't update: {}",
+                            error.message()
+                        )));
+                    }
+                    self.live_match_error = Some(error);
+                }
+                return Task::none();
+            }
+        };
+
+        let cached_session = result
+            .refreshed
+            .is_some_and(|refreshed| self.cache_refreshed_api_context(refreshed));
+        let save = if cached_session {
+            self.save_task()
+        } else {
+            Task::none()
+        };
+        if !is_current_request {
+            return save;
+        }
+
+        self.account_availability
+            .insert(result.account_id, result.activity.into());
+        self.account_availability_checked_at
+            .insert(result.account_id, iced::time::Instant::now());
+        self.live_match = result.live;
+        self.live_match_error = None;
+        Task::batch([save, self.player_card_art_task()])
+    }
+
     /// Remembers the player card an account's loadout reported, for its avatar.
     fn save_player_card(&mut self, account_id: AccountId, card_id: Option<String>) {
         if let Some(card_id) = card_id
@@ -2941,11 +3068,22 @@ impl PrimeApp {
         }
     }
 
-    /// Caches the art of every account's player card that isn't cached or on its way yet.
+    /// Caches the art of every account's and live match player's card that isn't cached or on
+    /// its way yet.
     fn player_card_art_task(&mut self) -> Task<Message> {
         let mut tasks = Vec::new();
-        for account in &self.state.accounts {
-            let Some(card_id) = &account.player_card_id else {
+        let live_players = self
+            .live_match
+            .iter()
+            .flat_map(|live| live.allies.iter().chain(&live.enemies));
+        let card_ids = self
+            .state
+            .accounts
+            .iter()
+            .map(|account| &account.player_card_id)
+            .chain(live_players.map(|player| &player.card_id));
+        for card_id in card_ids {
+            let Some(card_id) = card_id else {
                 continue;
             };
             if self.player_card_art.contains_key(card_id) {
@@ -3051,7 +3189,7 @@ impl PrimeApp {
         let reload = if selection_changed {
             self.clear_selected_account_views();
             match self.active_tab {
-                Tab::Shop | Tab::Loadout => self.load_active_tab(),
+                Tab::Shop | Tab::Loadout | Tab::LiveMatch => self.load_active_tab(),
                 Tab::Accounts | Tab::Settings => Task::none(),
             }
         } else {

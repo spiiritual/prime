@@ -55,6 +55,10 @@ pub(super) const DISPLAY_FONT: Font = Font {
     weight: font::Weight::Bold,
     ..Font::with_name("Space Grotesk")
 };
+pub(super) const DISPLAY_SEMIBOLD_FONT: Font = Font {
+    weight: font::Weight::Semibold,
+    ..DISPLAY_FONT
+};
 pub(super) const MONO_FONT: Font = Font::with_name("JetBrains Mono");
 pub(super) const MONO_SEMIBOLD_FONT: Font = Font {
     weight: iced::font::Weight::Semibold,
@@ -268,6 +272,8 @@ pub(super) enum Icon {
     CircleX,
     Download,
     Eraser,
+    Eye,
+    EyeOff,
     FolderOpen,
     Info,
     Keyboard,
@@ -320,6 +326,8 @@ impl Icon {
             Icon::ChevronsUpDown => include_bytes!("../../assets/icons/chevrons-up-down.svg"),
             Icon::Download => include_bytes!("../../assets/icons/download.svg"),
             Icon::Eraser => include_bytes!("../../assets/icons/eraser.svg"),
+            Icon::Eye => include_bytes!("../../assets/icons/eye.svg"),
+            Icon::EyeOff => include_bytes!("../../assets/icons/eye-off.svg"),
             Icon::FolderOpen => include_bytes!("../../assets/icons/folder-open.svg"),
             Icon::Info => include_bytes!("../../assets/icons/info.svg"),
             Icon::Keyboard => include_bytes!("../../assets/icons/keyboard.svg"),

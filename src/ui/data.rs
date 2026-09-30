@@ -41,6 +41,7 @@ pub(super) mod account_details;
 pub(super) mod game_settings;
 pub(super) mod image_assets;
 pub(super) mod launch_flow;
+pub(super) mod live_match;
 pub(super) mod loadout;
 pub(super) mod session;
 pub(super) mod shop;

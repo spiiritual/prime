@@ -1,5 +1,7 @@
 use super::*;
-use super::session::{ApiIdentity, refreshed_api_session, resolve_credentials};
+use super::session::{
+    ApiIdentity, ResolvedApiCredentials, refreshed_api_session, resolve_credentials,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct RefreshedProfileIdentity {
@@ -466,18 +468,7 @@ async fn check_account_availability(
                 }
                 None => AccountAvailability::activity_check_failed(),
             };
-            let new_region = resolved
-                .identity
-                .region
-                .is_some_and(|region| account.region != Some(region));
-            if new_region || account.session.as_ref() != Some(&resolved.session) {
-                refreshed = Some(RefreshedApiContext {
-                    account_id,
-                    session: resolved.session,
-                    launcher_session: resolved.launcher_session,
-                    identity: resolved.identity,
-                });
-            }
+            refreshed = refreshed_api_context(&account, resolved);
             availability
         }
         Err(_) => AccountAvailability::activity_check_failed(),
@@ -490,6 +481,27 @@ async fn check_account_availability(
         },
         refreshed,
     )
+}
+
+/// The session a request resolved, when it differs from the saved one or found a new region, so
+/// the caller saves it and the next request can reuse it.
+pub(in crate::ui) fn refreshed_api_context(
+    account: &AccountProfile,
+    resolved: ResolvedApiCredentials,
+) -> Option<RefreshedApiContext> {
+    let new_region = resolved
+        .identity
+        .region
+        .is_some_and(|region| account.region != Some(region));
+    if !new_region && account.session.as_ref() == Some(&resolved.session) {
+        return None;
+    }
+    Some(RefreshedApiContext {
+        account_id: account.id,
+        session: resolved.session,
+        launcher_session: resolved.launcher_session,
+        identity: resolved.identity,
+    })
 }
 
 /// How much of the account's activity a check needs.

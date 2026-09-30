@@ -1,5 +1,6 @@
 mod accounts;
 mod game_settings;
+mod live_match;
 mod loadout;
 mod settings;
 mod shop;
@@ -24,6 +25,7 @@ pub(super) fn tab(app: &PrimeApp, tab: Tab) -> Element<'_, Message> {
         Tab::Shop => shop::tab(app),
         Tab::Loadout => loadout::tab(app),
         Tab::Settings => settings::tab(app),
+        Tab::LiveMatch => live_match::tab(app),
     }
 }
 
@@ -34,6 +36,7 @@ pub(super) fn fills_page(app: &PrimeApp, tab: Tab) -> bool {
         Tab::Loadout => loadout::fills_page(app),
         Tab::Accounts => accounts::fills_page(app),
         Tab::Settings => false,
+        Tab::LiveMatch => live_match::fills_page(app),
     }
 }
 
@@ -45,6 +48,11 @@ pub(super) fn accounts_header_actions(app: &PrimeApp) -> Element<'_, Message> {
 /// Loadout's Skins and Battle Pass switch, which sits beside the page title.
 pub(super) fn loadout_sub_tabs(app: &PrimeApp) -> Element<'_, Message> {
     loadout::sub_tabs(app)
+}
+
+/// Whether hidden players stay hidden, beside the Live Match title.
+pub(super) fn live_match_streamer_toggle(app: &PrimeApp) -> Element<'_, Message> {
+    live_match::streamer_toggle(app)
 }
 
 /// A tab's menu that stays beside its scrolling page; only Settings has one.

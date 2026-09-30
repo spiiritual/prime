@@ -11,6 +11,8 @@ use super::components::{
     account_avatar, anchored_popover, balances_unavailable, compact_loading_indicator,
     currency_balance_display, loading_indicator, wallet_skeleton,
 };
+use super::data::account_details::{AccountAvailability, Busy};
+use super::data::live_match::{MatchPhase, indicator_detail};
 use super::theme::{self, button, text};
 use super::{
     AccountExportOutput, CapturedAccountDraft, ImageViewerImage, LoadoutTab, LoginCapture,
@@ -197,6 +199,7 @@ impl PrimeApp {
                 self.account_switcher(),
                 nav,
                 space().height(Length::Fill),
+                self.live_match_button(),
                 version
             ]
             .spacing(28),
@@ -207,6 +210,100 @@ impl PrimeApp {
         .style(|_| filled(theme::SURFACE));
 
         row![sidebar, rule(theme::LINE)].into()
+    }
+
+    /// The sidebar's live match indicator: a kicker and a detail line while the selected account
+    /// is in agent select or a match.
+    pub(super) fn live_match_indicator(&self) -> Option<(&'static str, String)> {
+        let account = self.state.selected_account()?;
+        let (kicker, phase) = match self.account_availability.get(&account.id)? {
+            AccountAvailability::Unavailable(Busy::InMatch) => {
+                ("IN A MATCH", MatchPhase::InProgress)
+            }
+            AccountAvailability::Unavailable(Busy::AgentSelect) => {
+                ("AGENT SELECT", MatchPhase::AgentSelect)
+            }
+            _ => return None,
+        };
+        let detail = self
+            .live_match
+            .as_ref()
+            .filter(|live| live.account_id == account.id && live.phase == phase)
+            .map_or_else(|| "View match".to_string(), indicator_detail);
+        Some((kicker, detail))
+    }
+
+    /// Opens Live Match; outlined in full while it's open, since Live Match has no nav item.
+    fn live_match_button(&self) -> Option<Element<'_, Message>> {
+        let (kicker, detail) = self.live_match_indicator()?;
+        let selected = self.active_tab == Tab::LiveMatch;
+        // Static: a pulse would redraw the window for as long as the match lasts.
+        let pulse = container(
+            container(space())
+                .width(6)
+                .height(6)
+                .style(|_| filled(theme::ACCENT).border(iced::border::rounded(3))),
+        )
+        .center_x(14)
+        .center_y(14)
+        .style(|_| {
+            filled(Color {
+                a: 0x33 as f32 / 255.0,
+                ..theme::ACCENT
+            })
+            .border(iced::border::rounded(7))
+        });
+        let label = column![
+            text(kicker)
+                .size(10)
+                .font(theme::BOLD_FONT)
+                .color(theme::ACCENT),
+            text(detail)
+                .size(13)
+                .font(theme::SEMIBOLD_FONT)
+                .wrapping(Wrapping::None),
+        ]
+        .spacing(1)
+        .width(Length::Fill);
+
+        Some(
+            button(
+                row![
+                    pulse,
+                    label,
+                    theme::icon(theme::Icon::ChevronRight, 15.0, theme::ACCENT)
+                ]
+                .spacing(10)
+                .align_y(alignment::Vertical::Center),
+            )
+            .padding([10, 12])
+            .width(Length::Fill)
+            .style(move |_, status| {
+                let hovered = matches!(
+                    status,
+                    iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+                );
+                iced::widget::button::Style {
+                    background: Some(theme::ACCENT_SOFT.into()),
+                    text_color: theme::TEXT,
+                    border: iced::Border {
+                        color: Color {
+                            a: if selected || hovered {
+                                1.0
+                            } else {
+                                0x40 as f32 / 255.0
+                            },
+                            ..theme::ACCENT
+                        },
+                        width: 1.0,
+                        radius: 10.0.into(),
+                    },
+                    ..Default::default()
+                }
+            })
+            .on_press(Message::TabSelected(Tab::LiveMatch))
+            .into(),
+        )
     }
 
     fn account_switcher(&self) -> Element<'_, Message> {
@@ -380,6 +477,7 @@ impl PrimeApp {
         match self.active_tab {
             Tab::Accounts => 20.0,
             _ if screens::fills_page(self, self.active_tab) => 20.0,
+            Tab::LiveMatch => 24.0,
             Tab::Shop => 26.0,
             Tab::Loadout if self.active_loadout_tab == LoadoutTab::BattlePass => 26.0,
             Tab::Loadout => 20.0,
@@ -396,6 +494,9 @@ impl PrimeApp {
         let trailing = match &self.store_summary {
             _ if self.active_tab == Tab::Loadout => Some(screens::loadout_sub_tabs(self)),
             _ if self.active_tab == Tab::Accounts => Some(screens::accounts_header_actions(self)),
+            _ if self.active_tab == Tab::LiveMatch => {
+                Some(screens::live_match_streamer_toggle(self))
+            }
             _ if self.active_tab != Tab::Shop => None,
             Some(summary) => Some(currency_balance_display(summary)),
             None if self.store_request.is_some() => Some(wallet_skeleton()),
@@ -503,6 +604,8 @@ impl PrimeApp {
             Tab::Shop => theme::Icon::ShoppingBag,
             Tab::Loadout => theme::Icon::Swords,
             Tab::Settings => theme::Icon::Settings,
+            // Live Match has no nav item; the sidebar's live match indicator opens it.
+            Tab::LiveMatch => theme::Icon::ChevronRight,
         };
         let (color, font) = if is_selected {
             (theme::TEXT, theme::SEMIBOLD_FONT)

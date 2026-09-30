@@ -7,12 +7,10 @@ use std::time::{Duration, Instant};
 use iced::futures::future::{join4, try_join4};
 use iced::futures::stream::{self, StreamExt};
 
-use crate::riot::content::{ContentError, WeaponContent};
+use crate::riot::content::{ContentError, MatchCatalog, ResolvedMap, WeaponContent};
 
 use super::loadout::{BattlePassRewardDisplay, LoadoutSummary, SkinDisplay};
-use super::shop::{
-    AccessoryDisplay, BundleDisplay, BundleItem, BundleItemDisplay, StoreSummary,
-};
+use super::shop::{AccessoryDisplay, BundleDisplay, BundleItem, BundleItemDisplay, StoreSummary};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(in crate::ui) struct StoreMetadata {
@@ -50,6 +48,19 @@ static BUNDLE_CATALOG: CachedCatalog<BundleCatalog> = CachedCatalog::new();
 static CURRENCY_CATALOG: CachedCatalog<CurrencyCatalog> = CachedCatalog::new();
 static ACCESSORY_CATALOG: CachedCatalog<AccessoryCatalog> = CachedCatalog::new();
 static CONTRACT_CATALOG: CachedCatalog<ContractCatalog> = CachedCatalog::new();
+static MATCH_CATALOG: CachedCatalog<MatchCatalog> = CachedCatalog::new();
+
+/// Map, queue and agent names for a live match.
+pub(in crate::ui) async fn fetch_match_catalog() -> Result<Arc<MatchCatalog>, String> {
+    let api = ValorantContentApi::new().map_err(|error| error.to_string())?;
+    MATCH_CATALOG.get_or_fetch(|| api.match_catalog()).await
+}
+
+/// Weapons and skins, for the skins players have equipped in a live match.
+pub(in crate::ui) async fn fetch_weapon_content() -> Result<Arc<WeaponContent>, String> {
+    let api = ValorantContentApi::new().map_err(|error| error.to_string())?;
+    WEAPON_CONTENT.get_or_fetch(|| api.weapon_content()).await
+}
 
 pub(in crate::ui) struct CachedCatalog<T> {
     entry: Mutex<Option<(Instant, Arc<T>)>>,
@@ -192,6 +203,13 @@ async fn cached_icon(
 pub(in crate::ui) async fn cache_skin_icon(skin: &mut SkinDisplay, image_cache: &ImageCache) {
     skin.cached_icon =
         cached_icon(image_cache, "skins", &skin.uuid, skin.display_icon.as_ref()).await;
+}
+
+pub(in crate::ui) async fn cache_map_art(
+    map: &ResolvedMap,
+    image_cache: &ImageCache,
+) -> Option<PathBuf> {
+    cached_icon(image_cache, "maps", &map.uuid, map.list_view_icon.as_ref()).await
 }
 
 pub(in crate::ui) async fn cache_accessory_icon(

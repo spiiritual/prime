@@ -31,6 +31,7 @@ use data::game_settings::{
 use data::image_assets::PlayerCardArt;
 use data::launch_flow::CapturedAccountDraft;
 use data::launch_flow::{LaunchAccountResult, LoadedAccounts, SHOP_RESET_CHECK_INTERVAL};
+use data::live_match::{LiveMatch, LiveMatchError, LiveMatchResult};
 use data::loadout::{LoadoutResult, LoadoutSummary};
 use data::shop::{StoreSummary, StorefrontResult};
 
@@ -132,11 +133,13 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
     }
 
     // Availability polling makes requests for every account, so it pauses while nobody can see it,
-    // unless the user chose to keep Prime running in the background, where it polls slowly.
+    // unless the user chose to keep Prime running in the background, where it polls slowly. Live
+    // Match polls only the selected account on the same timer.
     if !app.state.accounts.is_empty() {
         let interval = if background_refresh_active(app) {
             Some(BACKGROUND_SESSION_REFRESH_INTERVAL)
-        } else if app.active_tab == Tab::Accounts && !app.window_minimized {
+        } else if matches!(app.active_tab, Tab::Accounts | Tab::LiveMatch) && !app.window_minimized
+        {
             Some(ACCOUNT_AVAILABILITY_REFRESH_INTERVAL)
         } else {
             None
@@ -188,7 +191,7 @@ fn countdown_timer_active(app: &PrimeApp) -> bool {
                         .as_ref()
                         .is_some_and(LoadoutSummary::battle_pass_timer_active)
             }
-            Tab::Accounts | Tab::Settings => false,
+            Tab::Accounts | Tab::Settings | Tab::LiveMatch => false,
         }
 }
 
@@ -350,6 +353,12 @@ struct PrimeApp {
     /// Why the selected account's last Shop or Loadout load failed, shown with Try again.
     store_error: Option<String>,
     loadout_error: Option<String>,
+    /// The selected account's last live match: agent select or a match in progress.
+    live_match: Option<LiveMatch>,
+    live_match_request: Option<ViewRequest>,
+    live_match_error: Option<LiveMatchError>,
+    /// Whether players who hide their name in game stay hidden. On at every start.
+    respect_streamer_mode: bool,
     next_request_id: u64,
     /// Accounts whose Riot profile refresh is running.
     profile_identity_refreshing: HashSet<AccountId>,
@@ -731,6 +740,8 @@ enum Tab {
     Shop,
     Loadout,
     Settings,
+    /// Opened from the sidebar's live match indicator; it has no nav item.
+    LiveMatch,
 }
 
 impl std::fmt::Display for Tab {
@@ -740,6 +751,7 @@ impl std::fmt::Display for Tab {
             Tab::Shop => f.write_str("Shop"),
             Tab::Loadout => f.write_str("Loadout"),
             Tab::Settings => f.write_str("Settings"),
+            Tab::LiveMatch => f.write_str("Live Match"),
         }
     }
 }
@@ -750,6 +762,7 @@ struct TabScrollOffsets {
     shop: AbsoluteOffset,
     loadout: AbsoluteOffset,
     settings: AbsoluteOffset,
+    live_match: AbsoluteOffset,
 }
 
 impl TabScrollOffsets {
@@ -759,6 +772,7 @@ impl TabScrollOffsets {
             Tab::Shop => self.shop,
             Tab::Loadout => self.loadout,
             Tab::Settings => self.settings,
+            Tab::LiveMatch => self.live_match,
         }
     }
 
@@ -768,6 +782,7 @@ impl TabScrollOffsets {
             Tab::Shop => self.shop = offset,
             Tab::Loadout => self.loadout = offset,
             Tab::Settings => self.settings = offset,
+            Tab::LiveMatch => self.live_match = offset,
         }
     }
 }
@@ -972,6 +987,10 @@ enum Message {
     LoadoutLoaded(u64, Result<LoadoutResult, String>),
     /// Reloads the loadout and battle pass, which load together.
     RetryLoadout,
+    /// The reply to the Live Match load with this request ID.
+    LiveMatchLoaded(u64, Result<LiveMatchResult, LiveMatchError>),
+    RetryLiveMatch,
+    StreamerModeToggled,
     OpenImageViewer(ImageViewerRequest),
     ImageViewerImageLoaded(ImageViewerSource, Result<PathBuf, String>),
     CloseImageViewer,
