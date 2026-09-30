@@ -18,6 +18,9 @@ pub const FLEX_URL: &str = "https://valorant-api.com/v1/flex";
 pub const CONTRACTS_URL: &str = "https://valorant-api.com/v1/contracts";
 pub const VERSION_URL: &str = "https://valorant-api.com/v1/version";
 pub const COMPETITIVE_TIERS_URL: &str = "https://valorant-api.com/v1/competitivetiers";
+pub const MAPS_URL: &str = "https://valorant-api.com/v1/maps";
+pub const QUEUES_URL: &str = "https://valorant-api.com/v1/gamemodes/queues";
+pub const AGENTS_URL: &str = "https://valorant-api.com/v1/agents?isPlayableCharacter=true";
 
 #[derive(Clone)]
 pub struct ValorantContentApi {
@@ -102,6 +105,15 @@ impl ValorantContentApi {
         ))
     }
 
+    /// Map, queue and agent names for a live match.
+    pub async fn match_catalog(&self) -> Result<MatchCatalog, ContentError> {
+        let maps = self.content_data::<Vec<Map>>(MAPS_URL).await?;
+        let queues = self.content_data::<Vec<Queue>>(QUEUES_URL).await?;
+        let agents = self.content_data::<Vec<Agent>>(AGENTS_URL).await?;
+
+        Ok(MatchCatalog::from_parts(maps, queues, agents))
+    }
+
     async fn content_data<T>(&self, url: &str) -> Result<T, ContentError>
     where
         T: DeserializeOwned,
@@ -116,6 +128,70 @@ impl ValorantContentApi {
             .await?;
 
         Ok(response.data)
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct MatchCatalog {
+    /// Keyed by Riot's map path, such as `/game/maps/ascent/ascent`, in lower case.
+    maps: HashMap<String, ResolvedMap>,
+    queues: HashMap<String, String>,
+    agents: HashMap<String, String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedMap {
+    pub uuid: String,
+    pub display_name: String,
+    pub list_view_icon: Option<String>,
+}
+
+impl MatchCatalog {
+    pub fn from_parts(maps: Vec<Map>, queues: Vec<Queue>, agents: Vec<Agent>) -> Self {
+        Self {
+            maps: maps
+                .into_iter()
+                .map(|map| {
+                    (
+                        map.map_url.trim().to_ascii_lowercase(),
+                        ResolvedMap {
+                            uuid: map.uuid,
+                            display_name: map.display_name,
+                            list_view_icon: map.list_view_icon,
+                        },
+                    )
+                })
+                .collect(),
+            queues: queues
+                .into_iter()
+                .filter_map(|queue| {
+                    Some((
+                        queue.queue_id?.trim().to_ascii_lowercase(),
+                        queue.display_name,
+                    ))
+                })
+                .collect(),
+            agents: agents
+                .into_iter()
+                .map(|agent| (normalize_uuid(&agent.uuid), agent.display_name))
+                .collect(),
+        }
+    }
+
+    /// The map for Riot's `MapID`, which is the map's path in the game files.
+    pub fn map(&self, map_id: &str) -> Option<&ResolvedMap> {
+        self.maps.get(&map_id.trim().to_ascii_lowercase())
+    }
+
+    /// The mode's name for Riot's queue ID, such as "Competitive" for `competitive`.
+    pub fn queue_name(&self, queue_id: &str) -> Option<&str> {
+        self.queues
+            .get(&queue_id.trim().to_ascii_lowercase())
+            .map(String::as_str)
+    }
+
+    pub fn agent_name(&self, uuid: &str) -> Option<&str> {
+        self.agents.get(&normalize_uuid(uuid)).map(String::as_str)
     }
 }
 
@@ -959,6 +1035,32 @@ pub struct CompetitiveTier {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct Map {
+    pub uuid: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+    #[serde(rename = "mapUrl", default)]
+    pub map_url: String,
+    #[serde(rename = "listViewIcon")]
+    pub list_view_icon: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct Queue {
+    #[serde(rename = "queueId")]
+    pub queue_id: Option<String>,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct Agent {
+    pub uuid: String,
+    #[serde(rename = "displayName")]
+    pub display_name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct PlayerCard {
     pub uuid: String,
     #[serde(rename = "displayName")]
@@ -1061,6 +1163,63 @@ pub enum ContentError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn match_catalog() -> MatchCatalog {
+        let maps: Vec<Map> = serde_json::from_value(serde_json::json!([
+            {
+                "uuid": "7eaecc1b-4337-bbf6-6ab9-04b8f06b3319",
+                "displayName": "Ascent",
+                "mapUrl": "/Game/Maps/Ascent/Ascent",
+                "listViewIcon": "https://media.valorant-api.com/maps/ascent/listviewicon.png"
+            },
+            {
+                "uuid": "d960549e-485c-e861-8d71-aa9d1aed12a2",
+                "displayName": "Split",
+                "mapUrl": "/Game/Maps/Bonsai/Bonsai",
+                "listViewIcon": null
+            }
+        ]))
+        .unwrap();
+        let queues: Vec<Queue> = serde_json::from_value(serde_json::json!([
+            {"queueId": "competitive", "displayName": "Competitive"},
+            {"queueId": "custom", "displayName": "Custom Game"},
+            {"queueId": null, "displayName": "Unlisted"}
+        ]))
+        .unwrap();
+        let agents: Vec<Agent> = serde_json::from_value(serde_json::json!([
+            {"uuid": "add6443a-41bd-e414-f6ad-e58d267f4e95", "displayName": "Jett"}
+        ]))
+        .unwrap();
+
+        MatchCatalog::from_parts(maps, queues, agents)
+    }
+
+    #[test]
+    fn match_catalog_names_maps_queues_and_agents() {
+        let catalog = match_catalog();
+
+        assert_eq!(
+            catalog
+                .map("/Game/Maps/Ascent/Ascent")
+                .map(|map| map.display_name.as_str()),
+            Some("Ascent")
+        );
+        assert_eq!(
+            catalog
+                .map("/game/maps/bonsai/bonsai")
+                .map(|map| map.display_name.as_str()),
+            Some("Split")
+        );
+        assert_eq!(catalog.queue_name("competitive"), Some("Competitive"));
+        assert_eq!(catalog.queue_name("custom"), Some("Custom Game"));
+        assert_eq!(
+            catalog.agent_name("ADD6443A-41BD-E414-F6AD-E58D267F4E95"),
+            Some("Jett")
+        );
+        assert_eq!(catalog.map("/Game/Maps/Unknown/Unknown"), None);
+        assert_eq!(catalog.queue_name("unknown"), None);
+        assert_eq!(catalog.agent_name("unknown"), None);
+    }
 
     #[test]
     fn rank_icon_urls_use_the_current_tier_table() {
