@@ -55,30 +55,28 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     }
     let restore = restore_section(app);
 
-    let left: Element<'_, Message> = if saved.is_empty() && app.settings_saving_account.is_none() {
-        let mut left = column![empty_profiles()].spacing(10).height(Length::Fill);
-        if let Some(restore) = restore {
-            left = left.push(restore);
-        }
-        left.into()
-    } else {
-        if let Some(restore) = restore {
-            list = list.push(restore);
-        }
-        // The gap before the panel is inside the scrollable, so its scrollbar floats in the gap
-        // instead of over the cards.
-        let gap = if selected.is_some() { PANEL_GAP } else { 0.0 };
-        scrollable(container(list).padding(Padding::ZERO.right(gap)))
-            .direction(Direction::Vertical(
-                Scrollbar::new()
-                    .width(4)
-                    .scroller_width(4)
-                    .margin((PANEL_GAP - 4.0) / 2.0),
-            ))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-    };
+    // Put-aside settings scroll with the list, so their Restore buttons can't be cut off.
+    let left: Element<'_, Message> =
+        if saved.is_empty() && app.settings_saving_account.is_none() && restore.is_none() {
+            empty_profiles()
+        } else {
+            if let Some(restore) = restore {
+                list = list.push(restore);
+            }
+            // The gap before the panel is inside the scrollable, so its scrollbar floats in the gap
+            // instead of over the cards.
+            let gap = if selected.is_some() { PANEL_GAP } else { 0.0 };
+            scrollable(container(list).padding(Padding::ZERO.right(gap)))
+                .direction(Direction::Vertical(
+                    Scrollbar::new()
+                        .width(4)
+                        .scroller_width(4)
+                        .margin((PANEL_GAP - 4.0) / 2.0),
+                ))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        };
 
     let mut body = row![left].height(Length::Fill);
     if let Some(profile) = selected {
@@ -145,26 +143,6 @@ fn saved_label(then_unix: i64, now_unix: i64) -> String {
     format!("{} {}", &month[..3], saved_at.day())
 }
 
-/// What a preset carries, as the card's chips list it.
-fn included_groups(summary: &GameSettingsProfileSummary) -> Vec<&'static str> {
-    [
-        (summary.crosshair.is_some(), "Crosshair"),
-        (!summary.keybinds.is_empty(), "Keybinds"),
-        (
-            summary.sensitivity.is_some()
-                || summary.ads_multiplier.is_some()
-                || summary.scoped_multiplier.is_some(),
-            "Mouse",
-        ),
-        (!summary.audio_settings.is_empty(), "Audio"),
-        (!summary.minimap.is_empty(), "Minimap"),
-        (!summary.other_settings.is_empty(), "Other"),
-    ]
-    .into_iter()
-    .filter_map(|(included, label)| included.then_some(label))
-    .collect()
-}
-
 fn profile_card<'a>(
     app: &'a PrimeApp,
     profile: &'a GameSettingsProfileMetadata,
@@ -217,55 +195,26 @@ fn profile_card<'a>(
         top = top.push(mono(format!("v{version}"), 11).color(theme::FAINT));
     }
 
-    let groups = included_groups(&profile.summary);
-    let mut includes = row![].spacing(6).align_y(alignment::Vertical::Center);
-    if groups.is_empty() {
-        includes = includes.push(chip("Defaults"));
-    }
-    for group in groups {
-        includes = includes.push(chip(group));
-    }
-    includes = includes.push(
-        iced::widget::button(
-            text(if expanded {
-                "Hide settings"
-            } else {
-                "Show settings"
-            })
-            .size(11)
-            .color(theme::MUTED),
-        )
-        .padding([3, 6])
-        .style(|_, status| iced::widget::button::Style {
-            background: matches!(
-                status,
-                iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
-            )
-            .then(|| theme::RAISED.into()),
-            border: border::rounded(5),
-            ..Default::default()
-        })
-        .on_press(Message::TogglePresetSettings(profile.id.clone())),
-    );
-
-    let mut card = column![
+    // At a glance: the crosshair and the settings people compare presets by. The full list
+    // opens below them.
+    let summary = &profile.summary;
+    let card = column![
         top,
-        container(includes).padding(Padding::ZERO.left(CARD_BODY_INSET))
+        container(
+            row![
+                crosshair_tile(summary.crosshair.as_ref()),
+                settings_details(&profile.id, summary, expanded)
+            ]
+            .spacing(16)
+            .align_y(if expanded {
+                alignment::Vertical::Top
+            } else {
+                alignment::Vertical::Center
+            }),
+        )
+        .padding(Padding::ZERO.left(CARD_BODY_INSET))
     ]
     .spacing(10);
-    if expanded {
-        let summary = &profile.summary;
-        card = card.push(
-            container(
-                row![
-                    crosshair_tile(summary.crosshair.as_ref()),
-                    settings_details(summary)
-                ]
-                .spacing(16),
-            )
-            .padding(Padding::ZERO.left(CARD_BODY_INSET)),
-        );
-    }
 
     iced::widget::button(card)
         .padding(Padding::new(16.0).left(CARD_LEFT_PADDING))
@@ -315,17 +264,6 @@ fn radio(selected: bool) -> Element<'static, Message> {
     }))
     .center(RADIO_SLOT)
     .into()
-}
-
-fn chip(label: &'static str) -> Element<'static, Message> {
-    container(text(label).size(11).color(theme::MUTED))
-        .padding([3, 8])
-        .style(|_| {
-            container::Style::default()
-                .background(theme::RAISED)
-                .border(border::rounded(5))
-        })
-        .into()
 }
 
 fn saving_card(app: &PrimeApp, account_id: AccountId) -> Element<'_, Message> {
@@ -403,12 +341,9 @@ fn apply_row<'a>(
     busy: bool,
 ) -> Element<'a, Message> {
     let available = has_settings_access(account);
+    // Matched on the account alone, so the check stays visible while another preset is shown.
     let checking = app.settings_check.as_ref().is_some_and(|check| {
-        check.change
-            == SettingsChange::Apply {
-                account_id: account.id,
-                profile_id: profile.id.clone(),
-            }
+        matches!(check.change, SettingsChange::Apply { account_id, .. } if account_id == account.id)
     });
 
     let trailing: Element<'a, Message> = if app.settings_applying_account == Some(account.id) {
@@ -681,10 +616,14 @@ fn divider() -> Element<'static, Message> {
         .into()
 }
 
-/// The preset's settings as labelled rows, then every setting it copies. Missing values are
-/// VALORANT's defaults.
-fn settings_details(summary: &GameSettingsProfileSummary) -> Element<'_, Message> {
-    column![
+/// The preset's settings as labelled rows, and when expanded, every setting it copies. Missing
+/// values are VALORANT's defaults.
+fn settings_details<'a>(
+    profile_id: &str,
+    summary: &'a GameSettingsProfileSummary,
+    expanded: bool,
+) -> Element<'a, Message> {
+    let mut details = column![
         detail_row("Sensitivity", sensitivity_value(summary)),
         detail_row("Crosshair", crosshair_value(summary)),
         detail_row("Keybinds", keybinds_value(summary)),
@@ -699,11 +638,43 @@ fn settings_details(summary: &GameSettingsProfileSummary) -> Element<'_, Message
                     .into()
             }
         ),
-        all_settings(summary),
     ]
     .spacing(8)
-    .width(Length::Fill)
-    .into()
+    .width(Length::Fill);
+
+    let listed =
+        summary.keybinds.len() + summary.audio_settings.len() + summary.other_settings.len();
+    if listed == 0 {
+        return details.into();
+    }
+
+    details = details.push(
+        iced::widget::button(
+            text(if expanded {
+                "Show less".to_string()
+            } else {
+                format!("Show all settings ({listed})")
+            })
+            .size(12)
+            .color(theme::MUTED),
+        )
+        .padding([3, 6])
+        .style(|_, status| iced::widget::button::Style {
+            background: matches!(
+                status,
+                iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+            )
+            .then(|| theme::RAISED.into()),
+            border: border::rounded(5),
+            ..Default::default()
+        })
+        .on_press(Message::TogglePresetSettings(profile_id.to_string())),
+    );
+    if expanded {
+        details = details.push(all_settings(summary));
+    }
+
+    details.into()
 }
 
 /// Every keybind and every other setting a preset copies, as labelled groups.
@@ -847,7 +818,8 @@ fn keybinds_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message> 
         value = value.push(text(format!("+{hidden} more")).size(13).color(theme::MUTED));
     }
 
-    value.into()
+    // Wraps whole keybinds onto the next line when the card is narrow.
+    value.wrap().vertical_spacing(6).into()
 }
 
 /// A value with an optional small label, such as `ADS 0.6×`.
@@ -1160,22 +1132,6 @@ mod tests {
         assert_eq!(saved_label(now - 5 * 60, now), "5 min ago");
         let older = saved_label(now - 30 * 86_400, now);
         assert!(older.starts_with("Dec "), "{older}");
-    }
-
-    #[test]
-    fn lists_what_a_preset_carries_in_the_design_order() {
-        let mut summary = GameSettingsProfileSummary {
-            sensitivity: Some(0.35),
-            crosshair: Some(plus(None)),
-            ..GameSettingsProfileSummary::default()
-        };
-        assert_eq!(included_groups(&summary), ["Crosshair", "Mouse"]);
-
-        summary.minimap = vec!["Rotate".to_string()];
-        summary.scoped_multiplier = Some(1.0);
-        summary.sensitivity = None;
-        assert_eq!(included_groups(&summary), ["Crosshair", "Mouse", "Minimap"]);
-        assert!(included_groups(&GameSettingsProfileSummary::default()).is_empty());
     }
 
     #[test]
