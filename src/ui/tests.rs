@@ -5740,6 +5740,44 @@ fn a_bundles_details_open_for_that_bundle_and_close_with_escape_or_a_tab_change(
 }
 
 #[test]
+fn a_bundles_item_art_loads_when_its_details_open_and_a_shop_reset_closes_them() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let loaded_at = iced::time::Instant::now();
+    let mut bundle = priced_bundle_json(
+        Some(2_175),
+        Some(2_175),
+        serde_json::json!([bundle_item_json(2_175, 0, 2_175)]),
+    );
+    bundle["DurationRemainingInSeconds"] = serde_json::json!(60);
+    app.store_summary = Some(summary_with_bundles(vec![bundle], 60, loaded_at));
+
+    let task = app.update(Message::ShowBundleDetails("bundle".to_string()));
+    assert_eq!(task.units(), 1);
+
+    let mut items = app.open_bundle_details().expect("open").items.clone();
+    let art = dir.path().join("art.png");
+    if let BundleItem::Skin(skin) = &mut items[0].item {
+        skin.cached_icon = Some(art.clone());
+    }
+    let _ = app.update(Message::BundleItemArtLoaded("bundle".to_string(), items));
+    assert_eq!(
+        app.open_bundle_details().expect("open").items[0].cached_icon(),
+        Some(&art)
+    );
+    // Once the art is cached, opening again fetches nothing.
+    let _ = app.update(Message::CloseBundleDetails);
+    assert_eq!(
+        app.update(Message::ShowBundleDetails("bundle".to_string()))
+            .units(),
+        0
+    );
+
+    let _ = app.update(Message::ShopTimerTick(loaded_at + Duration::from_secs(61)));
+    assert_eq!(app.bundle_details, None);
+}
+
+#[test]
 fn a_free_bundle_item_is_not_counted_at_full_price() {
     let summary = summary_with_bundles(
         vec![priced_bundle_json(

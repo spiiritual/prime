@@ -231,9 +231,11 @@ fn bundle_banner<'a>(
     }
     info = info.push(badges);
 
+    // The art's height inside the card's border, or the whole dialog banner.
+    let art_height = if large { height } else { height - 2.0 };
     let scrim = container(space())
         .width(Length::Fill)
-        .height(Length::Fill)
+        .height(art_height)
         .style(move |_| {
             let style = container::Style::default().background(
                 iced::gradient::Linear::new(std::f32::consts::PI)
@@ -263,17 +265,34 @@ fn bundle_banner<'a>(
     let banner = container(stack![
         asset_background_image(
             bundle.bundle.cached_icon.as_ref(),
-            height - 2.0,
-            if large { 0.0 } else { 11.0 },
+            art_height,
+            if large { 15.0 } else { 11.0 },
             &bundle.bundle.display_name,
+            // The card is a button already, so only the dialog's art opens the image viewer.
             high_res_image_source(
                 "viewer-bundles",
                 &bundle.bundle.uuid,
                 bundle.bundle.display_icon.as_deref(),
                 bundle.bundle.viewer_icon.as_deref(),
-            ),
+            )
+            .filter(|_| large),
         ),
         scrim,
+        // The centred dialog can land on a half pixel, where Iced leaves the gradient's last row
+        // undrawn and a line of bright art shows; a solid edge in the fade's end colour covers it.
+        container(
+            container(space())
+                .width(Length::Fill)
+                .height(if large { 2 } else { 0 })
+                .style(|_| {
+                    container::Style::default().background(Color {
+                        a: 0.97,
+                        ..BUNDLE_SCRIM
+                    })
+                })
+        )
+        .height(Length::Fill)
+        .align_y(alignment::Vertical::Bottom),
         container(info)
             .padding(inset)
             .width(Length::Fill)
@@ -365,8 +384,10 @@ pub(in crate::ui) fn bundle_details<'a>(
                     }),
             ),
         ]
-        .width(DETAILS_WIDTH),
+        .width(DETAILS_WIDTH - 2.0),
     )
+    // The banner is opaque, so it sits inside the border rather than over it.
+    .padding(1)
     .clip(true)
     .style(|_| container::Style {
         background: Some(theme::SURFACE.into()),

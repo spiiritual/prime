@@ -901,6 +901,8 @@ enum Message {
     CloseImageViewer,
     /// Opens a featured bundle's details, by its store ID.
     ShowBundleDetails(String),
+    /// A bundle's item art finished caching, by the bundle's store ID.
+    BundleItemArtLoaded(String, Vec<data::shop::BundleItemDisplay>),
     CloseBundleDetails,
     RiotClientPathChanged(String),
     BrowseRiotClientPath,

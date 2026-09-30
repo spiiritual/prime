@@ -1805,6 +1805,8 @@ impl PrimeApp {
                         .is_some_and(|summary| summary.is_expired_at(now))
                 {
                     self.store_summary = None;
+                    // Otherwise it would open again by itself once the shop reloads.
+                    self.bundle_details = None;
                     let task = self.fetch_storefront_task();
                     self.set_view_status(Status::progress(
                         "Shop reset reached; loading updated shop",
@@ -1950,7 +1952,31 @@ impl PrimeApp {
             }
             Message::CloseImageViewer => self.close_image_viewer(),
             Message::ShowBundleDetails(store_id) => {
-                self.bundle_details = Some(store_id);
+                self.bundle_details = Some(store_id.clone());
+                let Some(bundle) = self.open_bundle_details() else {
+                    return Task::none();
+                };
+                if bundle.items.iter().all(|item| item.cached_icon().is_some()) {
+                    return Task::none();
+                }
+                Task::perform(
+                    super::data::image_assets::cache_bundle_item_images(
+                        bundle.items.clone(),
+                        self.image_cache.clone(),
+                    ),
+                    move |items| Message::BundleItemArtLoaded(store_id.clone(), items),
+                )
+            }
+            Message::BundleItemArtLoaded(store_id, items) => {
+                if let Some(bundle) = self.store_summary.as_mut().and_then(|summary| {
+                    summary
+                        .featured_bundles
+                        .iter_mut()
+                        .find(|bundle| bundle.store_id == store_id)
+                }) && bundle.items.len() == items.len()
+                {
+                    bundle.items = items;
+                }
                 Task::none()
             }
             Message::CloseBundleDetails => {

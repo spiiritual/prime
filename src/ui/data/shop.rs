@@ -363,6 +363,15 @@ pub(in crate::ui) struct BundleItemDisplay {
     pub(in crate::ui) price: Option<OfferPrice>,
 }
 
+impl BundleItemDisplay {
+    pub(in crate::ui) fn cached_icon(&self) -> Option<&PathBuf> {
+        match &self.item {
+            BundleItem::Skin(skin) => skin.cached_icon.as_ref(),
+            BundleItem::Accessory { accessory, .. } => accessory.cached_icon.as_ref(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum BundleItem {
     Skin(SkinDisplay),
