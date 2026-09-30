@@ -3658,7 +3658,7 @@ pub(super) fn launch_preflight_decision(
 ) -> LaunchPreflightDecision {
     match availability {
         AccountAvailability::Available => LaunchPreflightDecision::Launch,
-        AccountAvailability::Unavailable { .. } => LaunchPreflightDecision::WarnUnavailable,
+        AccountAvailability::Unavailable(_) => LaunchPreflightDecision::WarnUnavailable,
         AccountAvailability::Unknown { .. } => LaunchPreflightDecision::LaunchInconclusive,
     }
 }

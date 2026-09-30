@@ -68,8 +68,26 @@ pub(in crate::ui) enum AccountActivity {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum AccountAvailability {
     Available,
-    Unavailable { reason: String },
+    Unavailable(Busy),
     Unknown { reason: String },
+}
+
+/// What an unavailable account is doing in VALORANT.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(in crate::ui) enum Busy {
+    InMatch,
+    AgentSelect,
+    InLobby,
+}
+
+impl Busy {
+    pub(in crate::ui) fn label(self) -> &'static str {
+        match self {
+            Self::InMatch => "in match",
+            Self::AgentSelect => "agent select",
+            Self::InLobby => "in lobby",
+        }
+    }
 }
 
 impl AccountAvailability {
@@ -91,9 +109,9 @@ impl AccountAvailability {
         }
     }
 
-    pub(in crate::ui) fn unavailable_reason(&self) -> Option<&str> {
+    pub(in crate::ui) fn unavailable_reason(&self) -> Option<&'static str> {
         match self {
-            Self::Unavailable { reason } => Some(reason),
+            Self::Unavailable(busy) => Some(busy.label()),
             _ => None,
         }
     }
@@ -102,15 +120,9 @@ impl AccountAvailability {
 impl From<AccountActivity> for AccountAvailability {
     fn from(activity: AccountActivity) -> Self {
         match activity {
-            AccountActivity::InMatch => AccountAvailability::Unavailable {
-                reason: "in match".to_string(),
-            },
-            AccountActivity::AgentSelect => AccountAvailability::Unavailable {
-                reason: "agent select".to_string(),
-            },
-            AccountActivity::InLobby => AccountAvailability::Unavailable {
-                reason: "in lobby".to_string(),
-            },
+            AccountActivity::InMatch => AccountAvailability::Unavailable(Busy::InMatch),
+            AccountActivity::AgentSelect => AccountAvailability::Unavailable(Busy::AgentSelect),
+            AccountActivity::InLobby => AccountAvailability::Unavailable(Busy::InLobby),
             AccountActivity::Available => AccountAvailability::Available,
             AccountActivity::Unknown(reason) => AccountAvailability::Unknown { reason },
         }

@@ -1266,7 +1266,7 @@ fn account_availability(app: &PrimeApp, account: &AccountProfile) -> AccountAvai
 fn presence_color(availability: &AccountAvailability) -> Color {
     match availability {
         AccountAvailability::Available => theme::OK,
-        AccountAvailability::Unavailable { .. } => theme::GOLD,
+        AccountAvailability::Unavailable(_) => theme::GOLD,
         AccountAvailability::Unknown { .. } => theme::FAINT,
     }
 }
@@ -1275,8 +1275,8 @@ fn presence_color(availability: &AccountAvailability) -> Color {
 fn presence_label(availability: &AccountAvailability) -> String {
     match availability {
         AccountAvailability::Available => "Available".to_string(),
-        AccountAvailability::Unavailable { reason } => {
-            let mut chars = reason.chars();
+        AccountAvailability::Unavailable(busy) => {
+            let mut chars = busy.label().chars();
             chars
                 .next()
                 .map(|first| first.to_uppercase().chain(chars).collect())
@@ -1370,6 +1370,7 @@ fn rank_color(rank: &CompetitiveRank) -> Color {
 mod tests {
     use super::*;
     use crate::account::Shard;
+    use crate::ui::data::account_details::Busy;
 
     #[test]
     fn relative_times_read_as_the_design_writes_them() {
@@ -1384,10 +1385,16 @@ mod tests {
     #[test]
     fn presence_names_why_an_account_is_busy() {
         assert_eq!(
-            presence_label(&AccountAvailability::Unavailable {
-                reason: "in match".to_string()
-            }),
+            presence_label(&AccountAvailability::Unavailable(Busy::InMatch)),
             "In match"
+        );
+        assert_eq!(
+            presence_label(&AccountAvailability::Unavailable(Busy::AgentSelect)),
+            "Agent select"
+        );
+        assert_eq!(
+            presence_label(&AccountAvailability::Unavailable(Busy::InLobby)),
+            "In lobby"
         );
         assert_eq!(
             presence_label(&AccountAvailability::checking()),

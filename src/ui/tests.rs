@@ -10,7 +10,7 @@ use super::app::{
     launch_preflight_decision,
 };
 use super::data::account_details::{
-    AccountActivity, AccountActivityProbe, AccountAvailability, AccountAvailabilityRefresh,
+    AccountActivity, AccountActivityProbe, AccountAvailability, AccountAvailabilityRefresh, Busy,
     RefreshedApiContext, classify_account_activity, competitive_rank_from_mmr,
     penalty_status_from_response, rank_name_for_competitive_tier,
 };
@@ -182,9 +182,7 @@ fn launch_preflight_decision_allows_available_and_unknown_but_warns_unavailable(
         LaunchPreflightDecision::LaunchInconclusive
     );
     assert_eq!(
-        launch_preflight_decision(&AccountAvailability::Unavailable {
-            reason: "in match".to_string()
-        }),
+        launch_preflight_decision(&AccountAvailability::Unavailable(Busy::InMatch)),
         LaunchPreflightDecision::WarnUnavailable
     );
 }
@@ -4929,9 +4927,7 @@ fn a_fresh_result_in_a_match_warns_at_once() {
     with_fresh_availability(
         &mut app,
         account_id,
-        AccountAvailability::Unavailable {
-            reason: "in match".to_string(),
-        },
+        AccountAvailability::Unavailable(Busy::InMatch),
     );
 
     let _ = app.update(Message::RequestRestoreSettings(account_id));
@@ -4963,9 +4959,7 @@ fn an_old_result_checks_first_with_a_loading_state() {
     let _ = app.update(settings_checked(
         app.next_request_id,
         account_id,
-        AccountAvailability::Unavailable {
-            reason: "in lobby".to_string(),
-        },
+        AccountAvailability::Unavailable(Busy::InLobby),
         false,
     ));
 
@@ -4987,9 +4981,7 @@ fn a_check_finding_a_match_warns() {
     let _ = app.update(settings_checked(
         app.next_request_id,
         account_id,
-        AccountAvailability::Unavailable {
-            reason: "in match".to_string(),
-        },
+        AccountAvailability::Unavailable(Busy::InMatch),
         false,
     ));
 
@@ -5030,9 +5022,7 @@ fn a_cached_unknown_result_starts_a_real_check() {
 fn a_poll_over_90_seconds_old_starts_a_real_check() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
-    let in_match = AccountAvailability::Unavailable {
-        reason: "in match".to_string(),
-    };
+    let in_match = AccountAvailability::Unavailable(Busy::InMatch);
     with_fresh_availability(&mut app, account_id, in_match.clone());
     app.account_availability_checked_at.insert(
         account_id,
@@ -5101,9 +5091,7 @@ fn a_launch_check_result_makes_it_fresh() {
     let dir = tempdir().expect("temp dir");
     let (mut app, account_id) = settings_app(dir.path());
     app.launch_preflight_account = Some(account_id);
-    let in_lobby = AccountAvailability::Unavailable {
-        reason: "in lobby".to_string(),
-    };
+    let in_lobby = AccountAvailability::Unavailable(Busy::InLobby);
 
     let _ = app.update(Message::LaunchPreflightChecked(
         super::data::account_details::AccountActivityCheck {
@@ -5232,9 +5220,7 @@ fn a_check_from_an_earlier_request_changes_nothing() {
     let _ = app.update(settings_checked(
         first_request,
         account_id,
-        AccountAvailability::Unavailable {
-            reason: "in lobby".to_string(),
-        },
+        AccountAvailability::Unavailable(Busy::InLobby),
         true,
     ));
 
