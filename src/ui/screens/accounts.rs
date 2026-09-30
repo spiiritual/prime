@@ -51,22 +51,30 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         return first_account(app);
     }
 
-    let content = if app.settings_cloning && app.active_accounts_tab == AccountsTab::GameSettings {
+    let content = if settings_profiles_open(app) {
         super::game_settings::tab(app)
     } else {
         account_list(app)
     };
 
     let mut page = Column::new().spacing(20).width(Length::Fill);
+    if settings_profiles_open(app) {
+        page = page.height(Length::Fill);
+    }
     if let Some(account) = app.state.selected_account() {
         page = page.push(hero(app, account));
     }
     page.push(tab_strip(app)).push(content).into()
 }
 
-/// With no accounts, the page is the centred first-account prompt and has no title.
+/// With no accounts, the page is the centred first-account prompt and has no title. Settings
+/// profiles fill the page too, scrolling their own list, so the Apply panel reaches the bottom.
 pub(super) fn fills_page(app: &PrimeApp) -> bool {
-    app.state.accounts.is_empty()
+    app.state.accounts.is_empty() || settings_profiles_open(app)
+}
+
+fn settings_profiles_open(app: &PrimeApp) -> bool {
+    app.settings_cloning && app.active_accounts_tab == AccountsTab::GameSettings
 }
 
 /// Import, Add current and Add account, beside the page title.
@@ -453,8 +461,7 @@ fn tab_strip(app: &PrimeApp) -> Element<'_, Message> {
     .spacing(22)
     .align_y(alignment::Vertical::Bottom);
 
-    let game_settings_open =
-        app.settings_cloning && app.active_accounts_tab == AccountsTab::GameSettings;
+    let game_settings_open = settings_profiles_open(app);
     if app.settings_cloning {
         let profiles = app
             .settings_profiles
@@ -1283,12 +1290,12 @@ pub(in crate::ui) fn missing_rank_label(app: &PrimeApp, account_id: AccountId) -
     }
 }
 
-fn now_unix() -> i64 {
+pub(super) fn now_unix() -> i64 {
     OffsetDateTime::now_utc().unix_timestamp()
 }
 
 /// How long ago something happened, as the design writes it: "12 min ago", "2 h ago".
-fn relative_time_label(then_unix: i64, now_unix: i64) -> String {
+pub(super) fn relative_time_label(then_unix: i64, now_unix: i64) -> String {
     let seconds = now_unix.saturating_sub(then_unix).max(0);
     match seconds {
         0..60 => "just now".to_string(),
@@ -1296,18 +1303,6 @@ fn relative_time_label(then_unix: i64, now_unix: i64) -> String {
         3600..86_400 => format!("{} h ago", seconds / 3600),
         _ => format!("{} d ago", seconds / 86_400),
     }
-}
-
-pub(super) fn last_refreshed_label(timestamp: Option<i64>) -> String {
-    let Some(timestamp) = timestamp else {
-        return "Never".to_string();
-    };
-    let Ok(refreshed_at) = OffsetDateTime::from_unix_timestamp(timestamp) else {
-        return "Unknown".to_string();
-    };
-    let offset = UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC);
-
-    format_refreshed_at(refreshed_at, offset)
 }
 
 /// The short form dialogs use, such as "captured Sep 27".
@@ -1331,26 +1326,6 @@ fn launcher_session_captured_at_unix(account: &AccountProfile) -> Option<i64> {
         .map(|backup| backup.captured_at_unix)
 }
 
-fn format_refreshed_at(refreshed_at: OffsetDateTime, offset: UtcOffset) -> String {
-    let refreshed_at = refreshed_at.to_offset(offset);
-    let hour = refreshed_at.hour();
-    let hour_12 = match hour % 12 {
-        0 => 12,
-        value => value,
-    };
-    let period = if hour < 12 { "AM" } else { "PM" };
-
-    format!(
-        "{:04}-{:02}-{:02} {}:{:02} {}",
-        refreshed_at.year(),
-        u8::from(refreshed_at.month()),
-        refreshed_at.day(),
-        hour_12,
-        refreshed_at.minute(),
-        period
-    )
-}
-
 fn rank_color(rank: &CompetitiveRank) -> Color {
     match rank.tier {
         3..=5 => Color::from_rgb8(145, 151, 158),
@@ -1370,26 +1345,6 @@ fn rank_color(rank: &CompetitiveRank) -> Color {
 mod tests {
     use super::*;
     use crate::account::Shard;
-
-    #[test]
-    fn formats_last_refreshed_time() {
-        assert_eq!(last_refreshed_label(None), "Never");
-        assert!(!last_refreshed_label(Some(1_800_000_000)).contains("UTC"));
-        assert_eq!(
-            format_refreshed_at(
-                OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap(),
-                UtcOffset::from_hms(-5, 0, 0).unwrap(),
-            ),
-            "2027-01-15 3:00 AM"
-        );
-        assert_eq!(
-            format_refreshed_at(
-                OffsetDateTime::from_unix_timestamp(1_800_032_400).unwrap(),
-                UtcOffset::UTC,
-            ),
-            "2027-01-15 5:00 PM"
-        );
-    }
 
     #[test]
     fn relative_times_read_as_the_design_writes_them() {

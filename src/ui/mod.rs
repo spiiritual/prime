@@ -340,6 +340,8 @@ struct PrimeApp {
     settings_profiles: Vec<GameSettingsProfileMetadata>,
     /// Presets whose cards list all their settings.
     expanded_presets: HashSet<String>,
+    /// The preset the Apply panel is for; the first one when unset or deleted.
+    selected_preset: Option<String>,
     /// The name dialog for saving or renaming a preset.
     preset_name_prompt: Option<PresetNamePrompt>,
     settings_saving_account: Option<AccountId>,
@@ -855,6 +857,8 @@ enum Message {
     RequestRenamePreset(String),
     /// Opens or closes the full list of a preset's settings.
     TogglePresetSettings(String),
+    /// Shows this preset in the Apply panel.
+    SelectPreset(String),
     PresetNameChanged(String),
     CancelPresetName,
     ConfirmPresetName,

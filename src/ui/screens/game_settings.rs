@@ -1,217 +1,690 @@
-//! The Accounts tab's Game settings sub-tab: saved presets and each account's original settings.
+//! The Accounts tab's Settings profiles sub-tab: saved presets on the left, the selected one's
+//! Apply panel on the right, and each account's own settings that an apply put aside.
 
-use std::fmt;
-
-use iced::widget::{Space, canvas, column, container, pick_list, row};
+use iced::widget::scrollable::{Direction, Scrollbar};
+use iced::widget::{Space, canvas, column, container, row, scrollable, space, stack};
 use iced::{
-    Color, Element, Length, Point, Rectangle, Renderer, Size, Theme, alignment, border, mouse,
+    Color, Element, Length, Padding, Point, Rectangle, Renderer, Size, Theme, alignment, border,
+    mouse,
 };
+use time::{OffsetDateTime, UtcOffset};
 
-use crate::account::AccountId;
+use crate::account::{AccountId, AccountProfile};
 use crate::game_settings::{
     CrosshairLines, CrosshairSummary, GameSettingsProfileMetadata, GameSettingsProfilePurpose,
     GameSettingsProfileSummary, Rgba, Setting,
 };
-use crate::ui::components::compact_loading_indicator;
-use crate::ui::theme::{self, button, text};
+use crate::ui::components::{
+    account_avatar, card_style, compact_loading_indicator, mono, outlined,
+};
+use crate::ui::theme::{self, Icon, button, text};
 use crate::ui::{Message, PrimeApp, SettingsChange};
 
-use super::accounts::last_refreshed_label;
+use super::accounts::{now_unix, relative_time_label};
 
 const DETAIL_LABEL_WIDTH: f32 = 96.0;
-/// How many keybinds a collapsed preset card shows; the rest are counted.
+/// How many keybinds the settings list shows in its Keybinds row; the rest are counted.
 const SHORT_KEYBIND_LIMIT: usize = 3;
 const CROSSHAIR_PREVIEW_SIZE: f32 = 88.0;
 /// Screen pixels per VALORANT crosshair unit, before shrinking a large crosshair to fit.
 const CROSSHAIR_PREVIEW_SCALE: f32 = 2.0;
 const SWATCH_SIZE: f32 = 12.0;
+const APPLY_PANEL_WIDTH: f32 = 340.0;
+const PANEL_GAP: f32 = 16.0;
+/// The selected radio's outer size: a 16px circle with a centred 5px stroke.
+const RADIO_SLOT: f32 = 21.0;
+/// The card's left padding, less the radio's overhang so its circle sits where the design's does.
+const CARD_LEFT_PADDING: f32 = 13.5;
+/// Where a card's chips and settings start, from the card's padding: past the radio and its gap.
+const CARD_BODY_INSET: f32 = 16.0 + 26.0 - CARD_LEFT_PADDING;
+/// How long a save reads as "2 days ago" before it reads as a date.
+const RELATIVE_SAVE_SECONDS: i64 = 7 * 86_400;
+const DANGER_TEXT: Color = iced::color!(0xFF8A94);
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
-    let mut sections = column![presets_section(app)]
-        .spacing(12)
-        .width(Length::Fill);
+    let saved = saved_presets(app);
+    let selected = selected_preset(app);
 
-    if let Some(restore) = restore_section(app) {
-        sections = sections.push(restore);
+    let mut list = column![].spacing(10).width(Length::Fill);
+    if let Some(account_id) = app.settings_saving_account {
+        list = list.push(saving_card(app, account_id));
     }
-
-    sections.into()
-}
-
-/// An account as a picker lists it.
-#[derive(Clone, Debug, PartialEq)]
-struct AccountChoice {
-    id: AccountId,
-    label: String,
-}
-
-impl fmt::Display for AccountChoice {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.label)
+    for profile in &saved {
+        let is_selected = selected.is_some_and(|selected| selected.id == profile.id);
+        list = list.push(profile_card(app, profile, is_selected));
     }
+    let restore = restore_section(app);
+
+    let left: Element<'_, Message> = if saved.is_empty() && app.settings_saving_account.is_none() {
+        let mut left = column![empty_profiles()].spacing(10).height(Length::Fill);
+        if let Some(restore) = restore {
+            left = left.push(restore);
+        }
+        left.into()
+    } else {
+        if let Some(restore) = restore {
+            list = list.push(restore);
+        }
+        // The gap before the panel is inside the scrollable, so its scrollbar floats in the gap
+        // instead of over the cards.
+        let gap = if selected.is_some() { PANEL_GAP } else { 0.0 };
+        scrollable(container(list).padding(Padding::ZERO.right(gap)))
+            .direction(Direction::Vertical(
+                Scrollbar::new()
+                    .width(4)
+                    .scroller_width(4)
+                    .margin((PANEL_GAP - 4.0) / 2.0),
+            ))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    };
+
+    let mut body = row![left].height(Length::Fill);
+    if let Some(profile) = selected {
+        body = body.push(apply_panel(app, profile));
+    }
+    body.into()
 }
 
-/// Accounts whose VALORANT settings Prime can read and write.
-fn settings_account_choices(app: &PrimeApp) -> Vec<AccountChoice> {
-    app.state
-        .accounts
+fn saved_presets(app: &PrimeApp) -> Vec<&GameSettingsProfileMetadata> {
+    app.settings_profiles
         .iter()
-        .filter(|account| account.has_launcher_session() || account.session.is_some())
-        .map(|account| AccountChoice {
-            id: account.id,
-            label: account.display_name.clone(),
-        })
+        .filter(|profile| profile.purpose == GameSettingsProfilePurpose::Profile)
         .collect()
+}
+
+/// The preset the Apply panel is for: the one last picked, or the first while none is.
+pub(in crate::ui) fn selected_preset(app: &PrimeApp) -> Option<&GameSettingsProfileMetadata> {
+    let saved = saved_presets(app);
+    app.selected_preset
+        .as_ref()
+        .and_then(|id| saved.iter().find(|profile| &profile.id == id))
+        .or(saved.first())
+        .copied()
+}
+
+/// Whether Prime can read and write this account's VALORANT settings.
+fn has_settings_access(account: &AccountProfile) -> bool {
+    account.has_launcher_session() || account.session.is_some()
 }
 
 fn settings_busy(app: &PrimeApp) -> bool {
     app.settings_work_in_progress()
 }
 
-fn presets_section(app: &PrimeApp) -> Element<'_, Message> {
-    let busy = settings_busy(app);
-    let accounts = settings_account_choices(app);
-    // Picking while other settings work runs does nothing; the handler checks.
-    let save_from = pick_list(accounts.clone(), None::<AccountChoice>, |choice| {
-        Message::RequestSavePreset(choice.id)
-    })
-    .placeholder("Save preset from...")
-    .width(220);
-
-    let mut header = row![
-        column![
-            text("Presets").size(18),
-            text("Saved VALORANT settings you can apply to any of your accounts.")
-                .size(13)
-                .color(theme::MUTED)
-        ]
-        .spacing(4)
-        .width(Length::Fill)
-    ]
-    .spacing(10)
-    .align_y(alignment::Vertical::Center);
-
-    if let Some(account_id) = app.settings_saving_account {
-        header = header.push(progress_label(app, account_id, "Saving"));
-    }
-
-    let mut presets = column![header.push(save_from)]
-        .spacing(12)
-        .width(Length::Fill);
-
-    let saved = app
-        .settings_profiles
+fn account(app: &PrimeApp, account_id: AccountId) -> Option<&AccountProfile> {
+    app.state
+        .accounts
         .iter()
-        .filter(|profile| profile.purpose == GameSettingsProfilePurpose::Profile)
-        .collect::<Vec<_>>();
-
-    if saved.is_empty() {
-        presets = presets.push(
-            text("No presets yet. Pick an account above to save its settings as one.")
-                .size(13)
-                .color(theme::MUTED),
-        );
-    }
-
-    for profile in saved {
-        let expanded = app.expanded_presets.contains(&profile.id);
-        let checking = app
-            .settings_check
-            .as_ref()
-            .and_then(|check| match &check.change {
-                SettingsChange::Apply {
-                    account_id,
-                    profile_id,
-                } if *profile_id == profile.id => {
-                    Some(progress_label(app, *account_id, "Checking"))
-                }
-                _ => None,
-            });
-        presets = presets.push(preset_card(profile, &accounts, busy, expanded, checking));
-    }
-
-    container(presets)
-        .padding(14)
-        .width(Length::Fill)
-        .style(iced::widget::container::bordered_box)
-        .into()
+        .find(|account| account.id == account_id)
 }
 
-fn preset_card<'a>(
-    profile: &'a GameSettingsProfileMetadata,
-    accounts: &[AccountChoice],
-    busy: bool,
-    expanded: bool,
-    checking: Option<Element<'static, Message>>,
-) -> Element<'a, Message> {
-    let profile_id = profile.id.clone();
-    let apply_to = pick_list(accounts.to_vec(), None::<AccountChoice>, move |choice| {
-        Message::RequestApplyPreset {
-            profile_id: profile_id.clone(),
-            account_id: choice.id,
-        }
-    })
-    .placeholder("Apply to...")
-    .width(170);
+/// Whether the preset was saved from this account. An account removed and added again gets a new
+/// ID, so its PUUID counts too.
+fn is_source(account: &AccountProfile, profile: &GameSettingsProfileMetadata) -> bool {
+    account.id == profile.source_account_id
+        || account.puuid.as_deref() == Some(profile.source_puuid.as_str())
+}
 
-    let mut header = row![
-        column![
-            text(&profile.name).size(17),
-            text(format!(
-                "From {} · Saved {}",
-                profile.source_display_name,
-                last_refreshed_label(Some(profile.captured_at_unix))
-            ))
-            .size(12)
-            .color(theme::MUTED)
-        ]
-        .spacing(2)
-        .width(Length::Fill)
-    ]
-    .spacing(10)
-    .align_y(alignment::Vertical::Center);
-    if let Some(checking) = checking {
-        header = header.push(checking);
+/// A saved time as the design writes it: "2 days ago" within a week, then "Sep 2".
+fn saved_label(then_unix: i64, now_unix: i64) -> String {
+    let seconds = now_unix.saturating_sub(then_unix);
+    match seconds / 86_400 {
+        _ if seconds >= RELATIVE_SAVE_SECONDS => {}
+        0 => return relative_time_label(then_unix, now_unix),
+        1 => return "1 day ago".to_string(),
+        days => return format!("{days} days ago"),
     }
-    let header = header
-        .push(apply_to)
-        .push(button("Rename").on_press(Message::RequestRenamePreset(profile.id.clone())))
-        .push(
-            button("Delete")
-                .style(iced::widget::button::danger)
-                .on_press_maybe(
-                    (!busy).then(|| Message::RequestDeleteSettingsProfile(profile.id.clone())),
-                ),
-        );
+    let Ok(saved_at) = OffsetDateTime::from_unix_timestamp(then_unix) else {
+        return "a while ago".to_string();
+    };
+    let saved_at = saved_at.to_offset(UtcOffset::current_local_offset().unwrap_or(UtcOffset::UTC));
+    let month = saved_at.month().to_string();
 
-    let summary = &profile.summary;
-    let body = row![
-        crosshair_tile(summary.crosshair.as_ref()),
-        settings_details(&profile.id, summary, expanded)
+    format!("{} {}", &month[..3], saved_at.day())
+}
+
+/// What a preset carries, as the card's chips list it.
+fn included_groups(summary: &GameSettingsProfileSummary) -> Vec<&'static str> {
+    [
+        (summary.crosshair.is_some(), "Crosshair"),
+        (!summary.keybinds.is_empty(), "Keybinds"),
+        (
+            summary.sensitivity.is_some()
+                || summary.ads_multiplier.is_some()
+                || summary.scoped_multiplier.is_some(),
+            "Mouse",
+        ),
+        (!summary.audio_settings.is_empty(), "Audio"),
+        (!summary.minimap.is_empty(), "Minimap"),
+        (!summary.other_settings.is_empty(), "Other"),
     ]
-    .spacing(16)
-    // Keeps the crosshair beside the summary rows when the full list opens below them.
-    .align_y(if expanded {
-        alignment::Vertical::Top
-    } else {
-        alignment::Vertical::Center
+    .into_iter()
+    .filter_map(|(included, label)| included.then_some(label))
+    .collect()
+}
+
+fn profile_card<'a>(
+    app: &'a PrimeApp,
+    profile: &'a GameSettingsProfileMetadata,
+    selected: bool,
+) -> Element<'a, Message> {
+    let expanded = app.expanded_presets.contains(&profile.id);
+    let source = app
+        .state
+        .accounts
+        .iter()
+        .find(|account| is_source(account, profile));
+    let source_name = source.map_or(profile.source_display_name.as_str(), |account| {
+        account.display_name.as_str()
     });
 
-    container(column![header, divider(), body].spacing(12))
-        .padding(14)
+    let mut top = row![
+        row![
+            radio(selected),
+            column![
+                text(&profile.name)
+                    .size(14)
+                    .font(theme::SEMIBOLD_FONT)
+                    .color(theme::TEXT),
+                row![
+                    account_avatar(
+                        source_name,
+                        source.and_then(|account| app.player_card_art_path(account)),
+                        14.0,
+                        4.0
+                    ),
+                    text(format!(
+                        "From {source_name} · saved {}",
+                        saved_label(profile.captured_at_unix, now_unix())
+                    ))
+                    .size(12)
+                    .color(theme::MUTED)
+                ]
+                .spacing(6)
+                .align_y(alignment::Vertical::Center)
+            ]
+            .spacing(2)
+        ]
+        .spacing(16.0 + 26.0 - CARD_LEFT_PADDING - RADIO_SLOT)
+        .align_y(alignment::Vertical::Center)
         .width(Length::Fill)
-        .style(preset_card_style)
+    ]
+    .spacing(10)
+    .align_y(alignment::Vertical::Center);
+    if let Some(version) = profile.settings_version {
+        top = top.push(mono(format!("v{version}"), 11).color(theme::FAINT));
+    }
+
+    let groups = included_groups(&profile.summary);
+    let mut includes = row![].spacing(6).align_y(alignment::Vertical::Center);
+    if groups.is_empty() {
+        includes = includes.push(chip("Defaults"));
+    }
+    for group in groups {
+        includes = includes.push(chip(group));
+    }
+    includes = includes.push(
+        iced::widget::button(
+            text(if expanded {
+                "Hide settings"
+            } else {
+                "Show settings"
+            })
+            .size(11)
+            .color(theme::MUTED),
+        )
+        .padding([3, 6])
+        .style(|_, status| iced::widget::button::Style {
+            background: matches!(
+                status,
+                iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+            )
+            .then(|| theme::RAISED.into()),
+            border: border::rounded(5),
+            ..Default::default()
+        })
+        .on_press(Message::TogglePresetSettings(profile.id.clone())),
+    );
+
+    let mut card = column![
+        top,
+        container(includes).padding(Padding::ZERO.left(CARD_BODY_INSET))
+    ]
+    .spacing(10);
+    if expanded {
+        let summary = &profile.summary;
+        card = card.push(
+            container(
+                row![
+                    crosshair_tile(summary.crosshair.as_ref()),
+                    settings_details(summary)
+                ]
+                .spacing(16),
+            )
+            .padding(Padding::ZERO.left(CARD_BODY_INSET)),
+        );
+    }
+
+    iced::widget::button(card)
+        .padding(Padding::new(16.0).left(CARD_LEFT_PADDING))
+        .width(Length::Fill)
+        .style(move |_, _| {
+            let style = if selected {
+                container::Style::default()
+                    .background(Color {
+                        a: 0x0D as f32 / 255.0,
+                        ..theme::ACCENT
+                    })
+                    .border(iced::Border {
+                        color: Color {
+                            a: 0x66 as f32 / 255.0,
+                            ..theme::ACCENT
+                        },
+                        width: 1.0,
+                        radius: 12.0.into(),
+                    })
+            } else {
+                card_style(12.0)
+            };
+            iced::widget::button::Style {
+                background: style.background,
+                border: style.border,
+                ..Default::default()
+            }
+        })
+        .on_press(Message::SelectPreset(profile.id.clone()))
         .into()
 }
 
-/// The preset's settings as labelled rows, and when expanded, every setting it copies. Missing
-/// values are VALORANT's defaults.
-fn settings_details<'a>(
-    profile_id: &str,
-    summary: &'a GameSettingsProfileSummary,
-    expanded: bool,
+/// The design centres the radio's stroke on its 16px circle, so the ring reaches 2.5px past it.
+fn radio(selected: bool) -> Element<'static, Message> {
+    let (size, width, color) = if selected {
+        (RADIO_SLOT, 5.0, theme::ACCENT)
+    } else {
+        (17.5, 1.5, theme::FAINT)
+    };
+
+    container(container(space()).width(size).height(size).style(move |_| {
+        container::Style::default().border(iced::Border {
+            color,
+            width,
+            radius: (size / 2.0).into(),
+        })
+    }))
+    .center(RADIO_SLOT)
+    .into()
+}
+
+fn chip(label: &'static str) -> Element<'static, Message> {
+    container(text(label).size(11).color(theme::MUTED))
+        .padding([3, 8])
+        .style(|_| {
+            container::Style::default()
+                .background(theme::RAISED)
+                .border(border::rounded(5))
+        })
+        .into()
+}
+
+fn saving_card(app: &PrimeApp, account_id: AccountId) -> Element<'_, Message> {
+    let name = account(app, account_id).map_or("", |account| account.display_name.as_str());
+
+    container(progress(app, format!("Saving {name}'s settings…"), 13))
+        .padding(16)
+        .width(Length::Fill)
+        .style(|_| card_style(12.0))
+        .into()
+}
+
+/// The selected preset and every account it can go to, each with its own Apply.
+fn apply_panel<'a>(
+    app: &'a PrimeApp,
+    profile: &'a GameSettingsProfileMetadata,
 ) -> Element<'a, Message> {
-    let mut details = column![
+    let busy = settings_busy(app);
+    let head = column![
+        text(format!("Apply “{}”", profile.name))
+            .size(14)
+            .font(theme::SEMIBOLD_FONT)
+            .color(theme::TEXT),
+        text("Overwrites these accounts' in-game settings.")
+            .size(12)
+            .color(theme::MUTED)
+    ]
+    .spacing(3);
+
+    let rows = column(
+        app.state
+            .accounts
+            .iter()
+            .map(|account| apply_row(app, profile, account, busy)),
+    )
+    .width(Length::Fill);
+
+    let footer = row![
+        panel_button(
+            "Rename",
+            theme::TEXT,
+            Some(Message::RequestRenamePreset(profile.id.clone()))
+        ),
+        panel_button(
+            "Delete",
+            DANGER_TEXT,
+            (!busy).then(|| Message::RequestDeleteSettingsProfile(profile.id.clone()))
+        ),
+    ]
+    .spacing(8);
+
+    // Inset by the border, since the dividers draw over it.
+    container(column![
+        container(head).padding([13, 15]).width(Length::Fill),
+        divider(),
+        scrollable(rows)
+            .direction(Direction::Vertical(
+                Scrollbar::new().width(4).scroller_width(4).margin(2),
+            ))
+            .height(Length::Fill),
+        divider(),
+        container(footer).padding(15).width(Length::Fill),
+    ])
+    .padding(1)
+    .width(APPLY_PANEL_WIDTH)
+    .height(Length::Fill)
+    .style(|_| card_style(12.0))
+    .into()
+}
+
+fn apply_row<'a>(
+    app: &'a PrimeApp,
+    profile: &'a GameSettingsProfileMetadata,
+    account: &'a AccountProfile,
+    busy: bool,
+) -> Element<'a, Message> {
+    let available = has_settings_access(account);
+    let checking = app.settings_check.as_ref().is_some_and(|check| {
+        check.change
+            == SettingsChange::Apply {
+                account_id: account.id,
+                profile_id: profile.id.clone(),
+            }
+    });
+
+    let trailing: Element<'a, Message> = if app.settings_applying_account == Some(account.id) {
+        progress(app, "Applying…".to_string(), 11)
+    } else if checking {
+        progress(app, "Checking…".to_string(), 11)
+    } else if !available {
+        text("No API session")
+            .size(11)
+            .color(Color {
+                a: 0.5,
+                ..theme::GOLD
+            })
+            .into()
+    } else {
+        let mut trailing = row![].spacing(10).align_y(alignment::Vertical::Center);
+        if is_source(account, profile) {
+            trailing = trailing.push(text("source").size(11).color(theme::FAINT));
+        }
+        trailing
+            .push(small_button(
+                "Apply",
+                theme::TEXT,
+                (!busy).then(|| Message::RequestApplyPreset {
+                    profile_id: profile.id.clone(),
+                    account_id: account.id,
+                }),
+            ))
+            .into()
+    };
+
+    let avatar = account_avatar(
+        &account.display_name,
+        app.player_card_art_path(account),
+        24.0,
+        6.0,
+    );
+    // The design fades an account without API access to half opacity.
+    let avatar: Element<'a, Message> = if available {
+        avatar
+    } else {
+        stack![
+            avatar,
+            container(space()).width(24).height(24).style(|_| {
+                container::Style::default()
+                    .background(Color {
+                        a: 0.5,
+                        ..theme::SURFACE
+                    })
+                    .border(border::rounded(6))
+            })
+        ]
+        .into()
+    };
+    let name_color = if available {
+        theme::TEXT
+    } else {
+        Color {
+            a: 0.5,
+            ..theme::TEXT
+        }
+    };
+
+    container(
+        row![
+            avatar,
+            text(&account.display_name)
+                .size(13)
+                .font(theme::MEDIUM_FONT)
+                .color(name_color)
+                .width(Length::Fill),
+            trailing
+        ]
+        .spacing(10)
+        .align_y(alignment::Vertical::Center),
+    )
+    .padding([10, 15])
+    .height(44)
+    .align_y(alignment::Vertical::Center)
+    .width(Length::Fill)
+    .into()
+}
+
+fn panel_button(
+    label: &'static str,
+    color: Color,
+    on_press: Option<Message>,
+) -> Element<'static, Message> {
+    let enabled = on_press.is_some();
+    button(
+        text(label)
+            .size(13)
+            .font(theme::BOLD_FONT)
+            .color(if enabled { color } else { theme::FAINT })
+            .width(Length::Fill)
+            .align_x(alignment::Horizontal::Center),
+    )
+    .padding([10, 0])
+    .width(Length::Fill)
+    .on_press_maybe(on_press)
+    .into()
+}
+
+/// Shown instead of the list while no preset is saved.
+fn empty_profiles() -> Element<'static, Message> {
+    container(
+        column![
+            container(theme::icon(Icon::SlidersHorizontal, 20.0, theme::MUTED))
+                .center_x(44)
+                .center_y(44)
+                .style(|_| card_style(12.0)),
+            text("No saved settings profiles")
+                .size(16)
+                .font(theme::SEMIBOLD_FONT)
+                .color(theme::TEXT),
+            text(
+                "Save crosshair, keybinds, mouse and video settings from one account, then apply \
+                 them to any other account with API access."
+            )
+            .size(13)
+            .line_height(1.5)
+            .color(theme::MUTED)
+            .width(420)
+            .align_x(alignment::Horizontal::Center),
+        ]
+        .spacing(10)
+        .align_x(alignment::Horizontal::Center),
+    )
+    .center(Length::Fill)
+    .style(|_| outlined(12.0))
+    .into()
+}
+
+/// Accounts with their own settings put aside by an apply, each with Restore and Discard. Hidden
+/// when there are none.
+fn restore_section(app: &PrimeApp) -> Option<Element<'_, Message>> {
+    let originals = original_settings(app);
+    if originals.is_empty() {
+        return None;
+    }
+
+    let busy = settings_busy(app);
+    let mut rows = column![].width(Length::Fill);
+    for original in originals {
+        let account = account(app, original.source_account_id);
+        let name = account.map_or(original.source_display_name.as_str(), |account| {
+            account.display_name.as_str()
+        });
+
+        let trailing: Element<'_, Message> =
+            if app.settings_applying_account == Some(original.source_account_id) {
+                progress(app, "Restoring…".to_string(), 11)
+            } else if app.settings_check.as_ref().is_some_and(|check| {
+                check.change == SettingsChange::Restore(original.source_account_id)
+            }) {
+                progress(app, "Checking…".to_string(), 11)
+            } else {
+                row![
+                    small_button(
+                        "Restore",
+                        theme::TEXT,
+                        (!busy && account.is_some())
+                            .then_some(Message::RequestRestoreSettings(original.source_account_id)),
+                    ),
+                    small_button(
+                        "Discard",
+                        DANGER_TEXT,
+                        (!busy).then(|| Message::RequestDeleteSettingsProfile(original.id.clone())),
+                    ),
+                ]
+                .spacing(6)
+                .into()
+            };
+
+        rows = rows.push(
+            container(
+                row![
+                    account_avatar(
+                        name,
+                        account.and_then(|account| app.player_card_art_path(account)),
+                        24.0,
+                        6.0
+                    ),
+                    column![
+                        text(format!("{name}'s own settings"))
+                            .size(13)
+                            .font(theme::MEDIUM_FONT)
+                            .color(theme::TEXT),
+                        text(format!(
+                            "Put aside {}",
+                            saved_label(original.captured_at_unix, now_unix())
+                        ))
+                        .size(11)
+                        .color(theme::FAINT)
+                    ]
+                    .spacing(2)
+                    .width(Length::Fill),
+                    trailing
+                ]
+                .spacing(10)
+                .align_y(alignment::Vertical::Center),
+            )
+            .padding([10, 16])
+            .width(Length::Fill),
+        );
+    }
+
+    let head = column![
+        text("Own settings put aside")
+            .size(14)
+            .font(theme::SEMIBOLD_FONT)
+            .color(theme::TEXT),
+        text(
+            "Applying a preset puts the account's own settings aside first. Restore puts them back."
+        )
+        .size(12)
+        .color(theme::MUTED)
+    ]
+    .spacing(3);
+
+    Some(
+        container(column![
+            container(head).padding([14, 16]).width(Length::Fill),
+            divider(),
+            rows
+        ])
+        .padding(1)
+        .width(Length::Fill)
+        .style(|_| card_style(12.0))
+        .into(),
+    )
+}
+
+fn small_button(
+    label: &'static str,
+    color: Color,
+    on_press: Option<Message>,
+) -> Element<'static, Message> {
+    let color = if on_press.is_some() {
+        color
+    } else {
+        theme::FAINT
+    };
+    button(text(label).size(12).font(theme::SEMIBOLD_FONT).color(color))
+        .padding([4, 10])
+        .style(|theme, status| {
+            let mut style = theme::button_style(theme, status);
+            style.border.radius = 7.0.into();
+            style
+        })
+        .on_press_maybe(on_press)
+        .into()
+}
+
+fn progress(app: &PrimeApp, label: String, size: u32) -> Element<'static, Message> {
+    row![
+        compact_loading_indicator(app.loading_frame),
+        text(label).size(size).color(theme::MUTED)
+    ]
+    .spacing(6)
+    .align_y(alignment::Vertical::Center)
+    .into()
+}
+
+fn divider() -> Element<'static, Message> {
+    container(space())
+        .width(Length::Fill)
+        .height(1)
+        .style(|_| container::Style::default().background(theme::LINE))
+        .into()
+}
+
+/// The preset's settings as labelled rows, then every setting it copies. Missing values are
+/// VALORANT's defaults.
+fn settings_details(summary: &GameSettingsProfileSummary) -> Element<'_, Message> {
+    column![
         detail_row("Sensitivity", sensitivity_value(summary)),
         detail_row("Crosshair", crosshair_value(summary)),
         detail_row("Keybinds", keybinds_value(summary)),
@@ -226,33 +699,11 @@ fn settings_details<'a>(
                     .into()
             }
         ),
+        all_settings(summary),
     ]
     .spacing(8)
-    .width(Length::Fill);
-
-    let listed =
-        summary.keybinds.len() + summary.audio_settings.len() + summary.other_settings.len();
-    if listed == 0 {
-        return details.into();
-    }
-
-    let toggle_label = if expanded {
-        "Show less".to_string()
-    } else {
-        format!("Show all settings ({listed})")
-    };
-    details = details.push(
-        button(text(toggle_label).size(13))
-            .style(iced::widget::button::text)
-            .padding([2, 0])
-            .on_press(Message::TogglePresetSettings(profile_id.to_string())),
-    );
-
-    if expanded {
-        details = details.push(all_settings(summary));
-    }
-
-    details.into()
+    .width(Length::Fill)
+    .into()
 }
 
 /// Every keybind and every other setting a preset copies, as labelled groups.
@@ -322,13 +773,13 @@ fn sensitivity_value(summary: &GameSettingsProfileSummary) -> Element<'static, M
     let parts = [
         summary
             .sensitivity
-            .map(|value| chip(None, format_number(value))),
+            .map(|value| value_chip(None, format_number(value))),
         summary
             .ads_multiplier
-            .map(|value| chip(Some("ADS"), format!("{}×", format_number(value)))),
+            .map(|value| value_chip(Some("ADS"), format!("{}×", format_number(value)))),
         summary
             .scoped_multiplier
-            .map(|value| chip(Some("Scoped"), format!("{}×", format_number(value)))),
+            .map(|value| value_chip(Some("Scoped"), format!("{}×", format_number(value)))),
     ];
 
     if parts.iter().all(Option::is_none) {
@@ -400,7 +851,7 @@ fn keybinds_value(summary: &GameSettingsProfileSummary) -> Element<'_, Message> 
 }
 
 /// A value with an optional small label, such as `ADS 0.6×`.
-fn chip(label: Option<&'static str>, value: String) -> Element<'static, Message> {
+fn value_chip(label: Option<&'static str>, value: String) -> Element<'static, Message> {
     let mut content = row![].spacing(5).align_y(alignment::Vertical::Center);
     if let Some(label) = label {
         content = content.push(text(label).size(11).color(theme::MUTED));
@@ -433,17 +884,6 @@ fn color_swatch(color: Rgba) -> Element<'static, Message> {
 
 fn separator() -> Element<'static, Message> {
     text("·").size(13).color(theme::MUTED).into()
-}
-
-fn divider() -> Element<'static, Message> {
-    container(Space::new())
-        .width(Length::Fill)
-        .height(1)
-        .style(|_| iced::widget::container::Style {
-            background: Some(Color::from_rgba(1.0, 1.0, 1.0, 0.08).into()),
-            ..Default::default()
-        })
-        .into()
 }
 
 /// `0.34`, `0.6` and `1` rather than `0.340` or `1.0`.
@@ -639,96 +1079,6 @@ fn line_rects(lines: CrosshairLines, center: f32, scale: f32) -> Vec<Rect> {
     rects
 }
 
-/// Accounts with their own settings put aside by an apply, each with Restore and Discard. Hidden
-/// when there are none.
-fn restore_section(app: &PrimeApp) -> Option<Element<'_, Message>> {
-    let originals = original_settings(app);
-    if originals.is_empty() {
-        return None;
-    }
-
-    let busy = settings_busy(app);
-    let mut rows = column![
-        text("Restore").size(18),
-        text(
-            "Applying a preset puts the account's own settings aside first. Restore puts them back."
-        )
-        .size(13)
-        .color(theme::MUTED)
-    ]
-    .spacing(10)
-    .width(Length::Fill);
-
-    for original in originals {
-        let account = app
-            .state
-            .accounts
-            .iter()
-            .find(|account| account.id == original.source_account_id);
-        let name = account.map_or(original.source_display_name.as_str(), |account| {
-            account.display_name.as_str()
-        });
-
-        let mut line = row![
-            column![
-                text(format!("{name}'s own settings")).size(15),
-                text(format!(
-                    "Put aside {}",
-                    last_refreshed_label(Some(original.captured_at_unix))
-                ))
-                .size(12)
-                .color(theme::MUTED)
-            ]
-            .spacing(2)
-            .width(Length::Fill)
-        ]
-        .spacing(10)
-        .align_y(alignment::Vertical::Center);
-
-        if app.settings_applying_account == Some(original.source_account_id) {
-            line = line.push(progress_label(
-                app,
-                original.source_account_id,
-                "Working on",
-            ));
-        } else if app.settings_check.as_ref().is_some_and(|check| {
-            check.change == SettingsChange::Restore(original.source_account_id)
-        }) {
-            line = line.push(progress_label(app, original.source_account_id, "Checking"));
-        }
-
-        line = line
-            .push(
-                button("Restore").on_press_maybe(
-                    (!busy && account.is_some())
-                        .then_some(Message::RequestRestoreSettings(original.source_account_id)),
-                ),
-            )
-            .push(
-                button("Discard")
-                    .style(iced::widget::button::danger)
-                    .on_press_maybe(
-                        (!busy).then(|| Message::RequestDeleteSettingsProfile(original.id.clone())),
-                    ),
-            );
-
-        rows = rows.push(
-            container(line)
-                .padding(10)
-                .width(Length::Fill)
-                .style(preset_card_style),
-        );
-    }
-
-    Some(
-        container(rows)
-            .padding(14)
-            .width(Length::Fill)
-            .style(iced::widget::container::bordered_box)
-            .into(),
-    )
-}
-
 /// Each account's original settings: its oldest backup.
 pub(in crate::ui) fn original_settings(app: &PrimeApp) -> Vec<&GameSettingsProfileMetadata> {
     let mut originals: Vec<&GameSettingsProfileMetadata> = Vec::new();
@@ -751,30 +1101,6 @@ pub(in crate::ui) fn original_settings(app: &PrimeApp) -> Vec<&GameSettingsProfi
     }
 
     originals
-}
-
-fn progress_label(app: &PrimeApp, account_id: AccountId, verb: &str) -> Element<'static, Message> {
-    let name = app
-        .state
-        .accounts
-        .iter()
-        .find(|account| account.id == account_id)
-        .map(|account| account.display_name.clone())
-        .unwrap_or_default();
-
-    row![
-        compact_loading_indicator(app.loading_frame),
-        text(format!("{verb} {name}...")).size(13)
-    ]
-    .spacing(6)
-    .align_y(alignment::Vertical::Center)
-    .into()
-}
-
-fn preset_card_style(theme: &Theme) -> iced::widget::container::Style {
-    let mut style = iced::widget::container::bordered_box(theme);
-    style.border = border::rounded(6).width(1).color(theme::LINE);
-    style
 }
 
 fn crosshair_tile_style(_: &Theme) -> iced::widget::container::Style {
@@ -824,6 +1150,55 @@ mod tests {
             }),
             outer_lines: None,
         }
+    }
+
+    #[test]
+    fn saves_read_as_relative_times_for_a_week_then_as_dates() {
+        let now = 1_800_000_000;
+        assert_eq!(saved_label(now - 2 * 86_400, now), "2 days ago");
+        assert_eq!(saved_label(now - 86_400, now), "1 day ago");
+        assert_eq!(saved_label(now - 5 * 60, now), "5 min ago");
+        let older = saved_label(now - 30 * 86_400, now);
+        assert!(older.starts_with("Dec "), "{older}");
+    }
+
+    #[test]
+    fn lists_what_a_preset_carries_in_the_design_order() {
+        let mut summary = GameSettingsProfileSummary {
+            sensitivity: Some(0.35),
+            crosshair: Some(plus(None)),
+            ..GameSettingsProfileSummary::default()
+        };
+        assert_eq!(included_groups(&summary), ["Crosshair", "Mouse"]);
+
+        summary.minimap = vec!["Rotate".to_string()];
+        summary.scoped_multiplier = Some(1.0);
+        summary.sensitivity = None;
+        assert_eq!(included_groups(&summary), ["Crosshair", "Mouse", "Minimap"]);
+        assert!(included_groups(&GameSettingsProfileSummary::default()).is_empty());
+    }
+
+    #[test]
+    fn an_account_added_again_is_still_the_presets_source() {
+        let mut account = AccountProfile::new("Main", crate::account::Shard::Na).expect("account");
+        let mut profile = GameSettingsProfileMetadata {
+            id: "preset".to_string(),
+            name: "Main settings".to_string(),
+            purpose: GameSettingsProfilePurpose::Profile,
+            source_account_id: account.id,
+            source_display_name: "Main".to_string(),
+            source_puuid: "main-puuid".to_string(),
+            captured_at_unix: 0,
+            settings_version: None,
+            summary: Box::default(),
+        };
+        assert!(is_source(&account, &profile));
+
+        profile.source_account_id = AccountId::new();
+        assert!(!is_source(&account, &profile));
+
+        account.puuid = Some("main-puuid".to_string());
+        assert!(is_source(&account, &profile));
     }
 
     #[test]

@@ -363,7 +363,7 @@ impl PrimeApp {
         if screens::fills_page(self, active_tab) {
             let body = container(body).padding(inset);
             // The first-account prompt is the whole page, without a title.
-            if active_tab == Tab::Accounts {
+            if active_tab == Tab::Accounts && self.state.accounts.is_empty() {
                 return body.into();
             }
             return column![self.main_header(), body]

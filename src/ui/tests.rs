@@ -4696,6 +4696,44 @@ fn show_all_settings_opens_and_closes_one_preset() {
 }
 
 #[test]
+fn the_apply_panel_follows_the_picked_preset_and_falls_back_to_the_first() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = settings_app(dir.path());
+    let backup = settings_profile_metadata("Backup", GameSettingsProfilePurpose::Backup, 100);
+    let main = settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
+    let alt = settings_profile_metadata("Alt settings", GameSettingsProfilePurpose::Profile, 300);
+    app.settings_profiles = vec![backup, main.clone(), alt.clone()];
+    let selected =
+        |app: &PrimeApp| super::screens::selected_preset(app).map(|profile| profile.id.clone());
+
+    // A backup is never a preset to apply.
+    assert_eq!(selected(&app), Some(main.id.clone()));
+
+    let task = app.update(Message::SelectPreset(alt.id.clone()));
+
+    assert_eq!(task.units(), 0);
+    assert_eq!(selected(&app), Some(alt.id.clone()));
+
+    app.settings_profiles.retain(|profile| profile.id != alt.id);
+
+    assert_eq!(selected(&app), Some(main.id));
+}
+
+#[test]
+fn settings_profiles_fill_the_page() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = settings_app(dir.path());
+
+    assert!(!super::screens::fills_page(&app, super::Tab::Accounts));
+
+    let _ = app.update(Message::AccountsTabSelected(
+        super::AccountsTab::GameSettings,
+    ));
+
+    assert!(super::screens::fills_page(&app, super::Tab::Accounts));
+}
+
+#[test]
 fn an_error_toast_closes_with_its_button_or_escape_once_dialogs_are_closed() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());

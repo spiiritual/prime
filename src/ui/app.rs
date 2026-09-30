@@ -105,6 +105,7 @@ impl PrimeApp {
                 save_settings_on_add: false,
                 settings_profiles: Vec::new(),
                 expanded_presets: std::collections::HashSet::new(),
+                selected_preset: None,
                 preset_name_prompt: None,
                 settings_saving_account: None,
                 settings_applying_account: None,
@@ -1252,6 +1253,10 @@ impl PrimeApp {
                 if !self.expanded_presets.remove(&profile_id) {
                     self.expanded_presets.insert(profile_id);
                 }
+                Task::none()
+            }
+            Message::SelectPreset(profile_id) => {
+                self.selected_preset = Some(profile_id);
                 Task::none()
             }
             Message::RequestRenamePreset(profile_id) => {

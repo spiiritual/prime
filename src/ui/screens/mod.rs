@@ -11,6 +11,8 @@ use super::{Message, PrimeApp, Tab};
 
 #[cfg(test)]
 pub(super) use accounts::missing_rank_label;
+#[cfg(test)]
+pub(super) use game_settings::selected_preset;
 pub(super) use accounts::{captured_on_label, save_settings_on_add_checkbox};
 pub(super) use game_settings::original_settings;
 pub(super) use settings::scroll_to_settings_section;
