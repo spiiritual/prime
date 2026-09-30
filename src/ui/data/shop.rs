@@ -191,10 +191,6 @@ impl StoreSummary {
         remaining_seconds_at(self.daily_remaining_seconds, self.loaded_at, now)
     }
 
-    pub(in crate::ui) fn bundle_remaining_seconds_at(&self, now: iced::time::Instant) -> i64 {
-        remaining_seconds_at(self.bundle_remaining_seconds, self.loaded_at, now)
-    }
-
     /// Each featured bundle has its own end time; the shared one is the fallback when Riot
     /// doesn't report one for the bundle.
     pub(in crate::ui) fn featured_bundle_remaining_seconds_at(

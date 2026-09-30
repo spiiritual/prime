@@ -15,7 +15,6 @@ use crate::ui::{Message, PrimeApp};
 
 const BUNDLE_HEIGHT: f32 = 176.0;
 /// With two featured bundles the design gives the second this width and the first the rest.
-const SECOND_BUNDLE_WIDTH: f32 = 380.0;
 const OFFER_ART_HEIGHT: f32 = 78.0;
 const ACCESSORY_THUMB_SIZE: f32 = 72.0;
 const NIGHT_MARKET_BADGE: Color = iced::color!(0xC79BFF);
@@ -51,7 +50,8 @@ fn shop(summary: &StoreSummary, now: iced::time::Instant) -> Element<'_, Message
     let mut page = column![
         section(
             "Featured bundles",
-            Some(countdown(summary.bundle_remaining_seconds_at(now))),
+            // Each bundle shows its own time left.
+            None,
             bundle_row(summary, now),
         ),
         section(
@@ -120,20 +120,11 @@ fn bundle_row(summary: &StoreSummary, now: iced::time::Instant) -> Element<'_, M
             .into();
     }
 
-    let count = summary.featured_bundles.len();
     Row::with_children(
         summary
             .featured_bundles
             .iter()
-            .enumerate()
-            .map(|(index, bundle)| {
-                let width = if count == 2 && index == 1 {
-                    Length::Fixed(SECOND_BUNDLE_WIDTH)
-                } else {
-                    Length::Fill
-                };
-                bundle_card(summary, bundle, now, width)
-            }),
+            .map(|bundle| bundle_card(summary, bundle, now)),
     )
     .spacing(12)
     .height(BUNDLE_HEIGHT)
@@ -144,16 +135,9 @@ fn bundle_card<'a>(
     summary: &StoreSummary,
     bundle: &'a StoreBundleDisplay,
     now: iced::time::Instant,
-    width: Length,
 ) -> Element<'a, Message> {
     let remaining = summary.featured_bundle_remaining_seconds_at(bundle, now);
     let mut kicker = vec![bundle.item_count_label()];
-    // A bundle leaving before the section resets says so; the others name their tier.
-    if remaining < summary.bundle_remaining_seconds_at(now) {
-        kicker.push(format!("leaves in {}", format_time_left(remaining)));
-    } else if let Some(tier) = bundle.rarity.as_deref().and_then(RarityTier::from_name) {
-        kicker.push(tier.label().to_string());
-    }
     if bundle.discount_percent > 0 {
         kicker.push(format!("{}% off", bundle.discount_percent));
     }
@@ -181,27 +165,35 @@ fn bundle_card<'a>(
     .spacing(12)
     .align_y(alignment::Vertical::Bottom);
 
-    if let Some(price) = &bundle.price {
-        info = info.push(
-            container(
-                row![
-                    currency_dot(&price.currency, 8.0),
-                    mono(format_whole_number(price.amount), 13).font(theme::MONO_BOLD_FONT),
-                ]
+    let pill = |lead: Element<'a, Message>, value: String| {
+        container(
+            row![lead, mono(value, 13).font(theme::MONO_BOLD_FONT)]
                 .spacing(6)
                 .align_y(alignment::Vertical::Center),
-            )
-            .padding([7, 11])
-            .style(|_| {
-                container::Style::default()
-                    .background(Color {
-                        a: 0.7,
-                        ..theme::BG
-                    })
-                    .border(iced::border::rounded(8))
-            }),
-        );
+        )
+        .padding([7, 11])
+        .style(|_| {
+            container::Style::default()
+                .background(Color {
+                    a: 0.7,
+                    ..theme::BG
+                })
+                .border(iced::border::rounded(8))
+        })
+    };
+    let mut badges = row![pill(
+        theme::icon(Icon::Timer, 12.0, theme::TEXT),
+        format_time_left(remaining),
+    )]
+    .spacing(8)
+    .align_y(alignment::Vertical::Center);
+    if let Some(price) = &bundle.price {
+        badges = badges.push(pill(
+            currency_dot(&price.currency, 8.0),
+            format_whole_number(price.amount),
+        ));
     }
+    info = info.push(badges);
 
     let scrim = container(space())
         .width(Length::Fill)
@@ -251,7 +243,7 @@ fn bundle_card<'a>(
     ])
     // The border is drawn under the content, so the art sits inside it to leave it showing.
     .padding(1)
-    .width(width)
+    .width(Length::Fill)
     .height(BUNDLE_HEIGHT)
     .clip(true)
     .style(|_| card_style(12.0).background(iced::color!(0x161A22)))
@@ -462,7 +454,7 @@ fn loading<'a>() -> Element<'a, Message> {
     let placeholder = |title, body| section(title, Some(skeleton(74, 14.0, 4.0, 1.0)), body);
 
     column![
-        placeholder("Featured bundles", fading_row(2, BUNDLE_HEIGHT)),
+        section("Featured bundles", None, fading_row(2, BUNDLE_HEIGHT)),
         placeholder("Daily offers", fading_row(4, 133.0)),
         placeholder("Accessory Store", fading_row(4, 88.0)),
         placeholder("Night Market", fading_row(6, 133.0)),

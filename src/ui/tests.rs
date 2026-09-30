@@ -694,7 +694,6 @@ fn store_summary_expires_when_a_tick_skips_past_the_reset() {
     let late = loaded_at + Duration::from_secs(45);
 
     assert!(summary.is_expired_at(late));
-    assert_eq!(summary.bundle_remaining_seconds_at(late), 0);
     assert_eq!(summary.night_market_remaining_seconds_at(late), 0);
 }
 
