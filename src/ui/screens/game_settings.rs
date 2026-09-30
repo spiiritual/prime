@@ -28,10 +28,13 @@ const CROSSHAIR_PREVIEW_SIZE: f32 = 56.0;
 /// Screen pixels per VALORANT crosshair unit, before shrinking a large crosshair to fit.
 const CROSSHAIR_PREVIEW_SCALE: f32 = 2.0;
 const GLANCE_GAP: f32 = 16.0;
+/// Below this luminance (0 to 255) a crosshair is drawn on grey instead of the dark tile.
+const DARK_CROSSHAIR_LUMINANCE: f32 = 80.0;
 const FACT_ICON_SIZE: f32 = 14.0;
 const FACT_GAP: f32 = 8.0;
-/// The keybinds column's width in the full settings list.
-const KEYBINDS_COLUMN_WIDTH: f32 = 176.0;
+/// The full settings list's column shares: keybinds get more, since keys can be long.
+const KEYBINDS_COLUMN_SHARE: u16 = 4;
+const SETTINGS_COLUMN_SHARE: u16 = 3;
 const SETTING_ROW_HEIGHT: f32 = 19.0;
 const SWATCH_SIZE: f32 = 10.0;
 const APPLY_PANEL_WIDTH: f32 = 340.0;
@@ -669,7 +672,9 @@ fn all_settings(summary: &GameSettingsProfileSummary) -> Element<'_, Message> {
             .keybinds
             .iter()
             .map(|keybind| setting_row(&keybind.action, key_chip(&keybind.key)));
-        columns = columns.push(settings_group("All keybinds", rows).width(KEYBINDS_COLUMN_WIDTH));
+        columns = columns.push(
+            settings_group("All keybinds", rows).width(Length::FillPortion(KEYBINDS_COLUMN_SHARE)),
+        );
     }
     for (title, settings) in [
         ("Audio", &summary.audio_settings),
@@ -684,7 +689,8 @@ fn all_settings(summary: &GameSettingsProfileSummary) -> Element<'_, Message> {
                 mono(&setting.value, 11).color(theme::TEXT).into(),
             )
         });
-        columns = columns.push(settings_group(title, rows).width(Length::Fill));
+        columns = columns
+            .push(settings_group(title, rows).width(Length::FillPortion(SETTINGS_COLUMN_SHARE)));
     }
 
     container(columns)
@@ -713,14 +719,16 @@ fn settings_group<'a>(
 }
 
 fn setting_row<'a>(label: &'a str, value: Element<'a, Message>) -> Element<'a, Message> {
+    // The empty strut keeps rows at least a key chip tall; a wrapped label or value grows them.
     row![
-        text(label).size(12).color(theme::MUTED).width(Length::Fill),
-        // Rows are at least a key chip tall, and grow when a long label wraps.
-        container(value)
-            .height(SETTING_ROW_HEIGHT)
-            .align_y(alignment::Vertical::Center)
+        Space::new().height(SETTING_ROW_HEIGHT),
+        row![
+            text(label).size(12).color(theme::MUTED).width(Length::Fill),
+            value
+        ]
+        .spacing(8)
+        .align_y(alignment::Vertical::Center)
     ]
-    .spacing(8)
     .align_y(alignment::Vertical::Center)
     .into()
 }
@@ -740,7 +748,8 @@ fn dotted<'a>(pieces: impl IntoIterator<Item = Element<'a, Message>>) -> Element
         }
         line = line.push(piece);
     }
-    line.into()
+    // Wraps onto another line rather than squeezing the pieces when the card is narrow.
+    line.wrap().vertical_spacing(4).into()
 }
 
 fn sensitivity_value(summary: &GameSettingsProfileSummary) -> Element<'static, Message> {
@@ -894,6 +903,14 @@ fn crosshair_tile(crosshair: Option<&CrosshairSummary>) -> Element<'static, Mess
     let crosshair = crosshair
         .cloned()
         .unwrap_or_else(CrosshairSummary::default_crosshair);
+    // A dark crosshair would vanish on the dark tile, so it gets a mid grey, like a wall in game.
+    let Rgba { r, g, b, .. } = crosshair.color;
+    let luminance = 0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b);
+    let background = if luminance < DARK_CROSSHAIR_LUMINANCE {
+        Color::from_rgb8(92, 98, 106)
+    } else {
+        theme::BG
+    };
 
     container(
         canvas(CrosshairPreview { crosshair })
@@ -901,9 +918,9 @@ fn crosshair_tile(crosshair: Option<&CrosshairSummary>) -> Element<'static, Mess
             .height(CROSSHAIR_PREVIEW_SIZE),
     )
     .clip(true)
-    .style(|_| {
+    .style(move |_| {
         container::Style::default()
-            .background(theme::BG)
+            .background(background)
             .border(border::rounded(8).width(1).color(theme::LINE))
     })
     .into()
