@@ -35,6 +35,14 @@ art, rarity colours and discounts. The wallet balance shows in the header.
 Loadout tab: equipped gun skins in the in-game collection order, and a Battle Pass sub-tab with tier
 progress and rewards.
 
+Live Match: while the selected account is in agent select or a match, a sidebar indicator shows the
+map and score and opens the Live Match page (it has no nav item and no Launch button). The page
+shows the map, mode, round, server and both teams with names, agents, levels, ranks and Vandal,
+Phantom, Sheriff and Operator skins. It polls on the one-minute availability timer only while open
+and the window is visible, and each poll is also the account's availability check. Players who
+hide their name in game stay hidden until "Respect streamer mode" is turned off (on at every
+start); the user's own saved accounts are never hidden.
+
 Settings tab: Riot Client path, "keep in the system tray when closed" (on by default; while minimized or in the tray it
 polls every 30 minutes so sessions keep refreshing; the tray menu quits), client version
 (fetched at startup), image cache size and clearing, app updates, and a Riot redirect-token import as an
@@ -101,6 +109,13 @@ Local data: `%APPDATA%\spiiritual\prime\config\` holds `accounts.json`, `launche
 - Featured bundles are told apart by store bundle ID, even when two resolve to the same content bundle.
 - Account level comes from the account XP endpoint when the loadout reports zero.
 - Newer weapons need explicit categories: Bandit is a sidearm and Outlaw is a sniper rifle.
+- Live Match uses the core-game and pre-game player, match and loadout endpoints, one name service
+  batch per match, and one MMR request per player per match (3 at a time). Names are kept in
+  memory only. Map, queue and agent names come from valorant-api.com.
+- No Riot server reports a match's score or round. They come only from the local Riot Client's chat
+  presence (`https://127.0.0.1:{port}/chat/v4/presences`, port and password from its lockfile,
+  read per request and never saved). Without it the page says the score is unavailable.
+- The server label is the city in the match's `GamePodID`, such as "Ashburn".
 
 ## Tests
 
