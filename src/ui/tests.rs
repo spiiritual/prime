@@ -2799,10 +2799,8 @@ fn current_account_capture_success_populates_confirmation_fields() {
     assert_eq!(app.launcher_capture_kind, None);
     assert_eq!(app.pending_account, Some(draft));
     assert_eq!(app.new_display_name, "Player");
-    assert_eq!(
-        app.status.text,
-        "Captured current Riot account. Confirm the account details to save it."
-    );
+    // The confirm dialog opens, so the capture's toast ends.
+    assert_eq!(app.status, Status::default());
 }
 
 #[test]
@@ -3440,7 +3438,8 @@ fn selecting_an_account_refreshes_it_without_a_full_reload() {
 
     assert!(!app.account_ranks_loading.is_empty());
     assert!(app.account_availability_loading);
-    assert_eq!(app.status.text, format!("Selected {}", alt.summary()));
+    // The page shows the selected account, so no toast says so.
+    assert_eq!(app.status, Status::default());
 }
 
 fn accounts_tab_app(dir: &Path) -> (PrimeApp, AccountProfile) {
@@ -4158,7 +4157,8 @@ fn a_manual_client_version_refresh_replaces_the_field() {
     });
 
     assert_eq!(app.client_version_input, "release-2");
-    assert!(app.status.text.contains("release-2"), "{}", app.status.text);
+    // The field shows the version, so no toast repeats it.
+    assert_eq!(app.status, Status::default());
 }
 
 #[test]

@@ -259,6 +259,14 @@ impl PrimeApp {
         self.status_changed_at = iced::time::Instant::now();
     }
 
+    /// Ends a progress toast whose result shows on screen by itself. Anything else, such as an
+    /// error, stays.
+    fn clear_progress_status(&mut self) {
+        if self.status.kind == StatusKind::Progress {
+            self.status = Status::default();
+        }
+    }
+
     /// Shows a status from background work the user didn't ask for, unless an error is on screen;
     /// errors stay until something the user does replaces them.
     fn set_background_status(&mut self, status: Status) {
@@ -288,20 +296,18 @@ impl PrimeApp {
                             .unwrap_or_default();
                         self.state = loaded.state;
                         self.accounts_loaded = true;
-                        self.set_status(if let Some(error) = loaded.legacy_cleanup_error {
-                            Status::error(format!("Could not remove old Riot Client sessions: {error}"))
+                        if let Some(error) = loaded.legacy_cleanup_error {
+                            self.set_status(Status::error(format!(
+                                "Could not remove old Riot Client sessions: {error}"
+                            )));
                         } else if !loaded.removed_legacy_sessions.is_empty() {
-                            Status::warning(format!(
+                            self.set_status(Status::warning(format!(
                                 "Removed outdated Riot Client sessions for {}; re-capture their login",
                                 loaded.removed_legacy_sessions.join(", ")
-                            ))
+                            )));
                         } else {
-                            Status::info(format!(
-                                "Loaded {} account profile(s) from {}",
-                                self.state.accounts.len(),
-                                self.repo.path().display()
-                            ))
-                        });
+                            self.clear_progress_status();
+                        }
                     }
                     Err(error) => {
                         self.set_status(Status::error(format!(
@@ -378,12 +384,6 @@ impl PrimeApp {
                 self.close_account_surfaces();
                 self.unavailable_launch_warning = None;
                 self.clear_selected_account_views();
-                self.set_status(Status::info(
-                    self.state
-                        .selected_account()
-                        .map(|account| format!("Selected {}", account.summary()))
-                        .unwrap_or_else(|| "No account selected".to_string()),
-                ));
                 Task::batch([self.save_task(), self.load_account_tab(id)])
             }
             Message::NewDisplayNameChanged(value) => {
@@ -460,7 +460,6 @@ impl PrimeApp {
             Message::CancelAddAccountCapture => {
                 self.show_add_account_prompt = false;
                 self.capture_prompt_valorant_running = false;
-                self.set_status(Status::info("Canceled account capture"));
                 Task::none()
             }
             Message::AccountCaptureFinished(result) => {
@@ -475,9 +474,8 @@ impl PrimeApp {
                             .game_name
                             .clone()
                             .unwrap_or_else(|| "New account".to_string());
-                        self.set_status(Status::info(
-                            "Captured login. Confirm the account details to save it.",
-                        ));
+                        // The confirm dialog opens, so the capture's progress toast ends.
+                        self.clear_progress_status();
                         self.pending_account = Some(draft);
                         Task::batch([
                             self.show_accounts_tab_top(),
@@ -517,7 +515,7 @@ impl PrimeApp {
                             .game_name
                             .clone()
                             .unwrap_or_else(|| "New account".to_string());
-                        self.set_status(Status::info("Captured current Riot account. Confirm the account details to save it."));
+                        self.clear_progress_status();
                         self.pending_account = Some(draft);
                         Task::batch([
                             self.show_accounts_tab_top(),
@@ -554,7 +552,6 @@ impl PrimeApp {
                 self.pending_account = None;
                 self.close_account_surfaces();
                 self.new_display_name.clear();
-                self.set_status(Status::info("Discarded captured account draft"));
                 Task::none()
             }
             Message::ToggleAccountMenu(id) => {
@@ -657,7 +654,6 @@ impl PrimeApp {
             Message::OpenImportAccount => {
                 self.close_account_surfaces();
                 self.show_import_account_prompt = true;
-                self.set_status(Status::info("Paste an account export to import it"));
                 Task::none()
             }
             Message::ImportAccountInputChanged(value) => {
@@ -676,7 +672,6 @@ impl PrimeApp {
 
                 self.show_import_account_prompt = false;
                 self.import_account_input.clear();
-                self.set_status(Status::info("Canceled account import"));
                 Task::none()
             }
             Message::ConfirmImportAccount => {
@@ -838,10 +833,9 @@ impl PrimeApp {
                     if user_requested || self.client_version_input.trim().is_empty() {
                         self.client_version_input = version.clone();
                     }
+                    // The field shows the version.
                     if user_requested {
-                        self.set_status(Status::info(format!(
-                            "Current Riot client version: {version}"
-                        )));
+                        self.clear_progress_status();
                     }
 
                     self.load_active_tab()
@@ -1105,26 +1099,27 @@ impl PrimeApp {
                 }
 
                 let failed = result.failures.len() + context_failures;
+                // Details that loaded in full show on screen, so only a problem gets a toast.
                 let status = match (updated, failed, partial) {
-                    (0, 0, 0) => Status::info("No account details to refresh"),
-                    (0, failed, _) => Status::error(format!(
+                    (_, 0, 0) => None,
+                    (0, failed, _) => Some(Status::error(format!(
                         "Account detail refresh failed for {failed} account(s)"
-                    )),
-                    (updated, 0, 0) => {
-                        Status::info(format!("Loaded account details for {updated} account(s)"))
-                    }
-                    (updated, 0, partial) => Status::warning(format!(
+                    ))),
+                    (updated, 0, partial) => Some(Status::warning(format!(
                         "Loaded account details for {updated} account(s); {partial} partial"
-                    )),
-                    (updated, failed, 0) => Status::warning(format!(
+                    ))),
+                    (updated, failed, 0) => Some(Status::warning(format!(
                         "Loaded account details for {updated} account(s); {failed} unavailable"
-                    )),
-                    (updated, failed, partial) => Status::warning(format!(
+                    ))),
+                    (updated, failed, partial) => Some(Status::warning(format!(
                         "Loaded account details for {updated} account(s); {failed} unavailable, {partial} partial"
-                    )),
+                    ))),
                 };
                 if announce && !self.progress_pinned() {
-                    self.set_status(status);
+                    match status {
+                        Some(status) => self.set_status(status),
+                        None => self.clear_progress_status(),
+                    }
                 }
 
                 if updated > 0 {
@@ -1626,7 +1621,7 @@ impl PrimeApp {
             Message::CancelSettingsChange => {
                 self.settings_check = None;
                 self.confirm_settings_change = None;
-                self.set_status(Status::info("Canceled settings change"));
+                self.clear_progress_status();
                 Task::none()
             }
             Message::ConfirmSettingsChange => {
@@ -1762,23 +1757,19 @@ impl PrimeApp {
                         }
 
                         let bundle_count = result.summary.featured_bundles.len();
-                        let daily_count = result.summary.daily_offers.len();
-                        let night_market_count = result.summary.night_market_offers.len();
-                        let balance_status = if result.summary.currency_balance_error.is_some() {
-                            ", but currency balances were unavailable"
-                        } else {
-                            ""
-                        };
-
-                        let summary = format!(
-                            "Loaded {} featured bundle(s), {} daily offer(s), and {} night market offer(s){}",
-                            bundle_count, daily_count, night_market_count, balance_status
-                        );
-                        self.set_view_status(if result.summary.currency_balance_error.is_some() {
-                            Status::warning(summary)
-                        } else {
-                            Status::info(summary)
-                        });
+                        // The shop shows what loaded; only missing balances get a toast.
+                        if result.summary.currency_balance_error.is_some() {
+                            self.set_view_status(Status::warning(format!(
+                                "Loaded {} featured bundle(s), {} daily offer(s), and {} night \
+                                 market offer(s), but currency balances were unavailable",
+                                bundle_count,
+                                result.summary.daily_offers.len(),
+                                result.summary.night_market_offers.len()
+                            )));
+                        } else if !self.progress_pinned() {
+                            // Ends a "loading updated shop" toast from a shop reset.
+                            self.clear_progress_status();
+                        }
                         if self.state.selected_account == Some(result.account_id) {
                             self.store_summary = Some(result.summary);
                         }
@@ -1908,28 +1899,20 @@ impl PrimeApp {
                         );
 
                         let gun_count = result.summary.gun_skins.len();
-                        let battle_pass_status = if result.summary.battle_pass.is_some() {
-                            " and battle pass progress"
-                        } else {
-                            ""
-                        };
-
-                        self.set_view_status(
-                            match (
-                                &result.summary.loadout_error,
-                                &result.summary.battle_pass_error,
-                            ) {
-                                (Some(error), _) => Status::error(format!(
-                                    "Loaded battle pass progress; loadout failed: {error}"
-                                )),
-                                (None, Some(error)) => Status::error(format!(
-                                    "Loaded loadout with {gun_count} gun skin(s); battle pass failed: {error}"
-                                )),
-                                (None, None) => Status::info(format!(
-                                    "Loaded loadout with {gun_count} gun skin(s){battle_pass_status}"
-                                )),
-                            },
-                        );
+                        // The tab shows what loaded; only a failed half gets a toast.
+                        match (
+                            &result.summary.loadout_error,
+                            &result.summary.battle_pass_error,
+                        ) {
+                            (Some(error), _) => self.set_view_status(Status::error(format!(
+                                "Loaded battle pass progress; loadout failed: {error}"
+                            ))),
+                            (None, Some(error)) => self.set_view_status(Status::error(format!(
+                                "Loaded loadout with {gun_count} gun skin(s); battle pass failed: {error}"
+                            ))),
+                            (None, None) if !self.progress_pinned() => self.clear_progress_status(),
+                            (None, None) => {}
+                        }
                         if let Some(level) = result.summary.account_level
                             && let Some(account) = self
                                 .state
@@ -2182,7 +2165,8 @@ impl PrimeApp {
                         display_name: account.display_name,
                         reason: warnings.join(" "),
                     });
-                    self.set_status(Status::info("Confirm launch to continue"));
+                    // The warning dialog asks instead.
+                    self.clear_progress_status();
                     return Task::none();
                 }
 
@@ -2213,7 +2197,7 @@ impl PrimeApp {
                     &mut self.launching_account,
                     &mut self.launch_progress_checking,
                 );
-                self.set_status(Status::info("Canceled launch"));
+                self.clear_progress_status();
                 Task::none()
             }
             Message::LaunchAnyway(id) => {
@@ -2414,7 +2398,6 @@ impl PrimeApp {
     fn dismiss_app_update(&mut self) -> Task<Message> {
         if let Some(update) = self.app_update_status.prompt_update().cloned() {
             self.app_update_status = AppUpdateStatus::Dismissed(update);
-            self.set_status(Status::info("Update postponed"));
         }
 
         Task::none()
@@ -2851,9 +2834,6 @@ impl PrimeApp {
 
         let announce = announce && !self.progress_pinned();
         self.account_ranks_loading = accounts.iter().map(|account| account.id).collect();
-        if announce {
-            self.set_status(Status::progress("Loading account details"));
-        }
         let client_version = self.client_version_input.clone();
 
         Task::perform(
@@ -2875,7 +2855,6 @@ impl PrimeApp {
         let request = self.next_view_request(account.id);
         self.store_request = Some(request);
         self.store_error = None;
-        self.set_view_status(Status::progress("Loading shop"));
         let image_cache = self.image_cache.clone();
         Task::perform(
             fetch_storefront(account, self.client_version_input.clone(), image_cache),
@@ -2894,7 +2873,6 @@ impl PrimeApp {
         let request = self.next_view_request(account.id);
         self.loadout_request = Some(request);
         self.loadout_error = None;
-        self.set_view_status(Status::progress("Loading loadout"));
         let image_cache = self.image_cache.clone();
         Task::perform(
             fetch_loadout(account, self.client_version_input.clone(), image_cache),
