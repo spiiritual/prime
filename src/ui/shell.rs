@@ -476,8 +476,7 @@ impl PrimeApp {
                 .push(close)
                 .spacing(10)
                 .align_y(alignment::Vertical::Center),
-        )
-        .padding([10, 14]);
+        );
         // A toast that closes by itself shows how long it has left.
         let content: Element<'_, Message> = match super::status_time_left(self) {
             Some(left) => stack![
@@ -488,7 +487,7 @@ impl PrimeApp {
                     .align_y(alignment::Vertical::Bottom)
             ]
             .into(),
-            None => content.into(),
+            None => content.padding([10, 14]).into(),
         };
 
         container(content)
@@ -689,19 +688,14 @@ fn toast_timer_bar(left: f32, kind: StatusKind) -> Element<'static, Message> {
         StatusKind::Warning => theme::GOLD,
         _ => theme::MUTED,
     };
-    let bar = |color: Color| {
-        container(space())
-            .height(TOAST_TIMER_HEIGHT)
-            .style(move |_| filled(color))
-    };
-    // Thousandths, so the bar moves smoothly.
-    let done = (left * 1000.0).round() as u16;
-    row![
-        bar(color).width(Length::FillPortion(done.max(1))),
-        bar(theme::LINE).width(Length::FillPortion((1000 - done).max(1)))
-    ]
-    .width(Length::Fill)
-    .into()
+    iced::widget::progress_bar(0.0..=1.0, left)
+        .girth(TOAST_TIMER_HEIGHT)
+        .style(move |_| iced::widget::progress_bar::Style {
+            background: theme::LINE.into(),
+            bar: color.into(),
+            border: iced::Border::default(),
+        })
+        .into()
 }
 
 /// The design's toast: a lighter shadow than popovers, and a green, gold or red border for a

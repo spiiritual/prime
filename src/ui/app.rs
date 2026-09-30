@@ -2586,6 +2586,7 @@ impl PrimeApp {
 
     fn close_account_action_surfaces(&mut self) {
         self.open_account_menu = None;
+        self.open_preset_menu = None;
         self.show_add_account_prompt = false;
         self.show_import_account_prompt = false;
         // The pasted export holds the account's login, so it isn't kept once the prompt closes.

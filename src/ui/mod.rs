@@ -104,11 +104,14 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
     }
 
     if status_flash_active(app) {
-        subscriptions.push(if app.window_minimized {
-            iced::time::every(STATUS_FLASH_TICK_INTERVAL).map(Message::StatusTimerTick)
-        } else {
-            window::frames().map(Message::StatusTimerTick)
-        });
+        // Only a visible timer bar needs every frame.
+        subscriptions.push(
+            if !app.window_minimized && status_time_left(app).is_some() {
+                window::frames().map(Message::StatusTimerTick)
+            } else {
+                iced::time::every(STATUS_FLASH_TICK_INTERVAL).map(Message::StatusTimerTick)
+            },
+        );
     }
 
     // Nobody sees the spinner while minimized, and a stuck progress status would keep it ticking.
