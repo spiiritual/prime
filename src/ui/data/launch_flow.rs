@@ -62,19 +62,18 @@ pub(in crate::ui) fn load_accounts(repo: &AccountRepository) -> Result<LoadedAcc
 }
 
 pub(in crate::ui) async fn launch_account(
-    config: LaunchConfig,
+    riot_client_path: Option<PathBuf>,
     backup: Option<LauncherSessionBackup>,
     saved_sessions: Vec<(AccountId, LauncherSessionBackup)>,
 ) -> Result<LaunchAccountResult, String> {
     let backup = require_launcher_session(backup)?;
 
-    let previous_sync = prepare_account_launch(config, backup.clone(), saved_sessions).await?;
-    let target =
-        wait_for_launch_target_window(VALORANT_OPEN_TIMEOUT, VALORANT_OPEN_POLL_INTERVAL).await?;
+    let previous_sync =
+        prepare_account_launch(riot_client_path, backup.clone(), saved_sessions).await?;
+    wait_for_valorant_window(VALORANT_OPEN_TIMEOUT, VALORANT_OPEN_POLL_INTERVAL).await?;
     let sync = sync_launcher_session_after_launch(backup).await;
 
     Ok(LaunchAccountResult {
-        target,
         previous_account_backup: previous_sync.as_ref().ok().cloned().flatten(),
         previous_account_sync_warning: previous_sync.err(),
         synced_backup: sync.as_ref().ok().cloned(),
@@ -84,7 +83,6 @@ pub(in crate::ui) async fn launch_account(
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct LaunchAccountResult {
-    pub(in crate::ui) target: LaunchTargetProcess,
     /// The account that was signed in before switching, with its backup refreshed from the live login.
     pub(in crate::ui) previous_account_backup: Option<(AccountId, LauncherSessionBackup)>,
     pub(in crate::ui) previous_account_sync_warning: Option<String>,
@@ -98,7 +96,7 @@ pub(in crate::ui) type PreviousAccountSync =
     Result<Option<(AccountId, LauncherSessionBackup)>, String>;
 
 async fn prepare_account_launch(
-    config: LaunchConfig,
+    riot_client_path: Option<PathBuf>,
     backup: LauncherSessionBackup,
     saved_sessions: Vec<(AccountId, LauncherSessionBackup)>,
 ) -> Result<PreviousAccountSync, String> {
@@ -108,7 +106,7 @@ async fn prepare_account_launch(
         let previous_sync =
             sync_signed_in_launcher_session(&saved_sessions).map_err(|error| error.to_string());
         apply_launcher_session_backup(&backup).map_err(|error| error.to_string())?;
-        launch_valorant(&config).map_err(|error| error.to_string())?;
+        launch_valorant(riot_client_path.as_deref()).map_err(|error| error.to_string())?;
         Ok(previous_sync)
     })
     .await
@@ -150,15 +148,15 @@ pub(in crate::ui) const VALORANT_OPEN_TIMEOUT: Duration = Duration::from_secs(30
 pub(in crate::ui) const VALORANT_OPEN_POLL_INTERVAL: Duration = Duration::from_secs(1);
 pub(in crate::ui) const SHOP_RESET_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
-pub(in crate::ui) async fn wait_for_launch_target_window(
+pub(in crate::ui) async fn wait_for_valorant_window(
     timeout: Duration,
     poll_interval: Duration,
-) -> Result<LaunchTargetProcess, String> {
+) -> Result<(), String> {
     let started = std::time::Instant::now();
 
     while started.elapsed() < timeout {
-        if let Some(target) = check_launch_target_window().await? {
-            return Ok(target);
+        if check_valorant_window().await? {
+            return Ok(());
         }
 
         tokio::time::sleep(poll_interval).await;
@@ -170,8 +168,8 @@ pub(in crate::ui) async fn wait_for_launch_target_window(
     )
 }
 
-async fn check_launch_target_window() -> Result<Option<LaunchTargetProcess>, String> {
-    tokio::task::spawn_blocking(launch_target_window_is_visible)
+async fn check_valorant_window() -> Result<bool, String> {
+    tokio::task::spawn_blocking(valorant_window_is_visible)
         .await
         .map_err(|error| format!("failed to join VALORANT window check task: {error}"))?
         .map_err(|error| error.to_string())
@@ -197,7 +195,7 @@ pub(in crate::ui) async fn check_riot_client_window_visible() -> Result<bool, St
 /// the live login and reopens Riot Client for a sign-in. Riot may have rotated the signed-in
 /// account's refresh token since its last sync, so it is saved before the live login is cleared.
 pub(in crate::ui) async fn prepare_login_capture(
-    config: LaunchConfig,
+    riot_client_path: Option<PathBuf>,
     saved_sessions: Vec<(AccountId, LauncherSessionBackup)>,
 ) -> Result<PreviousAccountSync, String> {
     tokio::task::spawn_blocking(move || {
@@ -205,7 +203,8 @@ pub(in crate::ui) async fn prepare_login_capture(
         let previous_sync =
             sync_signed_in_launcher_session(&saved_sessions).map_err(|error| error.to_string());
         clear_existing_launcher_data_dirs().map_err(|error| error.to_string())?;
-        launch_riot_login_capture(&config).map_err(|error| error.to_string())?;
+        launch_riot_login_capture(riot_client_path.as_deref())
+            .map_err(|error| error.to_string())?;
         Ok(previous_sync)
     })
     .await

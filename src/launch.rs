@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
 
@@ -12,90 +12,36 @@ pub const VALORANT_PROCESS_IMAGES: [&str; 2] = ["VALORANT-Win64-Shipping.exe", "
 pub const RIOT_CLIENT_PROCESS_IMAGE: &str = "RiotClientServices.exe";
 const RIOT_CLIENT_PROCESS_IMAGES: [&str; 2] = ["RiotClientUx.exe", RIOT_CLIENT_PROCESS_IMAGE];
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LaunchTargetProcess {
-    Valorant,
+pub fn launch_valorant(riot_client_path: Option<&Path>) -> Result<(), LaunchError> {
+    start_riot_client(
+        riot_client_path,
+        &["--launch-product=valorant", "--launch-patchline=live"],
+    )
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LaunchConfig {
-    pub riot_client_path: Option<PathBuf>,
-    pub product: String,
-    pub patchline: String,
+pub fn launch_riot_login_capture(riot_client_path: Option<&Path>) -> Result<(), LaunchError> {
+    start_riot_client(
+        riot_client_path,
+        &["--launch-product=valorant", "--allow-multiple-clients"],
+    )
 }
 
-impl Default for LaunchConfig {
-    fn default() -> Self {
-        Self {
-            riot_client_path: None,
-            product: "valorant".to_string(),
-            patchline: "live".to_string(),
-        }
-    }
-}
+fn start_riot_client(riot_client_path: Option<&Path>, args: &[&str]) -> Result<(), LaunchError> {
+    let executable = match riot_client_path {
+        Some(path) => path.to_path_buf(),
+        None => default_riot_client_candidates()
+            .into_iter()
+            .find(|path| path.exists())
+            .ok_or(LaunchError::RiotClientNotFound)?,
+    };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LaunchPlan {
-    pub executable: PathBuf,
-    pub args: Vec<String>,
-}
-
-pub fn build_launch_plan(config: &LaunchConfig) -> Result<LaunchPlan, LaunchError> {
-    let executable = resolve_riot_client_executable(config)?;
-
-    Ok(LaunchPlan {
-        executable,
-        args: vec![
-            format!("--launch-product={}", config.product),
-            format!("--launch-patchline={}", config.patchline),
-        ],
-    })
-}
-
-pub fn build_launcher_login_capture_plan(config: &LaunchConfig) -> Result<LaunchPlan, LaunchError> {
-    let executable = resolve_riot_client_executable(config)?;
-
-    Ok(LaunchPlan {
-        executable,
-        args: vec![
-            format!("--launch-product={}", config.product),
-            "--allow-multiple-clients".to_string(),
-        ],
-    })
-}
-
-pub fn launch_valorant(config: &LaunchConfig) -> Result<(), LaunchError> {
-    let plan = build_launch_plan(config)?;
-
-    spawn_launch_plan(&plan)
-}
-
-pub fn launch_riot_login_capture(config: &LaunchConfig) -> Result<(), LaunchError> {
-    let plan = build_launcher_login_capture_plan(config)?;
-
-    spawn_launch_plan(&plan)
-}
-
-fn spawn_launch_plan(plan: &LaunchPlan) -> Result<(), LaunchError> {
-    let mut command = Command::new(&plan.executable);
-    configure_no_console_window(&mut command);
-
-    command
-        .args(&plan.args)
+    Command::new(executable)
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(args)
         .spawn()
         .map_err(LaunchError::Spawn)?;
 
     Ok(())
-}
-
-fn resolve_riot_client_executable(config: &LaunchConfig) -> Result<PathBuf, LaunchError> {
-    match &config.riot_client_path {
-        Some(path) => Ok(path.clone()),
-        None => default_riot_client_candidates()
-            .into_iter()
-            .find(|path| path.exists())
-            .ok_or(LaunchError::RiotClientNotFound),
-    }
 }
 
 pub fn close_riot_processes() -> Result<(), LaunchError> {
@@ -156,14 +102,6 @@ pub fn valorant_process_is_running() -> Result<bool, LaunchError> {
         .any(|process| process.is_one_of(&VALORANT_PROCESS_IMAGES)))
 }
 
-pub fn launch_target_window_is_visible() -> Result<Option<LaunchTargetProcess>, LaunchError> {
-    if valorant_window_is_visible()? {
-        return Ok(Some(LaunchTargetProcess::Valorant));
-    }
-
-    Ok(None)
-}
-
 pub fn valorant_window_is_visible() -> Result<bool, LaunchError> {
     visible_window_belongs_to_process_image(&VALORANT_PROCESS_IMAGES)
 }
@@ -183,10 +121,6 @@ fn visible_window_belongs_to_process_image(image_names: &[&str]) -> Result<bool,
         .map_err(LaunchError::ListProcesses)?
         .iter()
         .any(|process| visible_process_ids.contains(&process.id) && process.is_one_of(image_names)))
-}
-
-fn configure_no_console_window(command: &mut Command) {
-    command.creation_flags(CREATE_NO_WINDOW);
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -242,36 +176,24 @@ fn running_processes() -> std::io::Result<Vec<RunningProcess>> {
 }
 
 fn visible_top_level_window_process_ids() -> Vec<u32> {
-    mod user32 {
-        use std::ffi::c_void;
-
-        pub type Bool = i32;
-        pub type Hwnd = *mut c_void;
-        pub type Lparam = isize;
-
-        #[link(name = "user32")]
-        unsafe extern "system" {
-            pub fn EnumWindows(
-                enum_func: Option<unsafe extern "system" fn(Hwnd, Lparam) -> Bool>,
-                lparam: Lparam,
-            ) -> Bool;
-            pub fn IsWindowVisible(hwnd: Hwnd) -> Bool;
-            pub fn GetWindowThreadProcessId(hwnd: Hwnd, process_id: *mut u32) -> u32;
-        }
-    }
+    use windows_sys::Win32::Foundation::{HWND, LPARAM};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowThreadProcessId, IsWindowVisible,
+    };
+    use windows_sys::core::BOOL;
 
     unsafe extern "system" fn collect_visible_window_process_id(
-        hwnd: user32::Hwnd,
-        lparam: user32::Lparam,
-    ) -> user32::Bool {
-        if unsafe { user32::IsWindowVisible(hwnd) } == 0 {
+        hwnd: HWND,
+        lparam: LPARAM,
+    ) -> BOOL {
+        if unsafe { IsWindowVisible(hwnd) } == 0 {
             return 1;
         }
 
         let process_ids = unsafe { &mut *(lparam as *mut Vec<u32>) };
         let mut process_id = 0;
         unsafe {
-            user32::GetWindowThreadProcessId(hwnd, &mut process_id);
+            GetWindowThreadProcessId(hwnd, &mut process_id);
         }
 
         if process_id != 0 {
@@ -283,9 +205,9 @@ fn visible_top_level_window_process_ids() -> Vec<u32> {
 
     let mut process_ids = Vec::new();
     unsafe {
-        user32::EnumWindows(
+        EnumWindows(
             Some(collect_visible_window_process_id),
-            (&mut process_ids as *mut Vec<u32>) as user32::Lparam,
+            (&mut process_ids as *mut Vec<u32>) as LPARAM,
         );
     }
 
@@ -347,11 +269,6 @@ fn collect_riot_client_paths(value: &serde_json::Value, paths: &mut Vec<PathBuf>
     }
 }
 
-#[cfg(test)]
-fn riot_client_paths_from_install_manifest(contents: &str) -> Vec<PathBuf> {
-    riot_client_paths_from_install_manifest_json(contents)
-}
-
 #[derive(Debug, Error)]
 pub enum LaunchError {
     #[error("RiotClientServices.exe was not found; set the Riot Client path in Settings")]
@@ -369,48 +286,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn explicit_path_builds_valorant_launch_arguments() {
-        let config = LaunchConfig {
-            riot_client_path: Some(PathBuf::from(
-                r"C:\Riot Games\Riot Client\RiotClientServices.exe",
-            )),
-            ..LaunchConfig::default()
-        };
-
-        let plan = build_launch_plan(&config).expect("launch plan");
-
-        assert_eq!(
-            plan.args,
-            vec![
-                "--launch-product=valorant".to_string(),
-                "--launch-patchline=live".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn explicit_path_builds_login_capture_arguments() {
-        let config = LaunchConfig {
-            riot_client_path: Some(PathBuf::from(
-                r"C:\Riot Games\Riot Client\RiotClientServices.exe",
-            )),
-            ..LaunchConfig::default()
-        };
-
-        let plan = build_launcher_login_capture_plan(&config).expect("launch plan");
-
-        assert_eq!(
-            plan.args,
-            vec![
-                "--launch-product=valorant".to_string(),
-                "--allow-multiple-clients".to_string()
-            ]
-        );
-    }
-
-    #[test]
     fn parses_executable_paths_from_riot_install_manifest() {
-        let paths = riot_client_paths_from_install_manifest(
+        let paths = riot_client_paths_from_install_manifest_json(
             r#"{
                 "rc_default": "D:\\Riot Games\\Riot Client\\RiotClientServices.exe",
                 "ignored": "D:\\Riot Games\\Riot Client\\RiotClientInstalls.json",

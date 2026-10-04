@@ -2236,7 +2236,6 @@ fn launch_without_a_captured_login_is_refused_before_switching() {
 
 fn finished_launch(previous_account_backup: Option<(AccountId, LauncherSessionBackup)>) -> Message {
     Message::LaunchFinished(Ok(LaunchAccountResult {
-        target: crate::launch::LaunchTargetProcess::Valorant,
         previous_account_backup,
         previous_account_sync_warning: None,
         synced_backup: None,
@@ -2562,7 +2561,6 @@ fn a_launch_that_could_not_save_the_previous_login_stays_on_screen() {
     let mut app = test_app(dir.path());
 
     let _ = app.update(Message::LaunchFinished(Ok(LaunchAccountResult {
-        target: crate::launch::LaunchTargetProcess::Valorant,
         previous_account_backup: None,
         previous_account_sync_warning: Some("file locked".to_string()),
         synced_backup: None,

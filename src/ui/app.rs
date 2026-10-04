@@ -8,7 +8,6 @@ use crate::account::{
 };
 use crate::account_transfer::{export_account, import_account};
 use crate::image_cache::{CacheUsage, ImageCache};
-use crate::launch::{LaunchConfig, LaunchTargetProcess};
 use crate::riot::auth::{RedirectTokens, parse_redirect_tokens};
 use crate::riot::launcher_session::{
     CapturedLauncherSession, adopt_launcher_session_backup, remove_launcher_session_backup,
@@ -2362,7 +2361,7 @@ impl PrimeApp {
                 Task::none()
             }
             Message::LaunchFinished(result) => match result {
-                Ok(result) if result.target == LaunchTargetProcess::Valorant => {
+                Ok(result) => {
                     let launched_account = self.launching_account.take();
                     self.launch_progress_checking = false;
                     let mut saved_backup =
@@ -2391,15 +2390,6 @@ impl PrimeApp {
                     }
 
                     if saved_backup {
-                        self.save_task()
-                    } else {
-                        Task::none()
-                    }
-                }
-                Ok(result) => {
-                    self.launching_account = None;
-                    self.launch_progress_checking = false;
-                    if self.store_previous_account_backup(result.previous_account_backup) {
                         self.save_task()
                     } else {
                         Task::none()
@@ -3243,10 +3233,7 @@ impl PrimeApp {
 
     fn start_account_launch(&mut self, account: AccountProfile) -> Task<Message> {
         let id = account.id;
-        let config = LaunchConfig {
-            riot_client_path: self.state.riot_client_path.clone(),
-            ..LaunchConfig::default()
-        };
+        let riot_client_path = self.state.riot_client_path.clone();
         let backup = account.launcher_session.clone();
         let saved_sessions = self.saved_launcher_sessions();
 
@@ -3273,7 +3260,7 @@ impl PrimeApp {
         Task::batch([
             self.save_task(),
             Task::perform(
-                async move { launch_account(config, backup, saved_sessions).await },
+                async move { launch_account(riot_client_path, backup, saved_sessions).await },
                 Message::LaunchFinished,
             ),
             reload,
@@ -3606,17 +3593,14 @@ impl PrimeApp {
     }
 
     fn start_login_capture(&mut self, target: LoginCaptureTarget) -> Task<Message> {
-        let config = LaunchConfig {
-            riot_client_path: self.state.riot_client_path.clone(),
-            ..LaunchConfig::default()
-        };
+        let riot_client_path = self.state.riot_client_path.clone();
         let saved_sessions = self.saved_launcher_sessions();
         self.launcher_capture_in_progress = true;
         self.launcher_capture_kind = Some(target.kind());
         self.login_capture = Some(LoginCapture { target, wait: None });
 
         Task::perform(
-            prepare_login_capture(config, saved_sessions),
+            prepare_login_capture(riot_client_path, saved_sessions),
             move |result| Message::LoginCapturePrepared { target, result },
         )
     }

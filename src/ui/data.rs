@@ -10,9 +10,8 @@ use crate::account::{
 };
 use crate::image_cache::ImageCache;
 use crate::launch::{
-    LaunchConfig, LaunchTargetProcess, close_riot_client_processes, close_riot_processes,
-    launch_riot_login_capture, launch_target_window_is_visible, launch_valorant,
-    riot_client_window_is_visible,
+    close_riot_client_processes, close_riot_processes, launch_riot_login_capture, launch_valorant,
+    riot_client_window_is_visible, valorant_window_is_visible,
 };
 use crate::riot::client::{ApiCredentials, RiotApi};
 use crate::riot::content::{
