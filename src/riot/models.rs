@@ -17,7 +17,6 @@ impl std::fmt::Debug for EntitlementResponse {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct PlayerInfoResponse {
-    pub country: String,
     pub sub: String,
     pub acct: RiotAccount,
     #[serde(default)]
@@ -38,7 +37,6 @@ pub struct RiotGeoResponse {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct RiotGeoAffinities {
-    pub pbe: String,
     pub live: String,
 }
 
@@ -61,12 +59,8 @@ pub struct AccountXpProgress {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct GameContentResponse {
-    #[serde(default, rename = "DisabledIDs")]
-    pub disabled_ids: Vec<serde_json::Value>,
     #[serde(default)]
     pub seasons: Vec<GameContentSeason>,
-    #[serde(default)]
-    pub events: Vec<GameContentEvent>,
 }
 
 impl GameContentResponse {
@@ -85,17 +79,6 @@ pub struct GameContentSeason {
     pub name: String,
     #[serde(rename = "Type")]
     pub season_type: String,
-    pub start_time: String,
-    pub end_time: String,
-    pub is_active: bool,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(rename_all = "PascalCase")]
-pub struct GameContentEvent {
-    #[serde(rename = "ID")]
-    pub id: String,
-    pub name: String,
     pub start_time: String,
     pub end_time: String,
     pub is_active: bool,
@@ -170,41 +153,14 @@ pub struct PlayerPenaltiesResponse {
 pub struct PlayerPenalty {
     #[serde(rename = "ID")]
     pub id: String,
-    pub issuing_game_start_unix_millis: i64,
-    #[serde(rename = "IssuingMatchID")]
-    pub issuing_match_id: String,
     pub expiry: Option<String>,
     pub games_remaining: i64,
-    pub apply_to_all_platforms: bool,
-    pub apply_to_platforms: Vec<String>,
-    pub apply_to_platform_groups: Vec<String>,
     #[serde(rename = "InfractionID")]
     pub infraction_id: String,
-    pub origin: String,
     pub forgiveness_ineligible: bool,
     pub is_automated_detection: bool,
     pub penalty_info: Option<serde_json::Value>,
-    pub delayed_penalty_effect: Option<serde_json::Value>,
-    pub game_ban_effect: Option<serde_json::Value>,
-    pub queue_delay_effect: Option<serde_json::Value>,
-    pub queue_restriction_effect: Option<QueueRestrictionEffect>,
-    pub ranked_rating_penalty_effect: Option<serde_json::Value>,
-    pub riot_restriction_effect: Option<serde_json::Value>,
-    #[serde(rename = "RMSNotifyEffect")]
-    pub rms_notify_effect: Option<serde_json::Value>,
-    pub warning_effect: Option<serde_json::Value>,
-    #[serde(rename = "XPMultiplierEffect")]
-    pub xp_multiplier_effect: Option<serde_json::Value>,
     pub premier_restriction_effect: Option<PremierRestrictionEffect>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(rename_all = "PascalCase")]
-pub struct QueueRestrictionEffect {
-    #[serde(rename = "QueueIDs")]
-    pub queue_ids: Vec<String>,
-    #[serde(rename = "RecordID")]
-    pub record_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -356,7 +312,6 @@ pub struct StoreOffer {
     #[serde(rename = "OfferID")]
     pub offer_id: String,
     pub is_direct_purchase: bool,
-    pub start_date: String,
     #[serde(default)]
     pub cost: HashMap<String, i64>,
     #[serde(default)]
@@ -384,14 +339,11 @@ pub struct BonusStore {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
 pub struct BonusStoreOffer {
-    #[serde(rename = "BonusOfferID")]
-    pub bonus_offer_id: String,
     pub offer: StoreOffer,
     #[serde(deserialize_with = "deserialize_discount_percent")]
     pub discount_percent: i64,
     #[serde(default)]
     pub discount_costs: HashMap<String, i64>,
-    pub is_seen: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -456,8 +408,6 @@ pub struct PlayerLoadoutResponse {
     pub version: i64,
     #[serde(default)]
     pub guns: Vec<LoadoutGun>,
-    #[serde(default)]
-    pub sprays: Vec<LoadoutSpray>,
     pub identity: LoadoutIdentity,
     pub incognito: bool,
 }
@@ -466,12 +416,6 @@ pub struct PlayerLoadoutResponse {
 pub struct LoadoutGun {
     #[serde(rename = "ID")]
     pub id: String,
-    #[serde(rename = "CharmInstanceID")]
-    pub charm_instance_id: Option<String>,
-    #[serde(rename = "CharmID")]
-    pub charm_id: Option<String>,
-    #[serde(rename = "CharmLevelID")]
-    pub charm_level_id: Option<String>,
     #[serde(rename = "SkinID")]
     pub skin_id: String,
     #[serde(rename = "SkinLevelID")]
@@ -481,21 +425,9 @@ pub struct LoadoutGun {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
-pub struct LoadoutSpray {
-    #[serde(rename = "EquipSlotID")]
-    pub equip_slot_id: String,
-    #[serde(rename = "SprayID")]
-    pub spray_id: String,
-    #[serde(rename = "SprayLevelID")]
-    pub spray_level_id: Option<String>,
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct LoadoutIdentity {
     #[serde(rename = "PlayerCardID")]
     pub player_card_id: String,
-    #[serde(rename = "PlayerTitleID")]
-    pub player_title_id: String,
     #[serde(rename = "AccountLevel")]
     pub account_level: i64,
     #[serde(rename = "PreferredLevelBorderID")]
@@ -698,8 +630,6 @@ mod tests {
             serde_json::from_value(json).expect("v3 player loadout");
 
         assert_eq!(loadout.guns[0].skin_id, "skin");
-        assert_eq!(loadout.guns[0].charm_id, None);
-        assert!(loadout.sprays.is_empty());
     }
 
     #[test]
@@ -1106,11 +1036,6 @@ mod tests {
 
         assert_eq!(penalties.subject, "puuid");
         assert_eq!(penalties.version, 7);
-        let queue_restriction = penalties.penalties[0]
-            .queue_restriction_effect
-            .as_ref()
-            .expect("queue restriction");
-        assert_eq!(queue_restriction.queue_ids, ["competitive"]);
         assert_eq!(
             penalties.infractions[0].rating_name,
             "Queue Dodge".to_string()
