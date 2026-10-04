@@ -54,6 +54,10 @@ polls every 30 minutes so sessions keep refreshing; the tray menu quits), client
 (fetched at startup), image cache size and clearing, app updates, and a Riot redirect-token import as an
 advanced fallback for API access.
 
+One instance: starting Prime while it runs, even from the tray, brings the running window forward
+and the new start exits (`single_instance.rs`). Debug builds use their own name, so `cargo run`
+works beside an installed Prime.
+
 Updates: Velopack checks the GitHub releases of `spiiritual/prime`. `PRIME_UPDATE_SOURCE` and
 `PRIME_UPDATE_CHANNEL` override the source and channel.
 
