@@ -555,13 +555,18 @@ impl PrimeApp {
                 .align_y(alignment::Vertical::Center),
         );
         // A toast that closes by itself shows how long it has left.
-        let content: Element<'_, Message> = match super::status_time_left(self) {
-            Some(left) => stack![
+        let content: Element<'_, Message> = match super::status_sink_starts_at(self) {
+            Some(sink_at) => stack![
                 content.padding(Padding::new(10.0).horizontal(14.0).bottom(13.0)),
-                container(toast_timer_bar(left, kind))
-                    .padding(Padding::ZERO.horizontal(12.0).bottom(5.0))
-                    .height(Length::Fill)
-                    .align_y(alignment::Vertical::Bottom)
+                container(toast_timer_bar(
+                    self.status_changed_at,
+                    sink_at,
+                    super::status_sinking(self),
+                    kind,
+                ))
+                .padding(Padding::ZERO.horizontal(12.0).bottom(5.0))
+                .height(Length::Fill)
+                .align_y(alignment::Vertical::Bottom)
             ]
             .into(),
             None => content.padding([10, 14]).into(),
@@ -761,20 +766,108 @@ fn rule(color: Color) -> Element<'static, Message> {
 }
 
 /// A thin bar that empties as the toast's time runs out, in the toast's colour.
-fn toast_timer_bar(left: f32, kind: StatusKind) -> Element<'static, Message> {
+fn toast_timer_bar(
+    started: iced::time::Instant,
+    sink_at: iced::time::Instant,
+    sinking: bool,
+    kind: StatusKind,
+) -> Element<'static, Message> {
     let color = match kind {
         StatusKind::Success => theme::OK,
         StatusKind::Warning => theme::GOLD,
         _ => theme::MUTED,
     };
-    iced::widget::progress_bar(0.0..=1.0, left)
-        .girth(TOAST_TIMER_HEIGHT)
-        .style(move |_| iced::widget::progress_bar::Style {
-            background: theme::LINE.into(),
-            bar: color.into(),
-            border: iced::Border::default(),
-        })
-        .into()
+    Element::new(ToastTimerBar {
+        started,
+        sink_at,
+        sinking,
+        color,
+    })
+}
+
+/// Redraws itself each frame without a message, so the window isn't rebuilt at the monitor's
+/// refresh rate while a toast counts down. When the toast starts sinking out it sends one
+/// `StatusTimerTick`, and the app follows every frame from then on.
+struct ToastTimerBar {
+    started: iced::time::Instant,
+    sink_at: iced::time::Instant,
+    sinking: bool,
+    color: Color,
+}
+
+impl iced::advanced::Widget<Message, Theme, iced::Renderer> for ToastTimerBar {
+    fn size(&self) -> iced::Size<Length> {
+        iced::Size::new(Length::Fill, Length::Fixed(TOAST_TIMER_HEIGHT))
+    }
+
+    fn layout(
+        &mut self,
+        _tree: &mut iced::advanced::widget::Tree,
+        _renderer: &iced::Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        iced::advanced::layout::atomic(limits, Length::Fill, TOAST_TIMER_HEIGHT)
+    }
+
+    fn update(
+        &mut self,
+        _tree: &mut iced::advanced::widget::Tree,
+        event: &iced::Event,
+        _layout: iced::advanced::Layout<'_>,
+        _cursor: iced::advanced::mouse::Cursor,
+        _renderer: &iced::Renderer,
+        _clipboard: &mut dyn iced::advanced::Clipboard,
+        shell: &mut iced::advanced::Shell<'_, Message>,
+        _viewport: &iced::Rectangle,
+    ) {
+        if self.sinking {
+            return;
+        }
+        if let iced::Event::Window(iced::window::Event::RedrawRequested(now)) = event {
+            if *now >= self.sink_at {
+                shell.publish(Message::StatusTimerTick(*now));
+            } else {
+                shell.request_redraw();
+            }
+        }
+    }
+
+    fn draw(
+        &self,
+        _tree: &iced::advanced::widget::Tree,
+        renderer: &mut iced::Renderer,
+        _theme: &Theme,
+        _style: &iced::advanced::renderer::Style,
+        layout: iced::advanced::Layout<'_>,
+        _cursor: iced::advanced::mouse::Cursor,
+        _viewport: &iced::Rectangle,
+    ) {
+        use iced::advanced::Renderer as _;
+
+        let bounds = layout.bounds();
+        let elapsed = iced::time::Instant::now().saturating_duration_since(self.started);
+        let left = (1.0 - elapsed.as_secs_f32() / super::STATUS_FLASH_DURATION.as_secs_f32())
+            .clamp(0.0, 1.0);
+        renderer.fill_quad(
+            iced::advanced::renderer::Quad {
+                bounds,
+                ..Default::default()
+            },
+            theme::LINE,
+        );
+        if left > 0.0 {
+            renderer.fill_quad(
+                iced::advanced::renderer::Quad {
+                    bounds: iced::Rectangle {
+                        width: bounds.width * left,
+                        ..bounds
+                    },
+                    ..Default::default()
+                },
+                self.color,
+            );
+        }
+    }
 }
 
 /// The design's toast: a lighter shadow than popovers, and a green, gold or red border for a

@@ -44,8 +44,8 @@ const BACKGROUND_SESSION_REFRESH_INTERVAL: Duration = Duration::from_secs(30 * 6
 /// Opening the Accounts tab reloads every account's details only when they are older than this.
 const ACCOUNTS_TAB_RELOAD_AFTER: Duration = Duration::from_secs(60);
 const STATUS_FLASH_DURATION: Duration = Duration::from_secs(4);
-/// How often a hidden window checks whether its toast has expired; a visible one redraws each
-/// frame so the toast's timer bar moves smoothly.
+/// How often the app checks whether a toast has expired. The timer bar redraws itself each frame,
+/// and the app follows every frame only while the toast sinks out.
 const STATUS_FLASH_TICK_INTERVAL: Duration = Duration::from_millis(500);
 const CLIENT_VERSION_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 const MAIN_PANEL_SCROLLABLE_ID: &str = "main-panel-scrollable";
@@ -106,14 +106,11 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
 
     // While something settles in, its frames already keep `now` current.
     if status_flash_active(app) && !animating {
-        // Only a visible timer bar needs every frame.
-        subscriptions.push(
-            if !app.window_minimized && status_time_left(app).is_some() {
-                window::frames().map(Message::StatusTimerTick)
-            } else {
-                iced::time::every(STATUS_FLASH_TICK_INTERVAL).map(Message::StatusTimerTick)
-            },
-        );
+        subscriptions.push(if !app.window_minimized && status_sinking(app) {
+            window::frames().map(Message::StatusTimerTick)
+        } else {
+            iced::time::every(STATUS_FLASH_TICK_INTERVAL).map(Message::StatusTimerTick)
+        });
     }
 
     // Nobody sees the spinner while minimized, and a stuck progress status would keep it ticking.
@@ -289,6 +286,16 @@ fn status_time_left(app: &PrimeApp) -> Option<f32> {
     }
     let elapsed = app.now.saturating_duration_since(app.status_changed_at);
     Some((1.0 - elapsed.as_secs_f32() / STATUS_FLASH_DURATION.as_secs_f32()).clamp(0.0, 1.0))
+}
+
+/// When a toast that closes by itself starts sinking out, or `None` for a toast that stays.
+fn status_sink_starts_at(app: &PrimeApp) -> Option<iced::time::Instant> {
+    status_time_left(app)?;
+    Some(app.status_changed_at + STATUS_FLASH_DURATION - APPEAR_DURATION)
+}
+
+fn status_sinking(app: &PrimeApp) -> bool {
+    status_sink_starts_at(app).is_some_and(|starts_at| app.now >= starts_at)
 }
 
 fn status_flash_active(app: &PrimeApp) -> bool {
