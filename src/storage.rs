@@ -193,6 +193,10 @@ impl AccountRepository {
         }
 
         let pretty = serde_json::to_string_pretty(state)?;
+        // Most saves change nothing, and reading the file back is far cheaper than a synced write.
+        if fs::read(&self.path).is_ok_and(|saved| saved == pretty.as_bytes()) {
+            return Ok(());
+        }
         let tmp = self.path.with_extension("json.tmp");
 
         write_synced(&tmp, pretty.as_bytes())?;
@@ -296,6 +300,35 @@ mod tests {
         repo.save_snapshot(older_snapshot).expect("skip older");
 
         assert_eq!(repo.load().expect("load"), newer);
+    }
+
+    #[test]
+    fn saving_unchanged_state_leaves_the_file_alone() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("accounts.json");
+        let repo = AccountRepository::new(&path);
+        let mut state = StoredState::default();
+        state.push_account(AccountProfile::new("Main", Shard::Na).expect("account"));
+        repo.save(&state).expect("first save");
+        let written = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_modified(written))
+            .expect("age file");
+        let modified = || {
+            fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .expect("mtime")
+        };
+
+        repo.save(&state).expect("unchanged save");
+        assert_eq!(modified(), written);
+
+        state.push_account(AccountProfile::new("Alt", Shard::Na).expect("account"));
+        repo.save(&state).expect("changed save");
+        assert_ne!(modified(), written);
+        assert_eq!(repo.load().expect("load"), state);
     }
 
     #[test]
