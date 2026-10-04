@@ -114,10 +114,6 @@ fn has_settings_access(account: &AccountProfile) -> bool {
     account.has_launcher_session() || account.session.is_some()
 }
 
-fn settings_busy(app: &PrimeApp) -> bool {
-    app.settings_work_in_progress()
-}
-
 fn account(app: &PrimeApp, account_id: AccountId) -> Option<&AccountProfile> {
     app.state
         .accounts
@@ -288,7 +284,7 @@ fn preset_menu(app: &PrimeApp, profile: &GameSettingsProfileMetadata) -> Element
             Icon::Trash,
             "Delete preset",
             true,
-            (!settings_busy(app))
+            (!app.settings_work_in_progress())
                 .then(|| Message::RequestDeleteSettingsProfile(profile.id.clone())),
         ),
     ]
@@ -319,7 +315,7 @@ fn apply_panel<'a>(
     app: &'a PrimeApp,
     profile: &'a GameSettingsProfileMetadata,
 ) -> Element<'a, Message> {
-    let busy = settings_busy(app);
+    let busy = app.settings_work_in_progress();
     let head = column![
         text(format!("Apply “{}”", profile.name))
             .size(14)
@@ -487,7 +483,7 @@ fn restore_section(app: &PrimeApp) -> Option<Element<'_, Message>> {
         return None;
     }
 
-    let busy = settings_busy(app);
+    let busy = app.settings_work_in_progress();
     let mut rows = column![].width(Length::Fill);
     for original in originals {
         let account = account(app, original.source_account_id);

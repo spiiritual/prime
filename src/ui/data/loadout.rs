@@ -291,7 +291,8 @@ fn battle_pass_progress_from_responses_at(
         find_battle_pass_contract(context.contracts, context.contract_catalog, active_act)?;
     // The act's name and end time only describe the contract when it is that act's battle pass;
     // an older season's fallback contract keeps its own name and has no countdown.
-    let contract_act = active_act.filter(|act| ids_match(&definition.relation_uuid, &act.id));
+    let contract_act =
+        active_act.filter(|act| definition.relation_uuid.eq_ignore_ascii_case(&act.id));
     let progression_deltas = definition.level_xp.as_slice();
     // Epilogue tiers come after the main pass and aren't part of its total.
     let is_epilogue = |index: usize| {
@@ -366,7 +367,7 @@ fn battle_pass_paid_pass_owned(definition: &ResolvedContract, contract: &PlayerC
         .highest_rewarded_level
         .iter()
         .any(|(reward_schedule_id, level)| {
-            ids_match(reward_schedule_id, schedule_id) && level.amount > 0
+            reward_schedule_id.eq_ignore_ascii_case(schedule_id) && level.amount > 0
         })
 }
 
@@ -553,7 +554,11 @@ fn find_battle_pass_contract<'a>(
             contracts
                 .contracts
                 .iter()
-                .find(|contract| ids_match(&contract.contract_definition_id, &definition.uuid))
+                .find(|contract| {
+                    contract
+                        .contract_definition_id
+                        .eq_ignore_ascii_case(&definition.uuid)
+                })
                 .map(|contract| (definition, contract))
         })
     {
@@ -578,10 +583,6 @@ fn find_battle_pass_contract<'a>(
                 contract.contract_progression.total_progression_earned,
             )
         })
-}
-
-fn ids_match(left: &str, right: &str) -> bool {
-    left.eq_ignore_ascii_case(right)
 }
 
 fn remaining_seconds_until_utc_at(end_time: &str, now: OffsetDateTime) -> Option<i64> {

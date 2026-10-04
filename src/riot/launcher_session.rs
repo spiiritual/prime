@@ -286,16 +286,12 @@ pub fn clear_existing_launcher_data_dirs() -> Result<usize, LauncherSessionError
 
     for data_dir in default_data_dirs() {
         if data_dir.exists() {
-            clear_launcher_data_dir(&data_dir)?;
+            clear_dir(&data_dir)?;
             cleared += 1;
         }
     }
 
     Ok(cleared)
-}
-
-pub fn clear_launcher_data_dir(data_dir: impl AsRef<Path>) -> Result<(), LauncherSessionError> {
-    clear_dir(data_dir.as_ref())
 }
 
 pub fn default_data_dirs() -> Vec<PathBuf> {
@@ -567,7 +563,7 @@ rso-authenticator:
         fs::create_dir(data_dir.path().join("nested")).expect("nested dir");
         fs::write(data_dir.path().join("nested").join("old.txt"), "old").expect("nested file");
 
-        clear_launcher_data_dir(data_dir.path()).expect("clear");
+        clear_dir(data_dir.path()).expect("clear");
 
         assert!(data_dir.path().exists());
         assert_eq!(fs::read_dir(data_dir.path()).expect("read dir").count(), 0);
