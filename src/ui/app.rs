@@ -1206,9 +1206,14 @@ impl PrimeApp {
                 if self.window_minimized && !minimized {
                     return self.window_shown();
                 }
+                let just_minimized = minimized && !self.window_minimized;
                 self.window_minimized = minimized;
 
-                Task::none()
+                if just_minimized {
+                    trim_memory()
+                } else {
+                    Task::none()
+                }
             }
             Message::CloseRequested(id) => {
                 if !self.state.minimize_on_close {
@@ -1220,7 +1225,7 @@ impl PrimeApp {
                     Ok(()) => {
                         // Hiding sends no resize, so nothing else marks the window as out of sight.
                         self.window_minimized = true;
-                        window::set_mode(id, window::Mode::Hidden)
+                        window::set_mode(id, window::Mode::Hidden).chain(trim_memory())
                     }
                     Err(error) => {
                         self.set_status(Status::error(format!(
@@ -3871,6 +3876,18 @@ fn cache_rank_icons_task(image_cache: &ImageCache) -> Task<Message> {
 
 fn check_capture_prompt_game_task() -> Task<Message> {
     Task::perform(valorant_is_running(), Message::CapturePromptGameChecked)
+}
+
+/// Lets Windows page out what the window no longer touches once it is out of sight, mostly GPU
+/// driver memory. Nothing stops: the background poll pages back in only what it uses.
+fn trim_memory() -> Task<Message> {
+    Task::future(async {
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, SetProcessWorkingSetSize};
+        // SAFETY: the current-process pseudo handle is always valid; usize::MAX for both sizes
+        // asks Windows to trim the working set, and a failure only leaves memory as it was.
+        unsafe { SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX) };
+    })
+    .discard()
 }
 
 fn alert_and_focus_latest_window() -> Task<Message> {

@@ -4276,9 +4276,13 @@ fn availability_polling_resumes_when_the_window_is_restored() {
         .push_account(AccountProfile::new("Main", Shard::Na).expect("account"));
     app.client_version_input = "release-1".to_string();
 
-    let _ = app.update(Message::WindowResized(iced::Size::new(0.0, 0.0)));
+    // Minimizing trims memory once; a repeat zero-size resize doesn't trim again.
+    let task = app.update(Message::WindowResized(iced::Size::new(0.0, 0.0)));
+    assert_eq!(task.units(), 1);
     assert!(app.window_minimized);
     assert!(!app.account_availability_loading);
+    let task = app.update(Message::WindowResized(iced::Size::new(0.0, 0.0)));
+    assert_eq!(task.units(), 0);
 
     let _ = app.update(Message::WindowResized(iced::Size::new(900.0, 600.0)));
     assert!(!app.window_minimized);
