@@ -38,6 +38,17 @@ impl ValorantContentApi {
         Ok(Self { client })
     }
 
+    /// One client for the whole app, so catalog requests reuse connections instead of each
+    /// opening its own. `reqwest::Client` is reference-counted, so each clone shares the pool.
+    pub fn shared() -> Result<Self, String> {
+        static SHARED: std::sync::LazyLock<Result<ValorantContentApi, String>> =
+            std::sync::LazyLock::new(|| {
+                ValorantContentApi::new().map_err(|error| error.to_string())
+            });
+
+        SHARED.clone()
+    }
+
     /// Weapons and their skins. `/v1/weapons` already embeds every skin, so this avoids a second
     /// multi-megabyte download of `/v1/weapons/skins`.
     pub async fn weapon_content(&self) -> Result<WeaponContent, ContentError> {

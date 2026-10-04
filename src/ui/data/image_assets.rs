@@ -21,7 +21,7 @@ pub(in crate::ui) struct StoreMetadata {
 }
 
 pub(in crate::ui) async fn fetch_store_metadata() -> Result<StoreMetadata, String> {
-    let api = ValorantContentApi::new().map_err(|error| error.to_string())?;
+    let api = ValorantContentApi::shared()?;
     let (weapon_content, bundles, currencies, accessories) = try_join4(
         WEAPON_CONTENT.get_or_fetch(|| api.weapon_content()),
         BUNDLE_CATALOG.get_or_fetch(|| api.bundle_catalog()),
@@ -52,13 +52,13 @@ static MATCH_CATALOG: CachedCatalog<MatchCatalog> = CachedCatalog::new();
 
 /// Map, queue and agent names for a live match.
 pub(in crate::ui) async fn fetch_match_catalog() -> Result<Arc<MatchCatalog>, String> {
-    let api = ValorantContentApi::new().map_err(|error| error.to_string())?;
+    let api = ValorantContentApi::shared()?;
     MATCH_CATALOG.get_or_fetch(|| api.match_catalog()).await
 }
 
 /// Weapons and skins, for the skins players have equipped in a live match.
 pub(in crate::ui) async fn fetch_weapon_content() -> Result<Arc<WeaponContent>, String> {
-    let api = ValorantContentApi::new().map_err(|error| error.to_string())?;
+    let api = ValorantContentApi::shared()?;
     WEAPON_CONTENT.get_or_fetch(|| api.weapon_content()).await
 }
 
@@ -264,10 +264,9 @@ pub(in crate::ui) struct LoadoutCatalogs {
 }
 
 pub(in crate::ui) async fn fetch_loadout_metadata() -> LoadoutCatalogs {
-    let api = match ValorantContentApi::new() {
+    let api = match ValorantContentApi::shared() {
         Ok(api) => api,
         Err(error) => {
-            let error = error.to_string();
             return LoadoutCatalogs {
                 weapon_content: Err(error.clone()),
                 battle_pass: Err(error),
@@ -300,8 +299,7 @@ pub(in crate::ui) async fn fetch_loadout_metadata() -> LoadoutCatalogs {
 pub(in crate::ui) async fn cache_rank_icons(
     image_cache: ImageCache,
 ) -> Result<HashMap<i64, PathBuf>, String> {
-    let urls = ValorantContentApi::new()
-        .map_err(|error| error.to_string())?
+    let urls = ValorantContentApi::shared()?
         .rank_icon_urls()
         .await
         .map_err(|error| error.to_string())?;
@@ -375,8 +373,7 @@ fn blurred_copy(path: &std::path::Path) -> Option<PathBuf> {
 }
 
 pub(in crate::ui) async fn fetch_current_client_version() -> Result<String, String> {
-    ValorantContentApi::new()
-        .map_err(|error| error.to_string())?
+    ValorantContentApi::shared()?
         .client_version()
         .await
         .map_err(|error| error.to_string())

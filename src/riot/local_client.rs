@@ -100,16 +100,21 @@ async fn local_request(
 ) -> Result<String, String> {
     let failed = |error: reqwest::Error| crate::http_error::format_reqwest_error(&error);
     // The Riot Client serves its local API with a self-signed certificate, and this client only
-    // ever talks to 127.0.0.1.
-    let client = reqwest::Client::builder()
-        .timeout(LOCAL_TIMEOUT)
-        .tls_danger_accept_invalid_certs(true)
-        // Certificates aren't checked, so the password must only ever reach this PC.
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(failed)?;
-    request(&client, &format!("https://127.0.0.1:{}", auth.port))
+    // ever talks to 127.0.0.1. One client for every request, so Live Match polls reuse the
+    // connection.
+    static CLIENT: std::sync::LazyLock<Result<reqwest::Client, String>> =
+        std::sync::LazyLock::new(|| {
+            reqwest::Client::builder()
+                .timeout(LOCAL_TIMEOUT)
+                .tls_danger_accept_invalid_certs(true)
+                // Certificates aren't checked, so the password must only ever reach this PC.
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|error| crate::http_error::format_reqwest_error(&error))
+        });
+    let client = CLIENT.as_ref().map_err(Clone::clone)?;
+    request(client, &format!("https://127.0.0.1:{}", auth.port))
         .basic_auth("riot", Some(&auth.password))
         .send()
         .await
