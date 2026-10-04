@@ -535,7 +535,7 @@ impl AccountProfile {
     }
 }
 
-fn non_empty_string(value: String) -> Option<String> {
+pub(crate) fn non_empty_string(value: String) -> Option<String> {
     let trimmed = value.trim();
 
     if trimmed.is_empty() {

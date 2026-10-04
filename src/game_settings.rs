@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 use std::fmt;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -205,7 +205,7 @@ impl GameSettingsProfileRepository {
         let tmp = path.with_extension("json.tmp");
         let contents = serde_json::to_vec_pretty(profile)?;
 
-        write_synced(&tmp, &contents)?;
+        crate::storage::write_synced(&tmp, &contents)?;
         fs::rename(&tmp, &path)?;
 
         Ok(path)
@@ -408,12 +408,6 @@ fn safe_profile_id(value: &str) -> String {
             _ => '_',
         })
         .collect()
-}
-
-fn write_synced(path: &Path, contents: &[u8]) -> io::Result<()> {
-    let mut file = fs::File::create(path)?;
-    file.write_all(contents)?;
-    file.sync_all()
 }
 
 #[derive(Debug, Error)]

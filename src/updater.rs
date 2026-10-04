@@ -1,6 +1,8 @@
 use std::env;
 
 use thiserror::Error;
+
+use crate::account::non_empty_string;
 use velopack::sources::AutoSource;
 use velopack::{UpdateCheck, UpdateInfo, UpdateManager, UpdateOptions};
 
@@ -90,7 +92,7 @@ fn update_channel() -> Option<String> {
 fn available_update_from_info(current_version: String, update: Box<UpdateInfo>) -> AvailableUpdate {
     let target = &update.TargetFullRelease;
     let latest_version = target.Version.clone();
-    let changelog = trimmed_text(&target.NotesMarkdown);
+    let changelog = non_empty_string(target.NotesMarkdown.clone());
 
     AvailableUpdate {
         current_version,
@@ -98,12 +100,6 @@ fn available_update_from_info(current_version: String, update: Box<UpdateInfo>) 
         changelog,
         update,
     }
-}
-
-fn trimmed_text(value: &str) -> Option<String> {
-    let value = value.trim();
-
-    (!value.is_empty()).then(|| value.to_string())
 }
 
 #[derive(Debug, Error)]

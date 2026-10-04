@@ -220,7 +220,7 @@ impl AccountRepository {
     }
 }
 
-fn write_synced(path: &Path, contents: &[u8]) -> io::Result<()> {
+pub(crate) fn write_synced(path: &Path, contents: &[u8]) -> io::Result<()> {
     let mut file = fs::File::create(path)?;
     file.write_all(contents)?;
     file.sync_all()

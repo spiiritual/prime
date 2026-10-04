@@ -7,7 +7,7 @@ use time::OffsetDateTime;
 
 use crate::account::{AccountId, LauncherSessionBackup};
 
-const PRIVATE_SETTINGS_FILE: &str = "RiotGamesPrivateSettings.yaml";
+pub(crate) const PRIVATE_SETTINGS_FILE: &str = "RiotGamesPrivateSettings.yaml";
 
 mod backup_files;
 mod private_settings;

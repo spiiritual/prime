@@ -10,11 +10,10 @@ use thiserror::Error;
 
 use crate::account::{AccountId, AccountProfile, AccountSessionError, LauncherSessionBackup};
 use crate::riot::launcher_session::{
-    private_settings_refresh_token, private_settings_signed_in_puuid,
+    PRIVATE_SETTINGS_FILE, private_settings_refresh_token, private_settings_signed_in_puuid,
 };
 
 const EXPORT_VERSION: u32 = 1;
-const PRIVATE_SETTINGS_FILE: &str = "RiotGamesPrivateSettings.yaml";
 const MAX_ENCODED_EXPORT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_LAUNCHER_FILE_COUNT: usize = 1024;
 const MAX_LAUNCHER_FILE_BYTES: usize = 64 * 1024 * 1024;
@@ -528,7 +527,6 @@ mod tests {
 
     use super::*;
 
-    const PRIVATE_SETTINGS_FILE: &str = "RiotGamesPrivateSettings.yaml";
     const REMEMBERED_SETTINGS: &str =
         "psl:\n    authorization:\n        riot-client:\n            refresh_token: \"refresh\"\n";
 

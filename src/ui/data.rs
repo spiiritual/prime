@@ -6,7 +6,7 @@ use time::format_description::well_known::Rfc3339;
 
 use crate::account::{
     AccountId, AccountPenalty, AccountPenaltyDuration, AccountPenaltyStatus, AccountProfile,
-    AuthSession, CompetitiveRank, LauncherSessionBackup, Shard, ValorantRegion,
+    AuthSession, CompetitiveRank, LauncherSessionBackup, Shard, ValorantRegion, non_empty_string,
 };
 use crate::image_cache::ImageCache;
 use crate::launch::{
@@ -44,16 +44,6 @@ pub(super) mod live_match;
 pub(super) mod loadout;
 pub(super) mod session;
 pub(super) mod shop;
-
-fn non_empty_string(value: String) -> Option<String> {
-    let trimmed = value.trim();
-
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
 
 pub(super) fn non_empty_path(input: &str) -> Option<PathBuf> {
     let trimmed = input.trim();
