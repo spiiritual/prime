@@ -68,13 +68,17 @@ impl ImageCache {
         Ok(())
     }
 
+    /// The image at `url`, downloaded into the cache once. With `max_side`, a larger image is
+    /// scaled down to fit within that many pixels, since iced keeps every image it shows at full
+    /// size in memory and on the GPU.
     pub async fn cache_url(
         &self,
         namespace: &str,
         id: &str,
         url: &str,
+        max_side: Option<u32>,
     ) -> Result<PathBuf, ImageCacheError> {
-        let path = self.asset_path(namespace, id, url);
+        let path = self.asset_path(namespace, id, url, max_side);
 
         if path.exists() {
             // Only delays expiry, so a failure doesn't matter.
@@ -97,16 +101,21 @@ impl ImageCache {
             .error_for_status()?
             .bytes()
             .await?;
-        write_cache_file(&path, &bytes)?;
+        let fitted = max_side.and_then(|max_side| fit_within(&bytes, max_side));
+        write_cache_file(&path, fitted.as_deref().unwrap_or(&bytes))?;
 
         Ok(path)
     }
 
-    fn asset_path(&self, namespace: &str, id: &str, url: &str) -> PathBuf {
+    fn asset_path(&self, namespace: &str, id: &str, url: &str, max_side: Option<u32>) -> PathBuf {
+        // A scaled copy gets its own name, so a full-size one cached before isn't mistaken for it.
+        let size = max_side
+            .map(|max_side| format!("-{max_side}"))
+            .unwrap_or_default();
         self.root
             .join(sanitize_path_component(namespace))
             .join(format!(
-                "{}-{:016x}.{}",
+                "{}-{:016x}{size}.{}",
                 sanitize_path_component(id),
                 url_fingerprint(url),
                 image_extension(url)
@@ -196,6 +205,21 @@ fn image_extension(raw_url: &str) -> String {
         .unwrap_or_else(|| "png".to_string())
 }
 
+/// The image in `bytes` scaled down to fit within `max_side` pixels, as a PNG, or `None` when it
+/// already fits or isn't a PNG.
+fn fit_within(bytes: &[u8], max_side: u32) -> Option<Vec<u8>> {
+    let image = image::load_from_memory(bytes).ok()?;
+    if image.width() <= max_side && image.height() <= max_side {
+        return None;
+    }
+    let mut png = io::Cursor::new(Vec::new());
+    image
+        .resize(max_side, max_side, image::imageops::FilterType::Lanczos3)
+        .write_to(&mut png, image::ImageFormat::Png)
+        .ok()?;
+    Some(png.into_inner())
+}
+
 fn url_fingerprint(value: &str) -> u64 {
     const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -251,6 +275,28 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn a_large_image_is_scaled_to_fit_and_a_small_one_is_left_alone() {
+        let png = |width, height| {
+            let mut bytes = io::Cursor::new(Vec::new());
+            image::RgbaImage::new(width, height)
+                .write_to(&mut bytes, image::ImageFormat::Png)
+                .expect("encode");
+            bytes.into_inner()
+        };
+
+        let fitted = fit_within(&png(512, 300), 256).expect("scaled");
+
+        assert_eq!(
+            image::load_from_memory(&fitted)
+                .expect("decode")
+                .into_rgba8()
+                .dimensions(),
+            (256, 150)
+        );
+        assert_eq!(fit_within(&png(200, 100), 256), None);
+    }
 
     #[test]
     fn cache_file_write_leaves_only_the_finished_image() {
@@ -319,7 +365,12 @@ mod tests {
     #[test]
     fn asset_path_uses_stable_safe_names() {
         let cache = ImageCache::new("cache");
-        let path = cache.asset_path("skins", "abc/123", "https://example.com/render.PNG?x=1");
+        let path = cache.asset_path(
+            "skins",
+            "abc/123",
+            "https://example.com/render.PNG?x=1",
+            None,
+        );
 
         assert_eq!(
             path.parent(),
@@ -341,8 +392,18 @@ mod tests {
         let cache = ImageCache::new("cache");
 
         assert_ne!(
-            cache.asset_path("skins", "skin-id", "https://example.com/displayicon.png"),
-            cache.asset_path("skins", "skin-id", "https://example.com/fullrender.png")
+            cache.asset_path(
+                "skins",
+                "skin-id",
+                "https://example.com/displayicon.png",
+                None
+            ),
+            cache.asset_path(
+                "skins",
+                "skin-id",
+                "https://example.com/fullrender.png",
+                None
+            )
         );
     }
 }

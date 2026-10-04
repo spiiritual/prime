@@ -188,13 +188,29 @@ async fn download_icons(downloads: Vec<IconDownload<'_>>) {
         .await;
 }
 
+/// Accessory and battle pass art is 512px square but shows at 150px or less, so it's kept at
+/// twice that at most, which still looks sharp at 200% display scaling.
+const SMALL_ART_MAX_SIDE: u32 = 256;
+
 async fn cached_icon(
     image_cache: &ImageCache,
     namespace: &str,
     id: &str,
     url: Option<&String>,
 ) -> Option<PathBuf> {
-    image_cache.cache_url(namespace, id, url?).await.ok()
+    image_cache.cache_url(namespace, id, url?, None).await.ok()
+}
+
+async fn cached_small_art(
+    image_cache: &ImageCache,
+    namespace: &str,
+    id: &str,
+    url: Option<&String>,
+) -> Option<PathBuf> {
+    image_cache
+        .cache_url(namespace, id, url?, Some(SMALL_ART_MAX_SIDE))
+        .await
+        .ok()
 }
 
 pub(in crate::ui) async fn cache_skin_icon(skin: &mut SkinDisplay, image_cache: &ImageCache) {
@@ -225,7 +241,7 @@ pub(in crate::ui) async fn cache_accessory_icon(
     accessory: &mut AccessoryDisplay,
     image_cache: &ImageCache,
 ) {
-    accessory.cached_icon = cached_icon(
+    accessory.cached_icon = cached_small_art(
         image_cache,
         "accessories",
         &accessory.uuid,
@@ -248,7 +264,7 @@ pub(in crate::ui) async fn cache_battle_pass_reward_icon(
     reward: &mut BattlePassRewardDisplay,
     image_cache: &ImageCache,
 ) {
-    reward.cached_icon = cached_icon(
+    reward.cached_icon = cached_small_art(
         image_cache,
         "battle-pass",
         &reward.uuid,
