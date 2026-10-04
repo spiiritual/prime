@@ -242,12 +242,17 @@ fn match_bar(live: &LiveMatch) -> Element<'_, Message> {
 
     let mut layers = Stack::new().width(Length::Fill).height(MATCH_BAR_HEIGHT);
     if let Some(path) = &live.map_art {
+        // Inset by the border's width, so the art's rounded edge sits under the border instead of
+        // showing through its curve at the corners.
         layers = layers.push(
-            image(Handle::from_path(path.clone()))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .content_fit(ContentFit::Cover)
-                .border_radius(12),
+            container(
+                image(Handle::from_path(path.clone()))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .content_fit(ContentFit::Cover)
+                    .border_radius(11),
+            )
+            .padding(1),
         );
     }
     let shade = |alpha: u8| Color {
