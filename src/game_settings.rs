@@ -345,9 +345,8 @@ fn decode_base64_deflate_settings_payload(
     let mut decoder = DeflateDecoder::new(compressed.as_slice());
     let mut json = String::new();
     decoder.read_to_string(&mut json)?;
-    let value: Value = serde_json::from_str(&json).map_err(GameSettingsError::SettingsJson)?;
 
-    serde_json::from_value(value).map_err(GameSettingsError::SettingsJson)
+    serde_json::from_str(&json).map_err(GameSettingsError::SettingsJson)
 }
 
 fn encode_settings_payload(payload: &ValorantSettingsPayload) -> Result<String, GameSettingsError> {
@@ -364,31 +363,19 @@ fn replace_settings_payload(
     payload: &ValorantSettingsPayload,
 ) -> Result<(), GameSettingsError> {
     let encoded = serde_json::to_value(payload).map_err(GameSettingsError::SettingsJson)?;
+    let key = match raw {
+        Value::Object(map) => ["data", "Data"]
+            .into_iter()
+            .find(|key| map.contains_key(*key)),
+        _ => None,
+    };
 
-    match raw {
-        Value::Object(map) if map.get("data").is_some() => {
-            if map.get("data").is_some_and(Value::is_string) {
-                map.insert(
-                    "data".to_string(),
-                    Value::String(encode_settings_payload(payload)?),
-                );
-            } else {
-                map.insert("data".to_string(), encoded);
-            }
+    match key {
+        Some(key) if raw[key].is_string() => {
+            raw[key] = Value::String(encode_settings_payload(payload)?);
         }
-        Value::Object(map) if map.get("Data").is_some() => {
-            if map.get("Data").is_some_and(Value::is_string) {
-                map.insert(
-                    "Data".to_string(),
-                    Value::String(encode_settings_payload(payload)?),
-                );
-            } else {
-                map.insert("Data".to_string(), encoded);
-            }
-        }
-        _ => {
-            *raw = encoded;
-        }
+        Some(key) => raw[key] = encoded,
+        None => *raw = encoded,
     }
 
     Ok(())
