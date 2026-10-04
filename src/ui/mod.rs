@@ -73,10 +73,20 @@ pub fn run() -> iced::Result {
             max_size: Some(Size::new(1280.0, 840.0)),
             resizable: false,
             exit_on_close_request: false,
-            icon: window::icon::from_file_data(include_bytes!("../../assets/icon.png"), None).ok(),
+            icon: window_icon(),
             ..window::Settings::default()
         })
         .run()
+}
+
+/// Decoded here because iced's own loader needs its `image` feature, which builds every image
+/// format, and Prime only shows PNGs.
+fn window_icon() -> Option<window::Icon> {
+    let icon = ::image::load_from_memory(include_bytes!("../../assets/icon.png"))
+        .ok()?
+        .into_rgba8();
+    let (width, height) = icon.dimensions();
+    window::icon::from_rgba(icon.into_raw(), width, height).ok()
 }
 
 fn app_title(_: &PrimeApp) -> String {

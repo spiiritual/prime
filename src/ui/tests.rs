@@ -6274,9 +6274,7 @@ fn escape_cancels_a_login_capture_only_once_it_is_waiting() {
 
 #[test]
 fn window_icon_decodes() {
-    assert!(
-        iced::window::icon::from_file_data(include_bytes!("../../assets/icon.png"), None).is_ok()
-    );
+    assert!(super::window_icon().is_some());
 }
 
 fn live_match_app(dir: &Path) -> (PrimeApp, AccountProfile, AccountProfile) {
