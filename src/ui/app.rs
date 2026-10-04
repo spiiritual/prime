@@ -133,6 +133,7 @@ impl PrimeApp {
                 window_minimized: false,
                 status_changed_at: iced::time::Instant::now(),
                 toast_appeared_at: iced::time::Instant::now(),
+                dialog_closed_at: None,
                 app_update_status: AppUpdateStatus::Checking,
                 image_cache_usage: CacheUsage::default(),
                 image_cache_clearing: false,
@@ -176,10 +177,13 @@ impl PrimeApp {
             self.close_popovers();
         }
 
-        // A dialog that opens, or replaces another, starts its entrance.
+        // A dialog that opens, or replaces another, starts its entrance; one that closes leaves
+        // its backdrop to fade out.
         let dialog = self.open_dialog();
         if dialog != self.dialog_opened.map(|(open, _)| open) {
-            self.dialog_opened = dialog.map(|dialog| (dialog, iced::time::Instant::now()));
+            let now = iced::time::Instant::now();
+            self.dialog_closed_at = dialog.is_none().then_some(now);
+            self.dialog_opened = dialog.map(|dialog| (dialog, now));
         }
 
         task

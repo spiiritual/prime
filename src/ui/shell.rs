@@ -117,6 +117,9 @@ impl PrimeApp {
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+        } else if let Some(strength) = super::closing_scrim(self) {
+            // A closed dialog's backdrop fades out; it no longer holds back clicks.
+            stack![content, scrim(strength)].into()
         } else {
             content.into()
         };
@@ -128,7 +131,7 @@ impl PrimeApp {
                 // Bottom right, lined up with the right edge of the page content.
                 container(appear(
                     self.status_toast(),
-                    appear_progress(self.toast_appeared_at, self.now),
+                    super::toast_progress(self),
                     TOAST_RISE
                 ))
                 .padding(Padding {
@@ -940,18 +943,23 @@ fn dialog<'a>(
 
 /// The dark layer behind a dialog, fading in with it. It keeps clicks from the page under it.
 fn backdrop(progress: f32, on_press: Option<Message>) -> Element<'static, Message> {
-    let scrim = Color {
-        a: DIALOG_SCRIM.a * progress,
-        ..DIALOG_SCRIM
-    };
-    let layer = container(space())
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(move |_| filled(scrim));
+    let layer = scrim(progress);
     match on_press {
         Some(message) => opaque(iced::widget::mouse_area(layer).on_press(message)),
         None => opaque(layer),
     }
+}
+
+/// The dialog backdrop's dark layer at `strength`, from 0 to 1.
+fn scrim(strength: f32) -> iced::widget::Container<'static, Message> {
+    let color = Color {
+        a: DIALOG_SCRIM.a * strength,
+        ..DIALOG_SCRIM
+    };
+    container(space())
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(move |_| filled(color))
 }
 
 /// Rises `rise` pixels into place as `progress` reaches 1. It moves in whole pixels, since text

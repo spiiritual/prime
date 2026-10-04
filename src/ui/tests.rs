@@ -6114,6 +6114,46 @@ fn an_entrance_eases_out_over_its_duration() {
 }
 
 #[test]
+fn a_closing_dialog_fades_its_backdrop_out() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let _ = app.update(Message::OpenImportAccount);
+    assert_eq!(super::closing_scrim(&app), None);
+
+    let _ = app.update(Message::CancelImportAccount);
+    let closed = app.dialog_closed_at.expect("closing");
+    assert!(super::appearing(&app));
+
+    app.now = closed + super::APPEAR_DURATION / 2;
+    let scrim = super::closing_scrim(&app).expect("still fading");
+    assert!(scrim > 0.0 && scrim < 1.0, "{scrim}");
+
+    app.now = closed + super::APPEAR_DURATION;
+    assert_eq!(super::closing_scrim(&app), None);
+    assert!(!super::appearing(&app));
+
+    // Opening another dialog ends the fade at once.
+    app.now = closed;
+    let _ = app.update(Message::OpenImportAccount);
+    assert_eq!(super::closing_scrim(&app), None);
+}
+
+#[test]
+fn a_toast_that_closes_by_itself_sinks_out_at_the_end() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let _ = app.update(Message::SaveSettings);
+    assert!(status_time_left(&app).is_some(), "{}", app.status.text);
+
+    app.now = app.status_changed_at + Duration::from_secs(1);
+    assert_eq!(super::toast_progress(&app), 1.0);
+
+    app.now = app.status_changed_at + super::STATUS_FLASH_DURATION - super::APPEAR_DURATION / 2;
+    let leaving = super::toast_progress(&app);
+    assert!(leaving > 0.0 && leaving < 1.0, "{leaving}");
+}
+
+#[test]
 fn escape_closes_an_open_account_menu() {
     let dir = tempdir().expect("temp dir");
     let (mut app, main, _) = two_account_app(dir.path());
