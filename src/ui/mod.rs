@@ -54,11 +54,6 @@ fn image_viewer_enabled() -> bool {
     cfg!(feature = "image-viewer-testing")
 }
 
-/// Saving VALORANT settings from one account and applying them to another.
-fn settings_cloning_enabled() -> bool {
-    cfg!(feature = "settings-cloning")
-}
-
 pub fn run() -> iced::Result {
     let application = theme::FONTS.into_iter().fold(
         iced::application(PrimeApp::boot, PrimeApp::update, PrimeApp::view),
@@ -359,8 +354,8 @@ struct PrimeApp {
     /// Whether a Live Match load is signing in, even one an account switch left behind.
     live_match_in_flight: bool,
     live_match_error: Option<LiveMatchError>,
-    /// Whether players who hide their name in game stay hidden. On at every start.
-    respect_streamer_mode: bool,
+    /// Whether Live Match shows the names and levels players hide. Off at every start.
+    show_hidden_details: bool,
     next_request_id: u64,
     /// Accounts whose Riot profile refresh is running.
     profile_identity_refreshing: HashSet<AccountId>,
@@ -379,8 +374,6 @@ struct PrimeApp {
     /// When each account's entry in `account_availability` arrived, so Apply and Restore only
     /// trust recent results.
     account_availability_checked_at: HashMap<AccountId, iced::time::Instant>,
-    /// Whether settings cloning is available; set from the `settings-cloning` feature.
-    settings_cloning: bool,
     /// Whether a newly added account's VALORANT settings are saved as a settings profile.
     save_settings_on_add: bool,
     settings_profiles: Vec<GameSettingsProfileMetadata>,
@@ -414,6 +407,8 @@ struct PrimeApp {
     status_changed_at: iced::time::Instant,
     /// When the toast last appeared. A toast already on screen changes text without rising again.
     toast_appeared_at: iced::time::Instant,
+    /// When the last dialog closed, while its backdrop fades out.
+    dialog_closed_at: Option<iced::time::Instant>,
     app_update_status: AppUpdateStatus,
     image_cache_usage: CacheUsage,
     image_cache_clearing: bool,
@@ -727,16 +722,35 @@ const APPEAR_DURATION: Duration = Duration::from_millis(180);
 
 /// How far an appearance that started at `since` has got, from 0 to 1, easing out.
 fn appear_progress(since: iced::time::Instant, now: iced::time::Instant) -> f32 {
-    let t = (now.saturating_duration_since(since).as_secs_f32() / APPEAR_DURATION.as_secs_f32())
-        .clamp(0.0, 1.0);
-    1.0 - (1.0 - t).powi(3)
+    ease_out(now.saturating_duration_since(since).as_secs_f32() / APPEAR_DURATION.as_secs_f32())
 }
 
-/// Whether a dialog or toast is still settling in, so frames keep coming.
+fn ease_out(t: f32) -> f32 {
+    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
+}
+
+/// How strong a closed dialog's backdrop still is as it fades out, from 1 down to 0, or `None`
+/// once it has gone or while a dialog is open.
+fn closing_scrim(app: &PrimeApp) -> Option<f32> {
+    let left = 1.0 - appear_progress(app.dialog_closed_at?, app.now);
+    (left > 0.0).then_some(left)
+}
+
+/// How far the toast is into place: it rises in, and a toast that closes by itself sinks back out
+/// as its time runs out.
+fn toast_progress(app: &PrimeApp) -> f32 {
+    let leaving = status_time_left(app).map_or(1.0, |left| {
+        ease_out(left * STATUS_FLASH_DURATION.as_secs_f32() / APPEAR_DURATION.as_secs_f32())
+    });
+    appear_progress(app.toast_appeared_at, app.now).min(leaving)
+}
+
+/// Whether a dialog or toast is still settling in or a backdrop fading out, so frames keep coming.
 fn appearing(app: &PrimeApp) -> bool {
     let settling =
         |since: iced::time::Instant| app.now.saturating_duration_since(since) < APPEAR_DURATION;
     app.dialog_opened.is_some_and(|(_, since)| settling(since))
+        || closing_scrim(app).is_some()
         || (status_bar_visible(app) && settling(app.toast_appeared_at))
 }
 
@@ -828,7 +842,7 @@ impl std::fmt::Display for SettingsSection {
     }
 }
 
-/// The Accounts tab's sub-tabs; Game settings only shows with settings cloning.
+/// The Accounts tab's sub-tabs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AccountsTab {
     Accounts,
@@ -1007,7 +1021,7 @@ enum Message {
     /// The reply to the Live Match load with this request ID.
     LiveMatchLoaded(u64, Result<LiveMatchResult, LiveMatchError>),
     RetryLiveMatch,
-    StreamerModeToggled,
+    HiddenDetailsToggled,
     OpenImageViewer(ImageViewerRequest),
     ImageViewerImageLoaded(ImageViewerSource, Result<PathBuf, String>),
     CloseImageViewer,

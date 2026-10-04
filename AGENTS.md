@@ -9,7 +9,6 @@ package and the app are both named `prime`.
 cargo run                                  # run the app
 cargo test                                 # run the tests
 cargo clippy --all-targets                 # lint; keep it clean
-cargo run --features settings-cloning      # include settings cloning
 .\scripts\release.ps1 -UseGeneratedNotes -Publish   # bump, test, package with Velopack, tag, publish
 ```
 
@@ -28,6 +27,9 @@ Accounts tab:
 - Shows each account's rank, level and penalties, and refreshes its PUUID, Riot ID and shard on request.
 - Exports and imports an account, with its captured login, as text. Exports are copied to the clipboard
   without entering Windows clipboard history.
+- Settings profiles sub-tab: save an account's VALORANT settings as a named preset, apply a preset to
+  any account and restore that account's own settings afterwards. Adding an account can also save its
+  settings as a preset.
 
 Shop tab: featured bundles (each with its own countdown), daily offers, Night Market and accessories, with
 art, rarity colours and discounts. The wallet balance shows in the header.
@@ -41,24 +43,29 @@ shows the map, mode, round, server and both teams with names, agents, levels, ra
 of the 4 weapons picked per column in Settings (Vandal, Phantom, Sheriff and Operator by default).
 It polls on the one-minute availability timer only while open and the window is visible, and
 each poll is also the account's availability check. Players who
-hide their name in game stay hidden until "Respect streamer mode" is turned off (on at every
-start); the user's own saved accounts are never hidden.
+hide their name in game show as hidden, since Riot's name service returns no name for them while
+the match runs; the user's own saved accounts are never hidden and fall back to their saved Riot ID.
+A "Show hidden details" switch beside the page title (off at every start) shows the levels players
+hide (`HideAccountLevel`) and the names of players in streamer mode (`Incognito`). The names come
+from the Riot Client running on this PC, signed in as any account; they're looked up right away and
+on each poll, and without the Riot Client they show as unavailable, with the reason on hover.
 
 Settings tab: Riot Client path, "keep in the system tray when closed" (on by default; while minimized or in the tray it
 polls every 30 minutes so sessions keep refreshing; the tray menu quits), Live Match's skin columns, client version
 (fetched at startup), image cache size and clearing, app updates, and a Riot redirect-token import as an
 advanced fallback for API access.
 
+One instance: starting Prime while it runs, even from the tray, brings the running window forward
+and the new start exits (`single_instance.rs`). Debug builds use their own name, so `cargo run`
+works beside an installed Prime.
+
 Updates: Velopack checks the GitHub releases of `spiiritual/prime`. `PRIME_UPDATE_SOURCE` and
 `PRIME_UPDATE_CHANNEL` override the source and channel.
 
 ## Feature flags
 
-Both are off by default, so release builds leave them out.
+Off by default, so release builds leave it out.
 
-- `settings-cloning`: save an account's VALORANT settings as a named preset, apply a preset to any account
-  and restore that account's own settings afterwards, from a Game settings sub-tab of Accounts. Adding an
-  account can also save its settings as a preset.
 - `image-viewer-testing`: click an image to open it full size.
 
 ## Code layout
@@ -119,6 +126,10 @@ Settings left at their default aren't written, which keeps that rare.
   presence (`https://127.0.0.1:{port}/chat/v4/presences`, port and password from its lockfile,
   read per request and never saved). Without it the page says the score is unavailable.
 - The server label is the city in the match's `GamePodID`, such as "Ashburn".
+- During a match the name service returns blank names for players with `Incognito` (streamer
+  mode; `HideAccountLevel` is a separate setting). The local Riot Client's
+  `POST /player-account/lookup/v2/namesets-for-puuids` (`{"puuids": [...]}`, v1 is gone) ignores
+  streamer mode, so with "Show hidden details" on Live Match names them from it.
 
 ## Tests
 

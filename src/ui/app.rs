@@ -99,7 +99,7 @@ impl PrimeApp {
                 live_match_request: None,
                 live_match_in_flight: false,
                 live_match_error: None,
-                respect_streamer_mode: true,
+                show_hidden_details: false,
                 next_request_id: 0,
                 profile_identity_refreshing: Default::default(),
                 account_ranks_loading: Default::default(),
@@ -110,7 +110,6 @@ impl PrimeApp {
                 account_availability_loading: false,
                 account_availability_loaded_at: None,
                 account_availability_checked_at: Default::default(),
-                settings_cloning: super::settings_cloning_enabled(),
                 save_settings_on_add: false,
                 settings_profiles: Vec::new(),
                 expanded_presets: std::collections::HashSet::new(),
@@ -134,6 +133,7 @@ impl PrimeApp {
                 window_minimized: false,
                 status_changed_at: iced::time::Instant::now(),
                 toast_appeared_at: iced::time::Instant::now(),
+                dialog_closed_at: None,
                 app_update_status: AppUpdateStatus::Checking,
                 image_cache_usage: CacheUsage::default(),
                 image_cache_clearing: false,
@@ -142,14 +142,10 @@ impl PrimeApp {
             },
             Task::batch([
                 Task::perform(async move { load_accounts(&load_repo) }, Message::Loaded),
-                if super::settings_cloning_enabled() {
-                    Task::perform(
-                        load_game_settings_profiles(profile_dir),
-                        Message::GameSettingsProfilesLoaded,
-                    )
-                } else {
-                    Task::none()
-                },
+                Task::perform(
+                    load_game_settings_profiles(profile_dir),
+                    Message::GameSettingsProfilesLoaded,
+                ),
                 fetch_client_version_task(false),
                 cache_rank_icons_task(&image_cache_for_ranks),
                 Task::perform(check_for_update(), |result| Message::AppUpdateChecked {
@@ -177,10 +173,13 @@ impl PrimeApp {
             self.close_popovers();
         }
 
-        // A dialog that opens, or replaces another, starts its entrance.
+        // A dialog that opens, or replaces another, starts its entrance; one that closes leaves
+        // its backdrop to fade out.
         let dialog = self.open_dialog();
         if dialog != self.dialog_opened.map(|(open, _)| open) {
-            self.dialog_opened = dialog.map(|dialog| (dialog, iced::time::Instant::now()));
+            let now = iced::time::Instant::now();
+            self.dialog_closed_at = dialog.is_none().then_some(now);
+            self.dialog_opened = dialog.map(|dialog| (dialog, now));
         }
 
         task
@@ -1211,9 +1210,14 @@ impl PrimeApp {
                 if self.window_minimized && !minimized {
                     return self.window_shown();
                 }
+                let just_minimized = minimized && !self.window_minimized;
                 self.window_minimized = minimized;
 
-                Task::none()
+                if just_minimized {
+                    trim_memory()
+                } else {
+                    Task::none()
+                }
             }
             Message::CloseRequested(id) => {
                 if !self.state.minimize_on_close {
@@ -1225,7 +1229,7 @@ impl PrimeApp {
                     Ok(()) => {
                         // Hiding sends no resize, so nothing else marks the window as out of sight.
                         self.window_minimized = true;
-                        window::set_mode(id, window::Mode::Hidden)
+                        window::set_mode(id, window::Mode::Hidden).chain(trim_memory())
                     }
                     Err(error) => {
                         self.set_status(Status::error(format!(
@@ -1336,7 +1340,7 @@ impl PrimeApp {
                 Task::none()
             }
             Message::RequestSavePreset(account_id) => {
-                if !self.settings_cloning || self.settings_work_in_progress() {
+                if self.settings_work_in_progress() {
                     return Task::none();
                 }
 
@@ -1379,10 +1383,6 @@ impl PrimeApp {
             }
             Message::RequestRenamePreset(profile_id) => {
                 self.open_preset_menu = None;
-                if !self.settings_cloning {
-                    return Task::none();
-                }
-
                 let Some(name) = self
                     .settings_profiles
                     .iter()
@@ -1463,10 +1463,7 @@ impl PrimeApp {
                 }
             },
             Message::SaveSettingsPreset { account_id, name } => {
-                if !self.settings_cloning
-                    || self.settings_work_in_progress()
-                    || self.update_blocks_new_work()
-                {
+                if self.settings_work_in_progress() || self.update_blocks_new_work() {
                     return Task::none();
                 }
 
@@ -1546,7 +1543,7 @@ impl PrimeApp {
             },
             Message::RequestDeleteSettingsProfile(profile_id) => {
                 self.open_preset_menu = None;
-                if !self.settings_cloning || self.settings_work_in_progress() {
+                if self.settings_work_in_progress() {
                     return Task::none();
                 }
 
@@ -1605,11 +1602,10 @@ impl PrimeApp {
                 profile_id,
                 account_id,
             } => {
-                if self.settings_cloning
-                    && !self
-                        .settings_profiles
-                        .iter()
-                        .any(|profile| profile.id == profile_id)
+                if !self
+                    .settings_profiles
+                    .iter()
+                    .any(|profile| profile.id == profile_id)
                 {
                     self.set_status(Status::error("Settings preset no longer exists"));
                     return Task::none();
@@ -1899,9 +1895,14 @@ impl PrimeApp {
                 self.live_match_error = None;
                 self.poll_live_match()
             }
-            Message::StreamerModeToggled => {
-                self.respect_streamer_mode = !self.respect_streamer_mode;
-                Task::none()
+            Message::HiddenDetailsToggled => {
+                self.show_hidden_details = !self.show_hidden_details;
+                // Hidden players' names load now instead of on the next poll.
+                if self.show_hidden_details {
+                    self.poll_live_match()
+                } else {
+                    Task::none()
+                }
             }
             Message::LiveMatchLoaded(request_id, result) => {
                 self.handle_live_match_loaded(request_id, result)
@@ -2692,10 +2693,7 @@ impl PrimeApp {
     /// refreshed session is saved before the dialog can start the change, so the two never sign
     /// in at once. Whether VALORANT is running on this PC is checked every time, locally.
     fn open_settings_change(&mut self, change: SettingsChange) -> Task<Message> {
-        if !self.settings_cloning
-            || self.settings_work_in_progress()
-            || self.update_blocks_new_work()
-        {
+        if self.settings_work_in_progress() || self.update_blocks_new_work() {
             return Task::none();
         }
 
@@ -3012,6 +3010,7 @@ impl PrimeApp {
             .live_match
             .clone()
             .filter(|live| live.account_id == account.id);
+        let show_hidden = self.show_hidden_details;
         Task::perform(
             fetch_live_match(
                 account,
@@ -3019,6 +3018,7 @@ impl PrimeApp {
                 self.image_cache.clone(),
                 previous,
                 shown_weapons(self.state.live_match_weapons.as_deref()),
+                show_hidden,
             ),
             move |result| Message::LiveMatchLoaded(request.id, result),
         )
@@ -3375,7 +3375,7 @@ impl PrimeApp {
                 let saved =
                     Task::batch([self.save_task(), self.load_account_tab(draft.account_id)]);
                 // Only a new account; a duplicate updates the existing one and adds nothing.
-                if self.settings_cloning && self.save_settings_on_add {
+                if self.save_settings_on_add {
                     return Task::batch([
                         saved,
                         self.save_added_account_settings(draft.account_id, &added),
@@ -3914,6 +3914,18 @@ fn cache_rank_icons_task(image_cache: &ImageCache) -> Task<Message> {
 
 fn check_capture_prompt_game_task() -> Task<Message> {
     Task::perform(valorant_is_running(), Message::CapturePromptGameChecked)
+}
+
+/// Lets Windows page out what the window no longer touches once it is out of sight, mostly GPU
+/// driver memory. Nothing stops: the background poll pages back in only what it uses.
+fn trim_memory() -> Task<Message> {
+    Task::future(async {
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, SetProcessWorkingSetSize};
+        // SAFETY: the current-process pseudo handle is always valid; usize::MAX for both sizes
+        // asks Windows to trim the working set, and a failure only leaves memory as it was.
+        unsafe { SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX) };
+    })
+    .discard()
 }
 
 fn alert_and_focus_latest_window() -> Task<Message> {

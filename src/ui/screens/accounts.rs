@@ -73,7 +73,7 @@ pub(super) fn fills_page(app: &PrimeApp) -> bool {
 }
 
 fn settings_profiles_open(app: &PrimeApp) -> bool {
-    app.settings_cloning && app.active_accounts_tab == AccountsTab::GameSettings
+    app.active_accounts_tab == AccountsTab::GameSettings
 }
 
 /// Import, Add current and Add account, beside the page title.
@@ -457,33 +457,32 @@ fn cta_style(
     }
 }
 
-/// Accounts and, with settings cloning, Settings profiles, with the list's filter at the right.
+/// Accounts and Settings profiles, with the list's filter at the right.
 fn tab_strip(app: &PrimeApp) -> Element<'_, Message> {
-    let mut tabs = row![strip_tab(
-        "Accounts",
-        app.state.accounts.len(),
-        !app.settings_cloning || app.active_accounts_tab == AccountsTab::Accounts,
-        Message::AccountsTabSelected(AccountsTab::Accounts),
-    )]
-    .spacing(22)
-    .align_y(alignment::Vertical::Bottom);
-
     let game_settings_open = settings_profiles_open(app);
-    if app.settings_cloning {
-        let profiles = app
-            .settings_profiles
-            .iter()
-            .filter(|profile| {
-                profile.purpose == crate::game_settings::GameSettingsProfilePurpose::Profile
-            })
-            .count();
-        tabs = tabs.push(strip_tab(
+    let profiles = app
+        .settings_profiles
+        .iter()
+        .filter(|profile| {
+            profile.purpose == crate::game_settings::GameSettingsProfilePurpose::Profile
+        })
+        .count();
+    let tabs = row![
+        strip_tab(
+            "Accounts",
+            app.state.accounts.len(),
+            app.active_accounts_tab == AccountsTab::Accounts,
+            Message::AccountsTabSelected(AccountsTab::Accounts),
+        ),
+        strip_tab(
             "Settings profiles",
             profiles,
             game_settings_open,
             Message::AccountsTabSelected(AccountsTab::GameSettings),
-        ));
-    }
+        ),
+    ]
+    .spacing(22)
+    .align_y(alignment::Vertical::Bottom);
 
     let trailing = if game_settings_open {
         save_settings_button(app)
@@ -1019,25 +1018,21 @@ fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Me
         ),
     ]);
 
-    if app.settings_cloning {
-        let settings_idle = !app.settings_work_in_progress();
-        menu = menu
-            .push(menu_divider())
-            .push(menu_item(
-                Icon::Save,
-                "Save VALORANT settings",
-                false,
-                settings_idle.then_some(Message::RequestSavePreset(account_id)),
-            ))
-            .push(menu_item(
-                Icon::SlidersHorizontal,
-                "Apply settings profile…",
-                false,
-                Some(Message::AccountsTabSelected(AccountsTab::GameSettings)),
-            ));
-    }
-
+    let settings_idle = !app.settings_work_in_progress();
     menu = menu
+        .push(menu_divider())
+        .push(menu_item(
+            Icon::Save,
+            "Save VALORANT settings",
+            false,
+            settings_idle.then_some(Message::RequestSavePreset(account_id)),
+        ))
+        .push(menu_item(
+            Icon::SlidersHorizontal,
+            "Apply settings profile…",
+            false,
+            Some(Message::AccountsTabSelected(AccountsTab::GameSettings)),
+        ))
         .push(menu_divider())
         .push(menu_item(
             Icon::Upload,
@@ -1241,10 +1236,6 @@ fn first_account_option(
 }
 
 pub(in crate::ui) fn save_settings_on_add_checkbox(app: &PrimeApp) -> Element<'_, Message> {
-    if !app.settings_cloning {
-        return space().into();
-    }
-
     checkbox(app.save_settings_on_add)
         .label("Save this account's VALORANT settings as a preset")
         .on_toggle(Message::SaveSettingsOnAddToggled)

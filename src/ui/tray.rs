@@ -60,6 +60,15 @@ fn action_stream() -> impl Stream<Item = TrayAction> {
     iced::stream::channel(4, async |mut output| {
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         let click_sender = sender.clone();
+        // Starting Prime again while it runs opens this window, the same as the tray's Open.
+        let relaunch_sender = sender.clone();
+        std::thread::spawn(move || {
+            while crate::single_instance::wait_for_show_request() {
+                if relaunch_sender.send(TrayAction::Open).is_err() {
+                    break;
+                }
+            }
+        });
         TrayIconEvent::set_event_handler(Some(move |event| {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,

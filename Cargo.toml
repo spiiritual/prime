@@ -6,7 +6,6 @@ edition = "2024"
 [features]
 default = []
 image-viewer-testing = []
-settings-cloning = []
 
 [dependencies]
 base64 = "0.23.1"
@@ -26,10 +25,13 @@ uuid = { version = "1.26.1", features = ["serde", "v4"] }
 velopack = "1.2.158"
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
+    "Win32_Security",
     "Win32_Storage_FileSystem",
     "Win32_System_DataExchange",
     "Win32_System_Memory",
+    "Win32_System_Threading",
     "Win32_UI_Controls_Dialogs",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [dev-dependencies]
