@@ -110,7 +110,6 @@ impl PrimeApp {
                 account_availability_loading: false,
                 account_availability_loaded_at: None,
                 account_availability_checked_at: Default::default(),
-                settings_cloning: super::settings_cloning_enabled(),
                 save_settings_on_add: false,
                 settings_profiles: Vec::new(),
                 expanded_presets: std::collections::HashSet::new(),
@@ -142,14 +141,10 @@ impl PrimeApp {
             },
             Task::batch([
                 Task::perform(async move { load_accounts(&load_repo) }, Message::Loaded),
-                if super::settings_cloning_enabled() {
-                    Task::perform(
-                        load_game_settings_profiles(profile_dir),
-                        Message::GameSettingsProfilesLoaded,
-                    )
-                } else {
-                    Task::none()
-                },
+                Task::perform(
+                    load_game_settings_profiles(profile_dir),
+                    Message::GameSettingsProfilesLoaded,
+                ),
                 fetch_client_version_task(false),
                 cache_rank_icons_task(&image_cache_for_ranks),
                 Task::perform(check_for_update(), |result| Message::AppUpdateChecked {
@@ -1313,7 +1308,7 @@ impl PrimeApp {
                 Task::none()
             }
             Message::RequestSavePreset(account_id) => {
-                if !self.settings_cloning || self.settings_work_in_progress() {
+                if self.settings_work_in_progress() {
                     return Task::none();
                 }
 
@@ -1356,10 +1351,6 @@ impl PrimeApp {
             }
             Message::RequestRenamePreset(profile_id) => {
                 self.open_preset_menu = None;
-                if !self.settings_cloning {
-                    return Task::none();
-                }
-
                 let Some(name) = self
                     .settings_profiles
                     .iter()
@@ -1440,10 +1431,7 @@ impl PrimeApp {
                 }
             },
             Message::SaveSettingsPreset { account_id, name } => {
-                if !self.settings_cloning
-                    || self.settings_work_in_progress()
-                    || self.update_blocks_new_work()
-                {
+                if self.settings_work_in_progress() || self.update_blocks_new_work() {
                     return Task::none();
                 }
 
@@ -1523,7 +1511,7 @@ impl PrimeApp {
             },
             Message::RequestDeleteSettingsProfile(profile_id) => {
                 self.open_preset_menu = None;
-                if !self.settings_cloning || self.settings_work_in_progress() {
+                if self.settings_work_in_progress() {
                     return Task::none();
                 }
 
@@ -1582,11 +1570,10 @@ impl PrimeApp {
                 profile_id,
                 account_id,
             } => {
-                if self.settings_cloning
-                    && !self
-                        .settings_profiles
-                        .iter()
-                        .any(|profile| profile.id == profile_id)
+                if !self
+                    .settings_profiles
+                    .iter()
+                    .any(|profile| profile.id == profile_id)
                 {
                     self.set_status(Status::error("Settings preset no longer exists"));
                     return Task::none();
@@ -2674,10 +2661,7 @@ impl PrimeApp {
     /// refreshed session is saved before the dialog can start the change, so the two never sign
     /// in at once. Whether VALORANT is running on this PC is checked every time, locally.
     fn open_settings_change(&mut self, change: SettingsChange) -> Task<Message> {
-        if !self.settings_cloning
-            || self.settings_work_in_progress()
-            || self.update_blocks_new_work()
-        {
+        if self.settings_work_in_progress() || self.update_blocks_new_work() {
             return Task::none();
         }
 
@@ -3348,7 +3332,7 @@ impl PrimeApp {
                 let saved =
                     Task::batch([self.save_task(), self.load_account_tab(draft.account_id)]);
                 // Only a new account; a duplicate updates the existing one and adds nothing.
-                if self.settings_cloning && self.save_settings_on_add {
+                if self.save_settings_on_add {
                     return Task::batch([
                         saved,
                         self.save_added_account_settings(draft.account_id, &added),

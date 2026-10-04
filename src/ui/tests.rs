@@ -4419,52 +4419,10 @@ fn settings_saved(account_id: AccountId, profile: GameSettingsProfileMetadata) -
 
 fn settings_app(dir: &Path) -> (PrimeApp, AccountId) {
     let mut app = test_app(dir);
-    app.settings_cloning = true;
     let account = AccountProfile::new("Main", Shard::Na).expect("account");
     let account_id = account.id;
     app.state.push_account(account);
     (app, account_id)
-}
-
-#[cfg(not(feature = "settings-cloning"))]
-#[test]
-fn settings_cloning_is_disabled_without_its_feature() {
-    let dir = tempdir().expect("temp dir");
-
-    assert!(!super::settings_cloning_enabled());
-    assert!(!test_app(dir.path()).settings_cloning);
-}
-
-#[test]
-fn settings_cloning_does_nothing_while_disabled() {
-    let dir = tempdir().expect("temp dir");
-    let (mut app, account_id) = settings_app(dir.path());
-    app.settings_cloning = false;
-    let profile =
-        settings_profile_metadata("Main settings", GameSettingsProfilePurpose::Profile, 200);
-    app.settings_profiles = vec![profile.clone()];
-
-    let tasks = [
-        app.update(Message::RequestSavePreset(account_id)),
-        app.update(Message::SaveSettingsPreset {
-            account_id,
-            name: "Main settings".to_string(),
-        }),
-        app.update(Message::RequestRenamePreset(profile.id.clone())),
-        app.update(Message::RequestApplyPreset {
-            profile_id: profile.id.clone(),
-            account_id,
-        }),
-        app.update(Message::RequestRestoreSettings(account_id)),
-        app.update(Message::RequestDeleteSettingsProfile(profile.id)),
-    ];
-
-    assert!(tasks.iter().all(|task| task.units() == 0));
-    assert_eq!(app.settings_saving_account, None);
-    assert_eq!(app.preset_name_prompt, None);
-    assert_eq!(app.settings_check, None);
-    assert_eq!(app.confirm_settings_change, None);
-    assert_eq!(app.confirm_delete_settings_profile, None);
 }
 
 #[test]
@@ -4493,7 +4451,6 @@ fn settings_profiles_have_their_own_accounts_sub_tab() {
 fn adding_an_account_saves_its_settings_when_asked() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    app.settings_cloning = true;
     let draft = captured_account_draft(
         &app.repo.launcher_backups_dir(),
         "puuid-a",
@@ -4521,7 +4478,6 @@ fn adding_an_account_saves_its_settings_when_asked() {
 fn an_account_added_while_its_capture_waits_saves_no_preset_and_keeps_the_error() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    app.settings_cloning = true;
     let draft = captured_account_draft(
         &app.repo.launcher_backups_dir(),
         "puuid-a",
@@ -4552,25 +4508,22 @@ fn an_account_added_while_its_capture_waits_saves_no_preset_and_keeps_the_error(
 
 #[test]
 fn adding_an_account_leaves_its_settings_unless_asked() {
-    for (cloning, checked) in [(true, false), (false, true)] {
-        let dir = tempdir().expect("temp dir");
-        let mut app = test_app(dir.path());
-        app.settings_cloning = cloning;
-        let draft = captured_account_draft(
-            &app.repo.launcher_backups_dir(),
-            "puuid-a",
-            "Player",
-            "NA1",
-            Shard::Na,
-        );
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let draft = captured_account_draft(
+        &app.repo.launcher_backups_dir(),
+        "puuid-a",
+        "Player",
+        "NA1",
+        Shard::Na,
+    );
 
-        let _ = app.update(Message::CurrentAccountCaptureFinished(Ok(draft)));
-        let _ = app.update(Message::SaveSettingsOnAddToggled(checked));
-        let _ = app.update(Message::ConfirmCapturedAccount);
+    let _ = app.update(Message::CurrentAccountCaptureFinished(Ok(draft)));
+    let _ = app.update(Message::SaveSettingsOnAddToggled(false));
+    let _ = app.update(Message::ConfirmCapturedAccount);
 
-        assert_eq!(app.state.accounts.len(), 1);
-        assert_eq!(app.settings_saving_account, None);
-    }
+    assert_eq!(app.state.accounts.len(), 1);
+    assert_eq!(app.settings_saving_account, None);
 }
 
 #[test]

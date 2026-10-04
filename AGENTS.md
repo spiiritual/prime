@@ -9,7 +9,6 @@ package and the app are both named `prime`.
 cargo run                                  # run the app
 cargo test                                 # run the tests
 cargo clippy --all-targets                 # lint; keep it clean
-cargo run --features settings-cloning      # include settings cloning
 .\scripts\release.ps1 -UseGeneratedNotes -Publish   # bump, test, package with Velopack, tag, publish
 ```
 
@@ -28,6 +27,9 @@ Accounts tab:
 - Shows each account's rank, level and penalties, and refreshes its PUUID, Riot ID and shard on request.
 - Exports and imports an account, with its captured login, as text. Exports are copied to the clipboard
   without entering Windows clipboard history.
+- Settings profiles sub-tab: save an account's VALORANT settings as a named preset, apply a preset to
+  any account and restore that account's own settings afterwards. Adding an account can also save its
+  settings as a preset.
 
 Shop tab: featured bundles (each with its own countdown), daily offers, Night Market and accessories, with
 art, rarity colours and discounts. The wallet balance shows in the header.
@@ -57,11 +59,8 @@ Updates: Velopack checks the GitHub releases of `spiiritual/prime`. `PRIME_UPDAT
 
 ## Feature flags
 
-Both are off by default, so release builds leave them out.
+Off by default, so release builds leave it out.
 
-- `settings-cloning`: save an account's VALORANT settings as a named preset, apply a preset to any account
-  and restore that account's own settings afterwards, from a Game settings sub-tab of Accounts. Adding an
-  account can also save its settings as a preset.
 - `image-viewer-testing`: click an image to open it full size.
 
 ## Code layout

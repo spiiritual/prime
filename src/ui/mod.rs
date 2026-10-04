@@ -54,11 +54,6 @@ fn image_viewer_enabled() -> bool {
     cfg!(feature = "image-viewer-testing")
 }
 
-/// Saving VALORANT settings from one account and applying them to another.
-fn settings_cloning_enabled() -> bool {
-    cfg!(feature = "settings-cloning")
-}
-
 pub fn run() -> iced::Result {
     let application = theme::FONTS.into_iter().fold(
         iced::application(PrimeApp::boot, PrimeApp::update, PrimeApp::view),
@@ -379,8 +374,6 @@ struct PrimeApp {
     /// When each account's entry in `account_availability` arrived, so Apply and Restore only
     /// trust recent results.
     account_availability_checked_at: HashMap<AccountId, iced::time::Instant>,
-    /// Whether settings cloning is available; set from the `settings-cloning` feature.
-    settings_cloning: bool,
     /// Whether a newly added account's VALORANT settings are saved as a settings profile.
     save_settings_on_add: bool,
     settings_profiles: Vec<GameSettingsProfileMetadata>,
@@ -844,7 +837,7 @@ impl std::fmt::Display for SettingsSection {
     }
 }
 
-/// The Accounts tab's sub-tabs; Game settings only shows with settings cloning.
+/// The Accounts tab's sub-tabs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AccountsTab {
     Accounts,
