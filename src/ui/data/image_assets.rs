@@ -1,7 +1,7 @@
 use super::*;
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::futures::future::{join4, try_join4};
@@ -63,13 +63,13 @@ pub(in crate::ui) async fn fetch_weapon_content() -> Result<Arc<WeaponContent>, 
 }
 
 pub(in crate::ui) struct CachedCatalog<T> {
-    entry: Mutex<Option<(Instant, Arc<T>)>>,
+    entry: tokio::sync::Mutex<Option<(Instant, Arc<T>)>>,
 }
 
 impl<T> CachedCatalog<T> {
     pub(in crate::ui) const fn new() -> Self {
         Self {
-            entry: Mutex::new(None),
+            entry: tokio::sync::Mutex::const_new(None),
         }
     }
 
@@ -80,27 +80,29 @@ impl<T> CachedCatalog<T> {
     where
         Fut: Future<Output = Result<T, ContentError>>,
     {
-        if let Some(catalog) = self.fresh_at(Instant::now()) {
+        // Held across the download, so a load that starts meanwhile waits for it instead of
+        // downloading the same catalog again.
+        let mut entry = self.entry.lock().await;
+        if let Some(catalog) = fresh(&entry, Instant::now()) {
             return Ok(catalog);
         }
 
         let catalog = Arc::new(fetch().await.map_err(|error| error.to_string())?);
-        *self.lock() = Some((Instant::now(), Arc::clone(&catalog)));
+        *entry = Some((Instant::now(), Arc::clone(&catalog)));
         Ok(catalog)
     }
 
-    pub(in crate::ui) fn fresh_at(&self, now: Instant) -> Option<Arc<T>> {
-        self.lock()
-            .as_ref()
-            .filter(|(fetched_at, _)| {
-                now.saturating_duration_since(*fetched_at) < CONTENT_CATALOG_TTL
-            })
-            .map(|(_, catalog)| Arc::clone(catalog))
+    #[cfg(test)]
+    fn fresh_at(&self, now: Instant) -> Option<Arc<T>> {
+        fresh(&*self.entry.try_lock().ok()?, now)
     }
+}
 
-    fn lock(&self) -> MutexGuard<'_, Option<(Instant, Arc<T>)>> {
-        self.entry.lock().unwrap_or_else(PoisonError::into_inner)
-    }
+fn fresh<T>(entry: &Option<(Instant, Arc<T>)>, now: Instant) -> Option<Arc<T>> {
+    entry
+        .as_ref()
+        .filter(|(fetched_at, _)| now.saturating_duration_since(*fetched_at) < CONTENT_CATALOG_TTL)
+        .map(|(_, catalog)| Arc::clone(catalog))
 }
 
 // Image downloads never fail a tab: an item whose art cannot be fetched keeps `cached_icon: None`
@@ -452,6 +454,27 @@ mod tests {
             cx.waker().wake_by_ref();
             std::task::Poll::Pending
         }
+    }
+
+    #[test]
+    fn loads_that_start_together_share_one_download() {
+        let cache = CachedCatalog::<u32>::new();
+        let fetches = Cell::new(0);
+        let fetch = || {
+            fetches.set(fetches.get() + 1);
+            async {
+                YieldOnce(false).await;
+                Ok(5)
+            }
+        };
+
+        let (first, second) = block_on(iced::futures::future::join(
+            cache.get_or_fetch(fetch),
+            cache.get_or_fetch(fetch),
+        ));
+
+        assert_eq!((*first.expect("first"), *second.expect("second")), (5, 5));
+        assert_eq!(fetches.get(), 1);
     }
 
     #[test]
