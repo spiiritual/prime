@@ -6687,3 +6687,21 @@ fn a_live_match_load_left_by_an_account_switch_blocks_sign_ins_until_it_answers(
     assert!(app.live_match_request.is_some());
     assert_eq!(app.live_match_error, None);
 }
+
+#[test]
+fn the_spinner_ticks_only_while_one_is_on_screen() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+
+    // Availability checks show no spinner.
+    app.account_availability_loading = true;
+    assert!(!super::loading_indicator_active(&app));
+
+    app.status = Status::progress("Loading…");
+    app.status_changed_at = app.now;
+    assert!(super::loading_indicator_active(&app));
+
+    // A progress toast that has timed out is no longer on screen.
+    app.now = app.status_changed_at + Duration::from_secs(60);
+    assert!(!super::loading_indicator_active(&app));
+}

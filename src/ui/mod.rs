@@ -150,25 +150,22 @@ fn background_refresh_active(app: &PrimeApp) -> bool {
     app.state.minimize_on_close && app.window_minimized
 }
 
+/// Whether a spinner is on screen. Loads that show skeletons or nothing, such as Shop, Loadout and
+/// account details, don't count, since each tick rebuilds the whole window.
 fn loading_indicator_active(app: &PrimeApp) -> bool {
-    app.store_request.is_some()
-        || app.loadout_request.is_some()
-        || !app.profile_identity_refreshing.is_empty()
-        || !app.account_ranks_loading.is_empty()
-        || app.account_availability_loading
+    !app.profile_identity_refreshing.is_empty()
         || app.launcher_capture_in_progress
         || app.launch_preflight_account.is_some()
         || app.launching_account.is_some()
         || app.settings_saving_account.is_some()
         || app.settings_applying_account.is_some()
         || app.settings_check.is_some()
-        || app.app_update_status.is_busy()
         || image_viewer_enabled()
             && app
                 .image_viewer
                 .as_ref()
                 .is_some_and(|image| image.high_res_loading)
-        || app.status.kind == StatusKind::Progress
+        || status_spinner_active(app) && status_bar_visible(app)
 }
 
 /// Countdowns tick only while one is on screen. A reset reached meanwhile is caught when the tab
