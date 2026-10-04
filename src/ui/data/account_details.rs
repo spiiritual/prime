@@ -428,6 +428,7 @@ pub(in crate::ui) async fn fetch_account_ranks(
 pub(in crate::ui) async fn fetch_account_availabilities(
     accounts: Vec<AccountProfile>,
     client_version: String,
+    detail: ActivityDetail,
 ) -> AccountAvailabilityRefresh {
     let api = match RiotApi::shared() {
         Ok(api) => api,
@@ -448,9 +449,7 @@ pub(in crate::ui) async fn fetch_account_availabilities(
     let api = &api;
     let client_version = &client_version;
     let checks: Vec<_> = stream::iter(accounts)
-        .map(|account| {
-            check_account_availability(api, account, client_version.clone(), ActivityDetail::Full)
-        })
+        .map(|account| check_account_availability(api, account, client_version.clone(), detail))
         .buffer_unordered(ACCOUNTS_AT_ONCE)
         .collect()
         .await;

@@ -164,9 +164,12 @@ impl AuthSession {
         }
     }
 
+    /// Counts a token as expired a minute early, so one that runs out between this check and
+    /// the request it's for isn't sent and rejected.
     pub fn is_expired_at(&self, now_unix: i64) -> bool {
+        const MARGIN_SECONDS: i64 = 60;
         self.expires_at_unix
-            .is_some_and(|expires_at| expires_at <= now_unix)
+            .is_some_and(|expires_at| expires_at <= now_unix + MARGIN_SECONDS)
     }
 
     pub fn is_expired(&self) -> bool {
@@ -586,6 +589,14 @@ mod tests {
 
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn a_token_counts_as_expired_a_minute_before_it_runs_out() {
+        let session = AuthSession::new("token", None, None, "Bearer", Some(3600), 1_000);
+
+        assert!(!session.is_expired_at(1_000 + 3600 - 61));
+        assert!(session.is_expired_at(1_000 + 3600 - 60));
+    }
 
     #[test]
     fn rejects_empty_display_name() {

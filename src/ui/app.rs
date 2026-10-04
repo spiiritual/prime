@@ -18,9 +18,9 @@ use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{UpdateCheckOutcome, check_for_update, download_and_prepare_update};
 
 use super::data::account_details::{
-    AccountActivityCheck, AccountAvailability, AccountRankResult, RefreshedApiContext,
-    check_settings_activity, fetch_account_availabilities, fetch_account_availability,
-    fetch_account_ranks, fetch_profile_identity,
+    AccountActivityCheck, AccountAvailability, AccountRankResult, ActivityDetail,
+    RefreshedApiContext, check_settings_activity, fetch_account_availabilities,
+    fetch_account_availability, fetch_account_ranks, fetch_profile_identity,
 };
 use super::data::game_settings::{
     apply_game_settings_profile, delete_game_settings_profile, load_game_settings_profiles,
@@ -2908,9 +2908,16 @@ impl PrimeApp {
 
         self.account_availability_loading = true;
         let client_version = self.client_version_input.clone();
+        // In the tray the poll keeps sessions fresh and nobody sees agent select, so it skips
+        // that request; showing the window polls in full.
+        let detail = if background_refresh_active(self) {
+            ActivityDetail::InGame
+        } else {
+            ActivityDetail::Full
+        };
 
         Task::perform(
-            fetch_account_availabilities(accounts, client_version),
+            fetch_account_availabilities(accounts, client_version, detail),
             Message::AccountAvailabilitiesLoaded,
         )
     }
