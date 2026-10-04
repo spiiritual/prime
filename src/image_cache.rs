@@ -12,6 +12,9 @@ const HTTP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 /// Images nobody has shown for this long are deleted at startup. A file's modified time records its
 /// last use, because Windows often doesn't keep access times.
 const UNUSED_IMAGE_LIFETIME: Duration = Duration::from_secs(60 * 24 * 60 * 60);
+/// A cached image's last use is written again only once it's this old, since writing it on every
+/// hit cost more than the rest of the lookup. Far shorter than the lifetime, so it changes nothing.
+const LAST_USE_RESOLUTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const USER_AGENT_VALUE: &str = concat!("prime/", env!("CARGO_PKG_VERSION"));
 
 #[derive(Clone)]
@@ -80,12 +83,19 @@ impl ImageCache {
     ) -> Result<PathBuf, ImageCacheError> {
         let path = self.asset_path(namespace, id, url, max_side);
 
-        if path.exists() {
-            // Only delays expiry, so a failure doesn't matter.
-            let _ = fs::File::options()
-                .write(true)
-                .open(&path)
-                .and_then(|file| file.set_modified(SystemTime::now()));
+        if let Ok(metadata) = fs::metadata(&path) {
+            let last_use_age = metadata
+                .modified()
+                .ok()
+                .and_then(|used| used.elapsed().ok())
+                .unwrap_or(Duration::MAX);
+            if last_use_age >= LAST_USE_RESOLUTION {
+                // Only delays expiry, so a failure doesn't matter.
+                let _ = fs::File::options()
+                    .write(true)
+                    .open(&path)
+                    .and_then(|file| file.set_modified(SystemTime::now()));
+            }
             return Ok(path);
         }
 
@@ -296,6 +306,42 @@ mod tests {
             (256, 150)
         );
         assert_eq!(fit_within(&png(200, 100), 256), None);
+    }
+
+    #[test]
+    fn a_cache_hit_records_its_use_only_once_the_last_one_is_a_week_old() {
+        let dir = tempdir().expect("cache dir");
+        let cache = ImageCache::new(dir.path());
+        let url = "https://example.com/displayicon.png";
+        let path = cache.asset_path("skins", "skin-id", url, None);
+        fs::create_dir_all(path.parent().expect("parent")).expect("dir");
+        fs::write(&path, [1]).expect("image");
+        let set_age = |days: u64| {
+            let used = SystemTime::now() - Duration::from_secs(days * 24 * 60 * 60);
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .and_then(|file| file.set_modified(used))
+                .expect("age image");
+            used
+        };
+        let last_use = || {
+            fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .expect("mtime")
+        };
+        let hit = || {
+            iced::futures::executor::block_on(cache.cache_url("skins", "skin-id", url, None))
+                .expect("hit")
+        };
+
+        let recent = set_age(1);
+        assert_eq!(hit(), path);
+        assert_eq!(last_use(), recent);
+
+        let old = set_age(8);
+        hit();
+        assert!(last_use() > old + Duration::from_secs(24 * 60 * 60));
     }
 
     #[test]
