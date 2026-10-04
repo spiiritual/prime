@@ -14,31 +14,7 @@ pub struct AvailableUpdate {
     pub current_version: String,
     pub latest_version: String,
     pub changelog: Option<String>,
-    pub package: ReleasePackage,
     update: Box<UpdateInfo>,
-}
-
-impl AvailableUpdate {
-    fn update_info(&self) -> &UpdateInfo {
-        &self.update
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReleasePackage {
-    pub package_id: Option<String>,
-    pub file_name: String,
-    pub size_bytes: u64,
-    pub update_strategy: UpdateStrategy,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UpdateStrategy {
-    Full,
-    Delta {
-        package_count: usize,
-        size_bytes: u64,
-    },
 }
 
 #[derive(Clone, Debug)]
@@ -78,7 +54,7 @@ fn check_for_update_blocking() -> Result<UpdateCheckOutcome, UpdateError> {
 
 fn download_and_prepare_update_blocking(update: AvailableUpdate) -> Result<(), UpdateError> {
     let manager = update_manager()?;
-    let update_info = update.update_info();
+    let update_info: &UpdateInfo = &update.update;
 
     manager.download_updates(update_info, None)?;
     manager.wait_exit_then_apply_updates(update_info, false, true, Vec::<String>::new())?;
@@ -115,30 +91,11 @@ fn available_update_from_info(current_version: String, update: Box<UpdateInfo>) 
     let target = &update.TargetFullRelease;
     let latest_version = target.Version.clone();
     let changelog = trimmed_text(&target.NotesMarkdown);
-    let delta_size_bytes = update
-        .DeltasToTarget
-        .iter()
-        .map(|delta| delta.Size)
-        .sum::<u64>();
-    let update_strategy = if update.DeltasToTarget.is_empty() {
-        UpdateStrategy::Full
-    } else {
-        UpdateStrategy::Delta {
-            package_count: update.DeltasToTarget.len(),
-            size_bytes: delta_size_bytes,
-        }
-    };
 
     AvailableUpdate {
         current_version,
         latest_version,
         changelog,
-        package: ReleasePackage {
-            package_id: trimmed_text(&target.PackageId),
-            file_name: target.FileName.clone(),
-            size_bytes: target.Size,
-            update_strategy,
-        },
         update,
     }
 }
@@ -203,31 +160,21 @@ mod tests {
             update.changelog.as_deref(),
             Some("## Changes\n\n- Velopack")
         );
-        assert_eq!(update.package.package_id.as_deref(), Some("prime"));
-        assert_eq!(update.package.update_strategy, UpdateStrategy::Full);
     }
 
     #[test]
-    fn update_summary_reports_delta_strategy() {
+    fn blank_release_notes_give_no_changelog() {
         let update = available_update_from_info(
             "0.1.2".to_string(),
-            Box::new(delta_update(
-                asset("prime", "0.1.4", "prime-0.1.4-full.nupkg", 1_024, ""),
-                asset("prime", "0.1.2", "prime-0.1.2-full.nupkg", 900, ""),
-                vec![
-                    asset("prime", "0.1.3", "prime-0.1.3-delta.nupkg", 80, ""),
-                    asset("prime", "0.1.4", "prime-0.1.4-delta.nupkg", 90, ""),
-                ],
-            )),
+            Box::new(full_update(asset(
+                "prime",
+                "0.1.3",
+                "prime-0.1.3-full.nupkg",
+                128,
+                "  ",
+            ))),
         );
 
-        assert_eq!(
-            update.package.update_strategy,
-            UpdateStrategy::Delta {
-                package_count: 2,
-                size_bytes: 170
-            }
-        );
         assert_eq!(update.changelog, None);
     }
 
@@ -236,19 +183,6 @@ mod tests {
             TargetFullRelease: target,
             BaseRelease: None,
             DeltasToTarget: Vec::new(),
-            IsDowngrade: false,
-        }
-    }
-
-    fn delta_update(
-        target: VelopackAsset,
-        base: VelopackAsset,
-        deltas: Vec<VelopackAsset>,
-    ) -> UpdateInfo {
-        UpdateInfo {
-            TargetFullRelease: target,
-            BaseRelease: Some(base),
-            DeltasToTarget: deltas,
             IsDowngrade: false,
         }
     }
