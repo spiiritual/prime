@@ -47,6 +47,8 @@ const STATUS_FLASH_DURATION: Duration = Duration::from_secs(4);
 /// How often the app checks whether a toast has expired. The timer bar redraws itself each frame,
 /// and the app follows every frame only while the toast sinks out.
 const STATUS_FLASH_TICK_INTERVAL: Duration = Duration::from_millis(500);
+/// The battle pass's time left shows whole minutes, so it needs no tick every second.
+const BATTLE_PASS_TIMER_INTERVAL: Duration = Duration::from_secs(10);
 const CLIENT_VERSION_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 const MAIN_PANEL_SCROLLABLE_ID: &str = "main-panel-scrollable";
 
@@ -94,9 +96,8 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
         tray::actions().map(Message::Tray),
     ];
 
-    if countdown_timer_active(app) {
-        subscriptions
-            .push(iced::time::every(SHOP_RESET_CHECK_INTERVAL).map(Message::ShopTimerTick));
+    if let Some(interval) = countdown_timer_interval(app) {
+        subscriptions.push(iced::time::every(interval).map(Message::ShopTimerTick));
     }
 
     let animating = appearing(app) && !app.window_minimized;
@@ -168,21 +169,25 @@ fn loading_indicator_active(app: &PrimeApp) -> bool {
         || status_spinner_active(app) && status_bar_visible(app)
 }
 
-/// Countdowns tick only while one is on screen. A reset reached meanwhile is caught when the tab
-/// opens.
-fn countdown_timer_active(app: &PrimeApp) -> bool {
-    !app.window_minimized
-        && match app.active_tab {
-            Tab::Shop => app.store_summary.is_some(),
-            Tab::Loadout => {
-                app.active_loadout_tab == LoadoutTab::BattlePass
-                    && app
-                        .loadout_summary
-                        .as_ref()
-                        .is_some_and(LoadoutSummary::battle_pass_timer_active)
-            }
-            Tab::Accounts | Tab::Settings | Tab::LiveMatch => false,
+/// How often the countdown on screen ticks, or `None` when none shows. A reset reached meanwhile
+/// is caught when the tab opens.
+fn countdown_timer_interval(app: &PrimeApp) -> Option<Duration> {
+    if app.window_minimized {
+        return None;
+    }
+    match app.active_tab {
+        Tab::Shop if app.store_summary.is_some() => Some(SHOP_RESET_CHECK_INTERVAL),
+        Tab::Loadout
+            if app.active_loadout_tab == LoadoutTab::BattlePass
+                && app
+                    .loadout_summary
+                    .as_ref()
+                    .is_some_and(LoadoutSummary::battle_pass_timer_active) =>
+        {
+            Some(BATTLE_PASS_TIMER_INTERVAL)
         }
+        _ => None,
+    }
 }
 
 fn escape_key_message(event: iced::keyboard::Event) -> Option<Message> {

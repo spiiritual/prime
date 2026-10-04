@@ -39,7 +39,7 @@ use super::data::shop::{
 };
 use super::{
     Message, PendingSettingsChange, PendingSettingsCheck, PresetNamePrompt, PresetNameTarget,
-    PrimeApp, SettingsChange, Status, StatusKind, countdown_timer_active,
+    PrimeApp, SettingsChange, Status, StatusKind, countdown_timer_interval,
     masked_account_export_payload, status_bar_visible, status_spinner_active, status_time_left,
     status_visible_at,
 };
@@ -5639,21 +5639,24 @@ fn countdown_timer_runs_only_where_a_countdown_shows() {
     app.loadout_summary = Some(loadout_with_battle_pass(3_600, iced::time::Instant::now()));
 
     app.active_tab = super::Tab::Accounts;
-    assert!(!countdown_timer_active(&app));
+    assert_eq!(countdown_timer_interval(&app), None);
 
     app.active_tab = super::Tab::Shop;
-    assert!(countdown_timer_active(&app));
+    assert!(countdown_timer_interval(&app).is_some());
 
     app.window_minimized = true;
-    assert!(!countdown_timer_active(&app));
+    assert_eq!(countdown_timer_interval(&app), None);
     app.window_minimized = false;
 
     app.active_tab = super::Tab::Loadout;
     app.active_loadout_tab = super::LoadoutTab::Skins;
-    assert!(!countdown_timer_active(&app));
+    assert_eq!(countdown_timer_interval(&app), None);
 
     app.active_loadout_tab = super::LoadoutTab::BattlePass;
-    assert!(countdown_timer_active(&app));
+    assert_eq!(
+        countdown_timer_interval(&app),
+        Some(super::BATTLE_PASS_TIMER_INTERVAL)
+    );
 }
 
 #[test]
@@ -5696,7 +5699,7 @@ fn a_battle_pass_that_had_already_ended_does_not_keep_reloading() {
     let _ = app.update(Message::ShopTimerTick(iced::time::Instant::now()));
 
     assert!(app.loadout_request.is_none());
-    assert!(!countdown_timer_active(&app));
+    assert_eq!(countdown_timer_interval(&app), None);
 }
 
 fn priced_bundle_json(
