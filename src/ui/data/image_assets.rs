@@ -171,12 +171,7 @@ pub(in crate::ui) async fn cache_loadout_images(
     }
 
     if let Some(battle_pass) = &mut summary.battle_pass {
-        for reward in battle_pass
-            .earned_rewards
-            .iter_mut()
-            .chain(battle_pass.unearned_rewards.iter_mut())
-            .chain(battle_pass.locked_paid_rewards.iter_mut())
-        {
+        for reward in battle_pass.shown_rewards_mut() {
             downloads.push(Box::pin(cache_battle_pass_reward_icon(reward, image_cache)));
         }
     }

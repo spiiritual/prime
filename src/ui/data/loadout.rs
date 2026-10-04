@@ -130,7 +130,22 @@ pub(in crate::ui) struct BattlePassProgressDisplay {
     pub(in crate::ui) loaded_at: iced::time::Instant,
 }
 
+/// Each reward row shows this many cards, the latest earned or the next ones up.
+pub(in crate::ui) const REWARDS_PER_ROW: usize = 6;
+
 impl BattlePassProgressDisplay {
+    /// The rewards the page shows, the only ones whose art is downloaded: the latest earned row
+    /// and the first row of each of the others.
+    pub(in crate::ui) fn shown_rewards_mut(
+        &mut self,
+    ) -> impl Iterator<Item = &mut BattlePassRewardDisplay> {
+        let earned = self.earned_rewards.len();
+        self.earned_rewards[earned.saturating_sub(REWARDS_PER_ROW)..]
+            .iter_mut()
+            .chain(self.unearned_rewards.iter_mut().take(REWARDS_PER_ROW))
+            .chain(self.locked_paid_rewards.iter_mut().take(REWARDS_PER_ROW))
+    }
+
     pub(in crate::ui) fn title(&self) -> String {
         self.season_name
             .as_ref()

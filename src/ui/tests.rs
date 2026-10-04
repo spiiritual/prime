@@ -26,8 +26,8 @@ use super::data::live_match::{
     LiveMatch, LiveMatchError, LiveMatchResult, MatchPhase, shown_weapons,
 };
 use super::data::loadout::{
-    BattlePassProgressDisplay, LoadoutResult, LoadoutSummary, battle_pass_progress_from_responses,
-    combine_loadout_sections, weapon_category, weapon_order,
+    BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutResult, LoadoutSummary,
+    battle_pass_progress_from_responses, combine_loadout_sections, weapon_category, weapon_order,
 };
 use super::data::non_empty_path;
 use super::data::session::{
@@ -4010,6 +4010,37 @@ fn battle_pass_display() -> BattlePassProgressDisplay {
         paid_pass_owned: false,
         loaded_at: iced::time::Instant::now(),
     }
+}
+
+#[test]
+fn only_the_battle_pass_rewards_on_screen_get_their_art_downloaded() {
+    let reward = |tier: i64| BattlePassRewardDisplay {
+        tier,
+        is_epilogue: false,
+        uuid: format!("reward-{tier}"),
+        name: format!("Reward {tier}"),
+        kind: "Spray".to_string(),
+        amount: 1,
+        highlighted: false,
+        display_icon: Some(format!("https://example.test/{tier}.png")),
+        viewer_icon: None,
+        cached_icon: None,
+    };
+    let mut battle_pass = BattlePassProgressDisplay {
+        earned_rewards: (1..=30).map(reward).collect(),
+        unearned_rewards: (31..=50).map(reward).collect(),
+        locked_paid_rewards: (51..=60).map(reward).collect(),
+        ..battle_pass_display()
+    };
+
+    let shown: Vec<i64> = battle_pass
+        .shown_rewards_mut()
+        .map(|reward| reward.tier)
+        .collect();
+
+    // The latest 6 earned, then the first 6 up next and the first 6 locked.
+    let expected: Vec<i64> = (25..=36).chain(51..=56).collect();
+    assert_eq!(shown, expected);
 }
 
 #[test]

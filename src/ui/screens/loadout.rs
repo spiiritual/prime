@@ -8,6 +8,7 @@ use crate::ui::components::{
 };
 use crate::ui::data::loadout::{
     BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutGunDisplay, LoadoutSummary,
+    REWARDS_PER_ROW,
 };
 use crate::ui::data::shop::{RarityTier, format_time_left};
 use crate::ui::theme::{self, Icon, button, text};
@@ -37,8 +38,6 @@ const DEFAULT_SKIN_OPACITY: f32 = 0.55;
 const PASS_CARD_HEIGHT: f32 = 107.0;
 const PASS_GLOW_ALPHA: f32 = 0x26 as f32 / 255.0;
 const PASS_BAR_END: Color = iced::color!(0xF5955B);
-/// Each reward row shows this many cards, the latest earned or the next ones up.
-const REWARDS_PER_ROW: usize = 6;
 const REWARD_ART_HEIGHT: f32 = 150.0;
 const REWARD_ART_BACKGROUND: Color = iced::color!(0x0F1217);
 /// The design's 20% green over the art background, made opaque so bright art can't wash it out.
