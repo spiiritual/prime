@@ -7,7 +7,7 @@ use crate::game_settings::{
     GameSettingsProfileRepository, VALORANT_PLAYER_SETTINGS_TYPE, ValorantSettingsDocument,
     apply_preset, new_profile_id,
 };
-use crate::riot::endpoints::player_preferences_base_url_for_region;
+use crate::riot::endpoints::player_preferences_base_url;
 
 #[derive(Clone, Debug)]
 pub(in crate::ui) struct SavedGameSettingsResult {
@@ -268,7 +268,7 @@ async fn resolve_settings_context(
         session: resolved.session,
         launcher_session: resolved.launcher_session,
         identity: resolved.identity,
-        preference_base_url: player_preferences_base_url_for_region(region).to_string(),
+        preference_base_url: player_preferences_base_url(region).to_string(),
     })
 }
 

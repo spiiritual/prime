@@ -27,26 +27,14 @@ pub fn glz_base_url(region: ValorantRegion, shard: Shard) -> String {
     )
 }
 
-pub fn player_preferences_base_url(affinity: &str) -> Option<&'static str> {
-    match affinity.trim().to_ascii_lowercase().as_str() {
-        "us" => Some("https://player-preferences-usw2.pp.sgp.pvp.net"),
-        "eu" => Some("https://player-preferences-euc1.pp.sgp.pvp.net"),
-        "asia" => Some("https://player-preferences-apne1.pp.sgp.pvp.net"),
-        "sea" => Some("https://player-preferences-apse1.pp.sgp.pvp.net"),
-        _ => None,
-    }
-}
-
-pub fn player_preferences_base_url_for_region(region: ValorantRegion) -> &'static str {
+pub fn player_preferences_base_url(region: ValorantRegion) -> &'static str {
     match region {
         ValorantRegion::Na | ValorantRegion::Latam | ValorantRegion::Br => {
-            player_preferences_base_url("us").expect("known player preferences affinity")
+            "https://player-preferences-usw2.pp.sgp.pvp.net"
         }
-        ValorantRegion::Eu => {
-            player_preferences_base_url("eu").expect("known player preferences affinity")
-        }
+        ValorantRegion::Eu => "https://player-preferences-euc1.pp.sgp.pvp.net",
         ValorantRegion::Ap | ValorantRegion::Kr => {
-            player_preferences_base_url("asia").expect("known player preferences affinity")
+            "https://player-preferences-apne1.pp.sgp.pvp.net"
         }
     }
 }
@@ -255,26 +243,6 @@ mod tests {
         assert_eq!(
             name_service_url(Shard::Na),
             "https://pd.na.a.pvp.net/name-service/v2/players"
-        );
-    }
-
-    #[test]
-    fn resolves_player_preferences_base_urls() {
-        assert_eq!(
-            player_preferences_base_url("us"),
-            Some("https://player-preferences-usw2.pp.sgp.pvp.net")
-        );
-        assert_eq!(
-            player_preferences_base_url("eu"),
-            Some("https://player-preferences-euc1.pp.sgp.pvp.net")
-        );
-        assert_eq!(
-            player_preferences_base_url("asia"),
-            Some("https://player-preferences-apne1.pp.sgp.pvp.net")
-        );
-        assert_eq!(
-            player_preferences_base_url("sea"),
-            Some("https://player-preferences-apse1.pp.sgp.pvp.net")
         );
     }
 
