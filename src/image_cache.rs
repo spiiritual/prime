@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
-use directories::ProjectDirs;
 use thiserror::Error;
 use url::Url;
 
@@ -38,8 +37,8 @@ impl ImageCache {
     }
 
     pub fn default_path() -> PathBuf {
-        ProjectDirs::from("dev", "spiiritual", "prime")
-            .map(|dirs| dirs.cache_dir().join("images"))
+        std::env::var_os("LOCALAPPDATA")
+            .map(|dir| PathBuf::from(dir).join(r"spiiritual\prime\cache\images"))
             .unwrap_or_else(|| PathBuf::from("image-cache"))
     }
 
@@ -285,6 +284,17 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn images_live_in_local_app_data() {
+        let expected = Path::new(&std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA"))
+            .join("spiiritual")
+            .join("prime")
+            .join("cache")
+            .join("images");
+
+        assert_eq!(ImageCache::default_path(), expected);
+    }
 
     #[test]
     fn a_large_image_is_scaled_to_fit_and_a_small_one_is_left_alone() {

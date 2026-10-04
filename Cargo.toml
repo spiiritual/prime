@@ -9,7 +9,6 @@ image-viewer-testing = []
 
 [dependencies]
 base64 = "0.23.1"
-directories = "6.0.0"
 flate2 = "1.1.10"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 iced = { version = "0.14.0", features = ["advanced", "canvas", "image-without-codecs", "svg", "tokio"] }

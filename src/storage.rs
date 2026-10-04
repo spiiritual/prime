@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -121,8 +120,8 @@ impl AccountRepository {
     }
 
     pub fn default_path() -> PathBuf {
-        ProjectDirs::from("dev", "spiiritual", "prime")
-            .map(|dirs| dirs.config_dir().join("accounts.json"))
+        std::env::var_os("APPDATA")
+            .map(|dir| PathBuf::from(dir).join(r"spiiritual\prime\config\accounts.json"))
             .unwrap_or_else(|| PathBuf::from("accounts.json"))
     }
 
@@ -280,6 +279,17 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn accounts_live_in_roaming_app_data() {
+        let expected = Path::new(&std::env::var_os("APPDATA").expect("APPDATA"))
+            .join("spiiritual")
+            .join("prime")
+            .join("config")
+            .join("accounts.json");
+
+        assert_eq!(AccountRepository::default_path(), expected);
+    }
 
     #[test]
     fn older_save_snapshot_never_overwrites_a_newer_one() {
