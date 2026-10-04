@@ -940,11 +940,18 @@ pub(in crate::ui) async fn fetch_storefront(
     image_cache: ImageCache,
 ) -> Result<StorefrontResult, String> {
     let api = RiotApi::shared().map_err(|error| error.to_string())?;
-    let resolved = resolve_credentials(&api, &account, client_version).await?;
-    let metadata = fetch_store_metadata().await?;
-    let mut summary = api
-        .storefront(&resolved.credentials)
-        .await
+    // Signing in doesn't need the catalogs, nor the storefront the wallet, so each pair runs at
+    // once.
+    let (resolved, metadata) = iced::futures::join!(
+        resolve_credentials(&api, &account, client_version),
+        fetch_store_metadata()
+    );
+    let (resolved, metadata) = (resolved?, metadata?);
+    let (storefront, wallet) = iced::futures::join!(
+        api.storefront(&resolved.credentials),
+        api.wallet(&resolved.credentials)
+    );
+    let mut summary = storefront
         .map(|response| {
             StoreSummary::from_response_with_accessories(
                 response,
@@ -955,7 +962,7 @@ pub(in crate::ui) async fn fetch_storefront(
             )
         })
         .map_err(|error| error.to_string())?;
-    match api.wallet(&resolved.credentials).await {
+    match wallet {
         Ok(wallet) => {
             summary.currency_balances =
                 currency_balances_from_wallet(&wallet, &metadata.currencies);

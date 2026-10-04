@@ -747,8 +747,12 @@ pub(in crate::ui) async fn fetch_loadout(
     image_cache: ImageCache,
 ) -> Result<LoadoutResult, String> {
     let api = RiotApi::shared().map_err(|error| error.to_string())?;
-    let resolved = resolve_credentials(&api, &account, client_version).await?;
-    let metadata = fetch_loadout_metadata().await;
+    // Signing in doesn't need the catalogs, so both run at once.
+    let (resolved, metadata) = iced::futures::join!(
+        resolve_credentials(&api, &account, client_version),
+        fetch_loadout_metadata()
+    );
+    let resolved = resolved?;
     let (account_xp, battle_pass, loadout) = iced::futures::join!(
         api.account_xp(&resolved.credentials),
         async {
@@ -830,14 +834,9 @@ async fn fetch_battle_pass_progress(
     credentials: &ApiCredentials,
     metadata: &LoadoutMetadata,
 ) -> Result<Option<BattlePassProgressDisplay>, String> {
-    let contracts = api
-        .contracts(credentials)
-        .await
-        .map_err(|error| error.to_string())?;
-    let content = api
-        .game_content(credentials)
-        .await
-        .map_err(|error| error.to_string())?;
+    let (contracts, content) =
+        iced::futures::try_join!(api.contracts(credentials), api.game_content(credentials))
+            .map_err(|error| error.to_string())?;
 
     Ok(battle_pass_progress_from_responses(
         &contracts,
