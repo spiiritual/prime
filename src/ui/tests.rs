@@ -3563,6 +3563,37 @@ fn opening_accounts_during_a_launch_keeps_the_launch_progress() {
 }
 
 #[test]
+fn opening_accounts_loads_details_and_availability_with_one_sign_in() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account) = accounts_tab_app(dir.path());
+    app.active_tab = super::Tab::Settings;
+
+    let task = app.update(Message::TabSelected(super::Tab::Accounts));
+
+    // Restoring the scroll position, and one load for details and availability together.
+    assert_eq!(task.units(), 2);
+    assert!(!app.account_ranks_loading.is_empty());
+    assert!(app.account_availability_loading);
+
+    let _ = app.update(Message::AccountRanksLoaded {
+        result: super::data::account_details::AccountRanksResult {
+            availability: Some(vec![super::data::account_details::AccountActivityCheck {
+                account_id: account.id,
+                availability: AccountAvailability::Available,
+            }]),
+            ..Default::default()
+        },
+        announce: true,
+    });
+
+    assert!(!app.account_availability_loading);
+    assert_eq!(
+        app.account_availability.get(&account.id),
+        Some(&AccountAvailability::Available)
+    );
+}
+
+#[test]
 fn reopening_accounts_soon_after_a_load_does_not_refetch() {
     let dir = tempdir().expect("temp dir");
     let (mut app, _) = accounts_tab_app(dir.path());
@@ -4398,6 +4429,35 @@ fn availability_checks_keep_the_sessions_they_refresh() {
 
     let session = app.state.accounts[0].session.as_ref().expect("session");
     assert_eq!(session.access_token, "fresh");
+}
+
+#[test]
+fn a_details_load_that_fails_still_keeps_the_session_it_signed_in_with() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = account_with_backup(&app.repo.launcher_backups_dir(), "Main", "settings");
+    let Message::AccountAvailabilitiesLoaded(refresh) =
+        availability_refresh(account.id, account.launcher_session.clone())
+    else {
+        unreachable!()
+    };
+    app.state.push_account(account.clone());
+
+    let task = app.update(Message::AccountRanksLoaded {
+        result: super::data::account_details::AccountRanksResult {
+            failures: vec![super::data::account_details::AccountRankFailure {
+                account_id: account.id,
+                error: "rank unavailable".to_string(),
+            }],
+            refreshed_sessions: refresh.refreshed_sessions,
+            ..Default::default()
+        },
+        announce: false,
+    });
+
+    let session = app.state.accounts[0].session.as_ref().expect("session");
+    assert_eq!(session.access_token, "fresh");
+    assert!(task.units() > 0, "saved");
 }
 
 #[test]
@@ -5995,7 +6055,7 @@ fn rank_result(account_id: AccountId, rank: Result<Option<CompetitiveRank>, Stri
                     region: None,
                 },
             }],
-            failures: vec![],
+            ..Default::default()
         },
         announce: false,
     }

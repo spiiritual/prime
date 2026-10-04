@@ -1087,6 +1087,10 @@ impl PrimeApp {
             }
             Message::AccountRanksLoaded { result, announce } => {
                 self.account_ranks_loading.clear();
+                if let Some(checks) = result.availability {
+                    self.account_availability_loading = false;
+                    self.record_availability(checks);
+                }
 
                 let mut updated = 0usize;
                 let mut partial = 0usize;
@@ -1153,6 +1157,11 @@ impl PrimeApp {
                     }
                 }
 
+                let mut cached_session = false;
+                for refreshed in result.refreshed_sessions {
+                    cached_session |= self.cache_refreshed_api_context(refreshed);
+                }
+
                 let failed = result.failures.len() + context_failures;
                 // Details that loaded in full show on screen, so only a problem gets a toast.
                 let status = match (updated, failed, partial) {
@@ -1177,10 +1186,16 @@ impl PrimeApp {
                     }
                 }
 
-                if updated > 0 {
-                    self.save_task()
+                // Live Match, opened while this load signed in, waited for it.
+                let live_match = if self.active_tab == Tab::LiveMatch {
+                    self.poll_live_match()
                 } else {
                     Task::none()
+                };
+                if updated > 0 || cached_session {
+                    Task::batch([self.save_task(), live_match])
+                } else {
+                    live_match
                 }
             }
             Message::AccountAvailabilityTimerTick(now) => {
@@ -1292,21 +1307,7 @@ impl PrimeApp {
             }
             Message::AccountAvailabilitiesLoaded(result) => {
                 self.account_availability_loading = false;
-
-                let arrived_at = iced::time::Instant::now();
-                for account in result.accounts {
-                    if self
-                        .state
-                        .accounts
-                        .iter()
-                        .any(|profile| profile.id == account.account_id)
-                    {
-                        self.account_availability
-                            .insert(account.account_id, account.availability);
-                        self.account_availability_checked_at
-                            .insert(account.account_id, arrived_at);
-                    }
-                }
+                self.record_availability(result.accounts);
 
                 let mut cached_session = false;
                 for refreshed in result.refreshed_sessions {
@@ -2807,21 +2808,21 @@ impl PrimeApp {
                 };
                 let reload_details =
                     self.account_ranks_loading.is_empty() && !fresh(self.account_details_loaded_at);
-                let reload_availability = !self.availability_poll_blocked()
-                    && !fresh(self.account_availability_loaded_at);
+                let details = if reload_details {
+                    self.fetch_account_ranks_task()
+                } else {
+                    Task::none()
+                };
+                // A details load that started checks availability itself, which blocks this.
+                let availability = if !self.availability_poll_blocked()
+                    && !fresh(self.account_availability_loaded_at)
+                {
+                    self.fetch_account_availabilities_task()
+                } else {
+                    Task::none()
+                };
 
-                Task::batch([
-                    if reload_details {
-                        self.fetch_account_ranks_task()
-                    } else {
-                        Task::none()
-                    },
-                    if reload_availability {
-                        self.fetch_account_availabilities_task()
-                    } else {
-                        Task::none()
-                    },
-                ])
+                Task::batch([details, availability])
             }
             // Countdowns only tick on their own tab, so a reset reached elsewhere reloads here.
             Tab::Shop
@@ -2872,11 +2873,12 @@ impl PrimeApp {
         Task::none()
     }
 
-    /// Whether an availability poll must not start: one is running, or a Launch check or settings
-    /// work (check, save or apply), or a Live Match load is signing in with the same refresh
-    /// token.
+    /// Whether an availability poll must not start: one is running, or a details load, a Launch
+    /// check, settings work (check, save or apply) or a Live Match load is signing in with the
+    /// same refresh token.
     fn availability_poll_blocked(&self) -> bool {
         self.account_availability_loading
+            || !self.account_ranks_loading.is_empty()
             || self.live_match_in_flight
             || self.launch_preflight_account.is_some()
             || self.settings_work_in_progress()
@@ -2917,10 +2919,31 @@ impl PrimeApp {
         let task = self.fetch_account_ranks_task_for(self.state.accounts.clone(), true);
 
         if task.units() > 0 {
-            self.account_details_loaded_at = Some(iced::time::Instant::now());
+            let now = iced::time::Instant::now();
+            self.account_details_loaded_at = Some(now);
+            if self.account_availability_loading {
+                self.account_availability_loaded_at = Some(now);
+            }
         }
 
         task
+    }
+
+    fn record_availability(&mut self, checks: Vec<AccountActivityCheck>) {
+        let arrived_at = iced::time::Instant::now();
+        for check in checks {
+            if self
+                .state
+                .accounts
+                .iter()
+                .any(|profile| profile.id == check.account_id)
+            {
+                self.account_availability
+                    .insert(check.account_id, check.availability);
+                self.account_availability_checked_at
+                    .insert(check.account_id, arrived_at);
+            }
+        }
     }
 
     /// Starts a details load. `announce` shows its progress and result in the status bar, unless
@@ -2939,11 +2962,16 @@ impl PrimeApp {
         }
 
         let announce = announce && !self.progress_pinned();
+        // The same sign-in checks availability too, unless something else is signing in for it.
+        let check_activity = !self.availability_poll_blocked();
+        if check_activity {
+            self.account_availability_loading = true;
+        }
         self.account_ranks_loading = accounts.iter().map(|account| account.id).collect();
         let client_version = self.client_version_input.clone();
 
         Task::perform(
-            fetch_account_ranks(accounts, client_version),
+            fetch_account_ranks(accounts, client_version, check_activity),
             move |result| Message::AccountRanksLoaded { result, announce },
         )
     }

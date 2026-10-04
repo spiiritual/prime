@@ -1,7 +1,12 @@
+use iced::futures::stream::{self, StreamExt};
+
 use super::session::{
     ApiIdentity, ResolvedApiCredentials, refreshed_api_session, resolve_credentials,
 };
 use super::*;
+
+/// How many accounts sign in and load at once.
+const ACCOUNTS_AT_ONCE: usize = 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::ui) struct RefreshedProfileIdentity {
@@ -17,6 +22,12 @@ pub(in crate::ui) struct RefreshedProfileIdentity {
 pub(in crate::ui) struct AccountRanksResult {
     pub(in crate::ui) ranks: Vec<AccountRankResult>,
     pub(in crate::ui) failures: Vec<AccountRankFailure>,
+    /// Each account's activity, checked with the same sign-in as its details, when the load was
+    /// asked to.
+    pub(in crate::ui) availability: Option<Vec<AccountActivityCheck>>,
+    /// Sessions from accounts that signed in but whose details all failed, so a refreshed token
+    /// is still saved.
+    pub(in crate::ui) refreshed_sessions: Vec<RefreshedApiContext>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -351,14 +362,26 @@ pub(in crate::ui) fn rank_name_for_competitive_tier(tier: i64) -> String {
         })
 }
 
+/// Each account's rank, level and penalties, and its activity too when `check_activity`, so the
+/// Accounts tab signs each account in once rather than once per load.
 pub(in crate::ui) async fn fetch_account_ranks(
     accounts: Vec<AccountProfile>,
     client_version: String,
+    check_activity: bool,
 ) -> AccountRanksResult {
     let api = match RiotApi::shared() {
         Ok(api) => api,
         Err(error) => {
             return AccountRanksResult {
+                availability: check_activity.then(|| {
+                    accounts
+                        .iter()
+                        .map(|account| AccountActivityCheck {
+                            account_id: account.id,
+                            availability: AccountAvailability::activity_check_failed(),
+                        })
+                        .collect()
+                }),
                 ranks: Vec::new(),
                 failures: accounts
                     .into_iter()
@@ -367,20 +390,35 @@ pub(in crate::ui) async fn fetch_account_ranks(
                         error: error.to_string(),
                     })
                     .collect(),
+                refreshed_sessions: Vec::new(),
             };
         }
     };
+    let api = &api;
+    let client_version = &client_version;
+    let loaded: Vec<_> = stream::iter(accounts)
+        .map(|account| fetch_account_rank(api, account, client_version.clone(), check_activity))
+        .buffer_unordered(ACCOUNTS_AT_ONCE)
+        .collect()
+        .await;
 
-    let mut result = AccountRanksResult::default();
-
-    for account in accounts {
-        let account_id = account.id;
-
-        match fetch_account_rank(&api, account, client_version.clone()).await {
+    let mut result = AccountRanksResult {
+        availability: check_activity.then(Vec::new),
+        ..AccountRanksResult::default()
+    };
+    for (account_id, rank, activity, refreshed) in loaded {
+        result.refreshed_sessions.extend(refreshed);
+        match rank {
             Ok(rank) => result.ranks.push(rank),
             Err(error) => result
                 .failures
                 .push(AccountRankFailure { account_id, error }),
+        }
+        if let (Some(checks), Some(availability)) = (&mut result.availability, activity) {
+            checks.push(AccountActivityCheck {
+                account_id,
+                availability,
+            });
         }
     }
 
@@ -407,12 +445,18 @@ pub(in crate::ui) async fn fetch_account_availabilities(
         }
     };
 
-    let mut result = AccountAvailabilityRefresh::default();
+    let api = &api;
+    let client_version = &client_version;
+    let checks: Vec<_> = stream::iter(accounts)
+        .map(|account| {
+            check_account_availability(api, account, client_version.clone(), ActivityDetail::Full)
+        })
+        .buffer_unordered(ACCOUNTS_AT_ONCE)
+        .collect()
+        .await;
 
-    for account in accounts {
-        let (check, refreshed) =
-            check_account_availability(&api, account, client_version.clone(), ActivityDetail::Full)
-                .await;
+    let mut result = AccountAvailabilityRefresh::default();
+    for (check, refreshed) in checks {
         result.accounts.push(check);
         result.refreshed_sessions.extend(refreshed);
     }
@@ -567,38 +611,73 @@ pub(in crate::ui) fn classify_account_activity(
     }
 }
 
+/// The account's details and, when `check_activity`, its activity, all requested at once after
+/// one sign-in. When every detail fails, the session it signed in with comes back on its own.
 async fn fetch_account_rank(
     api: &RiotApi,
     account: AccountProfile,
     client_version: String,
-) -> Result<AccountRankResult, String> {
+    check_activity: bool,
+) -> (
+    AccountId,
+    Result<AccountRankResult, String>,
+    Option<AccountAvailability>,
+    Option<RefreshedApiContext>,
+) {
     let account_id = account.id;
-    let resolved = resolve_credentials(api, &account, client_version).await?;
-    let rank = api
-        .player_mmr(&resolved.credentials, &resolved.credentials.puuid)
-        .await
-        .map(|response| competitive_rank_from_mmr(&response))
-        .map_err(|error| error.to_string());
-    let account_level = api
-        .account_xp(&resolved.credentials)
-        .await
-        .map(|response| response.progress.level)
-        .map_err(|error| error.to_string());
-    let penalty_status = api
-        .player_penalties(&resolved.credentials)
-        .await
-        .map(|response| penalty_status_from_response(&response, OffsetDateTime::now_utc()))
-        .map_err(|error| error.to_string());
+    let failed_activity = check_activity.then(AccountAvailability::activity_check_failed);
+    let resolved = match resolve_credentials(api, &account, client_version).await {
+        Ok(resolved) => resolved,
+        Err(error) => return (account_id, Err(error), failed_activity, None),
+    };
+    let credentials = &resolved.credentials;
+    let (rank, account_level, penalty_status, activity) = iced::futures::join!(
+        async {
+            api.player_mmr(credentials, &credentials.puuid)
+                .await
+                .map(|response| competitive_rank_from_mmr(&response))
+                .map_err(|error| error.to_string())
+        },
+        async {
+            api.account_xp(credentials)
+                .await
+                .map(|response| response.progress.level)
+                .map_err(|error| error.to_string())
+        },
+        async {
+            api.player_penalties(credentials)
+                .await
+                .map(|response| penalty_status_from_response(&response, OffsetDateTime::now_utc()))
+                .map_err(|error| error.to_string())
+        },
+        async {
+            match (check_activity, resolved.region) {
+                (false, _) => None,
+                (true, Some(region)) => Some(
+                    fetch_resolved_account_activity(api, credentials, region, ActivityDetail::Full)
+                        .await
+                        .into(),
+                ),
+                (true, None) => failed_activity.clone(),
+            }
+        },
+    );
 
     if let (Err(rank_error), Err(level_error), Err(penalty_error)) =
         (&rank, &account_level, &penalty_status)
     {
-        return Err(format!(
+        let error = format!(
             "rank unavailable: {rank_error}; level unavailable: {level_error}; penalty status unavailable: {penalty_error}"
-        ));
+        );
+        return (
+            account_id,
+            Err(error),
+            activity,
+            refreshed_api_context(&account, resolved),
+        );
     }
 
-    Ok(AccountRankResult {
+    let rank = AccountRankResult {
         account_id,
         rank,
         account_level,
@@ -606,7 +685,8 @@ async fn fetch_account_rank(
         session: resolved.session,
         launcher_session: resolved.launcher_session,
         identity: resolved.identity,
-    })
+    };
+    (account_id, Ok(rank), activity, None)
 }
 
 pub(in crate::ui) async fn fetch_profile_identity(
