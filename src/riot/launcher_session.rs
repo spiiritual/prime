@@ -656,7 +656,6 @@ rso-authenticator:
         assert!(!backup_root.path().join(account_id.to_string()).exists());
     }
 
-    #[cfg(windows)]
     #[test]
     fn failed_copy_keeps_the_previous_backup_intact() {
         use std::os::windows::fs::OpenOptionsExt;

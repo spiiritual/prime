@@ -9,11 +9,8 @@ pub enum SecretClipboardError {
     Busy,
     #[error("Windows could not write to the clipboard")]
     WriteFailed,
-    #[error("copying secrets is only supported on Windows")]
-    Unsupported,
 }
 
-#[cfg(windows)]
 pub fn copy_secret_text(text: &str) -> Result<(), SecretClipboardError> {
     use std::thread;
     use std::time::Duration;
@@ -78,7 +75,6 @@ pub fn copy_secret_text(text: &str) -> Result<(), SecretClipboardError> {
     result
 }
 
-#[cfg(windows)]
 fn set_clipboard_bytes(format: u32, bytes: &[u8]) -> Result<(), SecretClipboardError> {
     use windows_sys::Win32::Foundation::GlobalFree;
     use windows_sys::Win32::System::DataExchange::SetClipboardData;
@@ -111,12 +107,7 @@ fn set_clipboard_bytes(format: u32, bytes: &[u8]) -> Result<(), SecretClipboardE
     Ok(())
 }
 
-#[cfg(not(windows))]
-pub fn copy_secret_text(_text: &str) -> Result<(), SecretClipboardError> {
-    Err(SecretClipboardError::Unsupported)
-}
-
-#[cfg(all(test, windows))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

@@ -4,10 +4,8 @@ use std::{env, fs};
 
 use thiserror::Error;
 
-#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub const VALORANT_PROCESS_IMAGES: [&str; 2] = ["VALORANT-Win64-Shipping.exe", "VALORANT.exe"];
@@ -115,60 +113,47 @@ pub fn close_riot_client_processes() -> Result<(), LaunchError> {
 /// Ends every process running one of `images`, as `taskkill /F /IM` would, without starting a
 /// taskkill for each. Returns once they have exited, so their files are free to replace.
 fn close_process_images(images: impl IntoIterator<Item = &'static str>) -> Result<(), LaunchError> {
-    #[cfg(windows)]
-    {
-        use windows_sys::Win32::Foundation::CloseHandle;
-        use windows_sys::Win32::System::Threading::{
-            OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess,
-            WaitForSingleObject,
-        };
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
+    };
 
-        /// How long one process may take to exit before its files are touched anyway.
-        const EXIT_WAIT_MS: u32 = 3_000;
+    /// How long one process may take to exit before its files are touched anyway.
+    const EXIT_WAIT_MS: u32 = 3_000;
 
-        let images: Vec<&str> = images.into_iter().collect();
-        let processes = running_processes().map_err(LaunchError::CloseProcess)?;
-        // All are ended first and then waited for, so they exit together.
-        // SAFETY: each handle is checked before use and closed after.
-        let handles: Vec<_> = processes
-            .iter()
-            .filter(|process| process.is_one_of(&images))
-            .filter_map(|process| unsafe {
-                let handle = OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, 0, process.id);
-                // A process that already exited, or that this user can't end, is left as it is,
-                // like taskkill's errors were.
-                (!handle.is_null()).then(|| {
-                    TerminateProcess(handle, 1);
-                    handle
-                })
+    let images: Vec<&str> = images.into_iter().collect();
+    let processes = running_processes().map_err(LaunchError::CloseProcess)?;
+    // All are ended first and then waited for, so they exit together.
+    // SAFETY: each handle is checked before use and closed after.
+    let handles: Vec<_> = processes
+        .iter()
+        .filter(|process| process.is_one_of(&images))
+        .filter_map(|process| unsafe {
+            let handle = OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, 0, process.id);
+            // A process that already exited, or that this user can't end, is left as it is,
+            // like taskkill's errors were.
+            (!handle.is_null()).then(|| {
+                TerminateProcess(handle, 1);
+                handle
             })
-            .collect();
-        for handle in handles {
-            // SAFETY: as above.
-            unsafe {
-                WaitForSingleObject(handle, EXIT_WAIT_MS);
-                CloseHandle(handle);
-            }
+        })
+        .collect();
+    for handle in handles {
+        // SAFETY: as above.
+        unsafe {
+            WaitForSingleObject(handle, EXIT_WAIT_MS);
+            CloseHandle(handle);
         }
     }
-
-    #[cfg(not(windows))]
-    let _ = images;
 
     Ok(())
 }
 
-#[cfg(windows)]
 pub fn valorant_process_is_running() -> Result<bool, LaunchError> {
     Ok(running_processes()
         .map_err(LaunchError::ListProcesses)?
         .iter()
         .any(|process| process.is_one_of(&VALORANT_PROCESS_IMAGES)))
-}
-
-#[cfg(not(windows))]
-pub fn valorant_process_is_running() -> Result<bool, LaunchError> {
-    Ok(false)
 }
 
 pub fn launch_target_window_is_visible() -> Result<Option<LaunchTargetProcess>, LaunchError> {
@@ -179,27 +164,14 @@ pub fn launch_target_window_is_visible() -> Result<Option<LaunchTargetProcess>, 
     Ok(None)
 }
 
-#[cfg(windows)]
 pub fn valorant_window_is_visible() -> Result<bool, LaunchError> {
     visible_window_belongs_to_process_image(&VALORANT_PROCESS_IMAGES)
 }
 
-#[cfg(not(windows))]
-pub fn valorant_window_is_visible() -> Result<bool, LaunchError> {
-    Ok(false)
-}
-
-#[cfg(windows)]
 pub fn riot_client_window_is_visible() -> Result<bool, LaunchError> {
     visible_window_belongs_to_process_image(&RIOT_CLIENT_PROCESS_IMAGES)
 }
 
-#[cfg(not(windows))]
-pub fn riot_client_window_is_visible() -> Result<bool, LaunchError> {
-    Ok(false)
-}
-
-#[cfg(windows)]
 fn visible_window_belongs_to_process_image(image_names: &[&str]) -> Result<bool, LaunchError> {
     let visible_process_ids = visible_top_level_window_process_ids();
 
@@ -214,7 +186,6 @@ fn visible_window_belongs_to_process_image(image_names: &[&str]) -> Result<bool,
 }
 
 fn configure_no_console_window(command: &mut Command) {
-    #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
 }
 
@@ -234,7 +205,6 @@ impl RunningProcess {
 
 /// Every running process's ID and executable name, from one Toolhelp snapshot. Starting
 /// tasklist for this took hundreds of milliseconds.
-#[cfg(windows)]
 fn running_processes() -> std::io::Result<Vec<RunningProcess>> {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
@@ -271,7 +241,6 @@ fn running_processes() -> std::io::Result<Vec<RunningProcess>> {
     }
 }
 
-#[cfg(windows)]
 fn visible_top_level_window_process_ids() -> Vec<u32> {
     mod user32 {
         use std::ffi::c_void;
@@ -471,7 +440,6 @@ mod tests {
         assert!(!process.is_one_of(&RIOT_CLIENT_PROCESS_IMAGES));
     }
 
-    #[cfg(windows)]
     #[test]
     fn closing_an_image_ends_its_processes() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -490,7 +458,6 @@ mod tests {
         assert_eq!(status.code(), Some(1));
     }
 
-    #[cfg(windows)]
     #[test]
     fn running_processes_include_this_test() {
         let this = std::process::id();

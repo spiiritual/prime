@@ -226,7 +226,6 @@ fn write_synced(path: &Path, contents: &[u8]) -> io::Result<()> {
     file.sync_all()
 }
 
-#[cfg(windows)]
 fn replace_file_atomically(source: &Path, destination: &Path) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -256,11 +255,6 @@ fn replace_file_atomically(source: &Path, destination: &Path) -> io::Result<()> 
     } else {
         Ok(())
     }
-}
-
-#[cfg(not(windows))]
-fn replace_file_atomically(source: &Path, destination: &Path) -> io::Result<()> {
-    fs::rename(source, destination)
 }
 
 #[derive(Debug, Error)]
