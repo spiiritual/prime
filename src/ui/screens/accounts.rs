@@ -829,11 +829,16 @@ fn rank_cell<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, 
 
     let cell = row![rank_icon(icon, 22.0)]
         .push(
-            text(label)
-                .size(13)
-                .font(theme::SEMIBOLD_FONT)
-                .color(color)
-                .wrapping(Wrapping::None),
+            // Inter's capitals sit a pixel above the middle of their line at this size, so the
+            // label moves down a pixel to line up with the icon's center.
+            container(
+                text(label)
+                    .size(13)
+                    .font(theme::SEMIBOLD_FONT)
+                    .color(color)
+                    .wrapping(Wrapping::None),
+            )
+            .padding(Padding::ZERO.top(2)),
         )
         .spacing(8)
         .align_y(alignment::Vertical::Center)
