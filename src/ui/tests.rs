@@ -35,7 +35,7 @@ use super::data::session::{
 };
 use super::data::shop::{
     AccessoryKind, BundleItem, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
-    StoreSummary, format_whole_number,
+    StoreSummary, currency_balances_from_wallet, format_whole_number,
 };
 use super::{
     Message, PendingSettingsChange, PendingSettingsCheck, PresetNamePrompt, PresetNameTarget,
@@ -303,7 +303,13 @@ fn store_summary_counts_night_market() {
         display_icon2: None,
         vertical_promo_image: None,
     }]);
-    let summary = StoreSummary::from_response(response, &catalog, &bundles, &currencies);
+    let summary = StoreSummary::from_response(
+        response,
+        &catalog,
+        &bundles,
+        &currencies,
+        &AccessoryCatalog::default(),
+    );
 
     assert_eq!(
         summary
@@ -336,25 +342,6 @@ fn store_summary_counts_night_market() {
 
 #[test]
 fn store_summary_orders_currency_balances() {
-    let response: StorefrontResponse = serde_json::from_value(serde_json::json!({
-        "FeaturedBundle": {
-            "Bundle": {
-                "ID": "bundle",
-                "DataAssetID": "asset",
-                "CurrencyID": "vp",
-                "Items": [],
-                "DurationRemainingInSeconds": 10
-            },
-            "Bundles": [],
-            "BundleRemainingDurationInSeconds": 20
-        },
-        "SkinsPanelLayout": {
-            "SingleItemOffers": [],
-            "SingleItemStoreOffers": [],
-            "SingleItemOffersRemainingDurationInSeconds": 30
-        }
-    }))
-    .expect("response");
     let wallet: WalletResponse = serde_json::from_value(serde_json::json!({
         "Balances": {
             "85ca954a-41f2-ce94-9b45-8ca3dd39a00d": 9000,
@@ -364,17 +351,8 @@ fn store_summary_orders_currency_balances() {
     }))
     .expect("wallet");
 
-    let summary = StoreSummary::from_response_with_wallet(
-        response,
-        Some(wallet),
-        &SkinCatalog::default(),
-        &BundleCatalog::default(),
-        &CurrencyCatalog::default(),
-    );
-
     assert_eq!(
-        summary
-            .currency_balances
+        currency_balances_from_wallet(&wallet, &CurrencyCatalog::default())
             .iter()
             .map(|balance| (balance.amount, balance.currency.display_name.as_str()))
             .collect::<Vec<_>>(),
@@ -437,7 +415,7 @@ fn store_summary_includes_accessory_store_offers() {
         vec![],
     );
 
-    let summary = StoreSummary::from_response_with_accessories(
+    let summary = StoreSummary::from_response(
         response,
         &SkinCatalog::default(),
         &BundleCatalog::default(),
@@ -487,7 +465,6 @@ fn summary_with_bundles(
 
     StoreSummary::from_response_at(
         response,
-        None,
         &SkinCatalog::default(),
         &BundleCatalog::default(),
         &CurrencyCatalog::default(),
@@ -638,6 +615,7 @@ fn store_summary_keeps_distinct_featured_bundle_entries_with_shared_asset() {
         &SkinCatalog::default(),
         &bundles,
         &CurrencyCatalog::default(),
+        &AccessoryCatalog::default(),
     );
 
     assert_eq!(summary.featured_bundles.len(), 2);

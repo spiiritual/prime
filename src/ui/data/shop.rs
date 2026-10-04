@@ -28,61 +28,8 @@ pub(in crate::ui) struct StoreSummary {
 }
 
 impl StoreSummary {
-    #[cfg(test)]
     pub(in crate::ui) fn from_response(
         response: StorefrontResponse,
-        skins: &SkinCatalog,
-        bundles: &BundleCatalog,
-        currencies: &CurrencyCatalog,
-    ) -> Self {
-        Self::from_response_with_wallet_and_accessories(
-            response,
-            None,
-            skins,
-            bundles,
-            currencies,
-            &AccessoryCatalog::default(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(in crate::ui) fn from_response_with_wallet(
-        response: StorefrontResponse,
-        wallet: Option<WalletResponse>,
-        skins: &SkinCatalog,
-        bundles: &BundleCatalog,
-        currencies: &CurrencyCatalog,
-    ) -> Self {
-        Self::from_response_with_wallet_and_accessories(
-            response,
-            wallet,
-            skins,
-            bundles,
-            currencies,
-            &AccessoryCatalog::default(),
-        )
-    }
-
-    pub(in crate::ui) fn from_response_with_accessories(
-        response: StorefrontResponse,
-        skins: &SkinCatalog,
-        bundles: &BundleCatalog,
-        currencies: &CurrencyCatalog,
-        accessories: &AccessoryCatalog,
-    ) -> Self {
-        Self::from_response_with_wallet_and_accessories(
-            response,
-            None,
-            skins,
-            bundles,
-            currencies,
-            accessories,
-        )
-    }
-
-    pub(in crate::ui) fn from_response_with_wallet_and_accessories(
-        response: StorefrontResponse,
-        wallet: Option<WalletResponse>,
         skins: &SkinCatalog,
         bundles: &BundleCatalog,
         currencies: &CurrencyCatalog,
@@ -90,7 +37,6 @@ impl StoreSummary {
     ) -> Self {
         Self::from_response_at(
             response,
-            wallet,
             skins,
             bundles,
             currencies,
@@ -101,7 +47,6 @@ impl StoreSummary {
 
     pub(in crate::ui) fn from_response_at(
         response: StorefrontResponse,
-        wallet: Option<WalletResponse>,
         skins: &SkinCatalog,
         bundles: &BundleCatalog,
         currencies: &CurrencyCatalog,
@@ -166,10 +111,7 @@ impl StoreSummary {
             .unwrap_or_default();
 
         Self {
-            currency_balances: wallet
-                .as_ref()
-                .map(|wallet| currency_balances_from_wallet(wallet, currencies))
-                .unwrap_or_default(),
+            currency_balances: Vec::new(),
             currency_balance_error: None,
             featured_bundles,
             daily_offers,
@@ -953,7 +895,7 @@ pub(in crate::ui) async fn fetch_storefront(
     );
     let mut summary = storefront
         .map(|response| {
-            StoreSummary::from_response_with_accessories(
+            StoreSummary::from_response(
                 response,
                 &metadata.weapon_content.skins,
                 &metadata.bundles,
