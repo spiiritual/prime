@@ -6,8 +6,6 @@ use thiserror::Error;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
-#[cfg(windows)]
-use std::process::Stdio;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -114,20 +112,43 @@ pub fn close_riot_client_processes() -> Result<(), LaunchError> {
     close_process_images(RIOT_CLIENT_PROCESS_IMAGES)
 }
 
+/// Ends every process running one of `images`, as `taskkill /F /IM` would, without starting a
+/// taskkill for each. Returns once they have exited, so their files are free to replace.
 fn close_process_images(images: impl IntoIterator<Item = &'static str>) -> Result<(), LaunchError> {
     #[cfg(windows)]
     {
-        for image in images {
-            let mut command = Command::new("taskkill");
-            configure_no_console_window(&mut command);
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess,
+            WaitForSingleObject,
+        };
 
-            let _ = command
-                .args(["/F", "/IM", image])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .output()
-                .map_err(LaunchError::CloseProcess)?;
+        /// How long one process may take to exit before its files are touched anyway.
+        const EXIT_WAIT_MS: u32 = 3_000;
+
+        let images: Vec<&str> = images.into_iter().collect();
+        let processes = running_processes().map_err(LaunchError::CloseProcess)?;
+        // All are ended first and then waited for, so they exit together.
+        // SAFETY: each handle is checked before use and closed after.
+        let handles: Vec<_> = processes
+            .iter()
+            .filter(|process| process.is_one_of(&images))
+            .filter_map(|process| unsafe {
+                let handle = OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, 0, process.id);
+                // A process that already exited, or that this user can't end, is left as it is,
+                // like taskkill's errors were.
+                (!handle.is_null()).then(|| {
+                    TerminateProcess(handle, 1);
+                    handle
+                })
+            })
+            .collect();
+        for handle in handles {
+            // SAFETY: as above.
+            unsafe {
+                WaitForSingleObject(handle, EXIT_WAIT_MS);
+                CloseHandle(handle);
+            }
         }
     }
 
@@ -137,13 +158,16 @@ fn close_process_images(images: impl IntoIterator<Item = &'static str>) -> Resul
     Ok(())
 }
 
+#[cfg(windows)]
 pub fn valorant_process_is_running() -> Result<bool, LaunchError> {
-    for image_name in VALORANT_PROCESS_IMAGES {
-        if process_is_running(image_name)? {
-            return Ok(true);
-        }
-    }
+    Ok(running_processes()
+        .map_err(LaunchError::ListProcesses)?
+        .iter()
+        .any(|process| process.is_one_of(&VALORANT_PROCESS_IMAGES)))
+}
 
+#[cfg(not(windows))]
+pub fn valorant_process_is_running() -> Result<bool, LaunchError> {
     Ok(false)
 }
 
@@ -183,42 +207,10 @@ fn visible_window_belongs_to_process_image(image_names: &[&str]) -> Result<bool,
         return Ok(false);
     }
 
-    let mut command = Command::new("tasklist");
-    configure_no_console_window(&mut command);
-
-    let output = command
-        .args(["/FO", "CSV", "/NH"])
-        .stderr(Stdio::null())
-        .output()
-        .map_err(LaunchError::ListProcesses)?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    Ok(tasklist_contains_pid_with_image(
-        &stdout,
-        &visible_process_ids,
-        image_names,
-    ))
-}
-
-#[cfg(windows)]
-fn process_is_running(image_name: &str) -> Result<bool, LaunchError> {
-    let filter = format!("IMAGENAME eq {image_name}");
-    let mut command = Command::new("tasklist");
-    configure_no_console_window(&mut command);
-
-    let output = command
-        .args(["/FI", &filter, "/FO", "CSV", "/NH"])
-        .stderr(Stdio::null())
-        .output()
-        .map_err(LaunchError::ListProcesses)?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    Ok(tasklist_contains_image(&stdout, image_name))
-}
-
-#[cfg(not(windows))]
-fn process_is_running(_: &str) -> Result<bool, LaunchError> {
-    Ok(false)
+    Ok(running_processes()
+        .map_err(LaunchError::ListProcesses)?
+        .iter()
+        .any(|process| visible_process_ids.contains(&process.id) && process.is_one_of(image_names)))
 }
 
 fn configure_no_console_window(command: &mut Command) {
@@ -226,74 +218,57 @@ fn configure_no_console_window(command: &mut Command) {
     command.creation_flags(CREATE_NO_WINDOW);
 }
 
-fn tasklist_contains_image(output: &str, image_name: &str) -> bool {
-    output.lines().any(|line| {
-        tasklist_image_name(line)
-            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(image_name))
-    })
-}
-
-fn tasklist_image_name(line: &str) -> Option<&str> {
-    let line = line.trim();
-
-    if let Some(rest) = line.strip_prefix('"') {
-        return rest.split_once('"').map(|(image_name, _)| image_name);
-    }
-
-    line.split_whitespace().next()
-}
-
-fn tasklist_contains_pid_with_image(
-    output: &str,
-    process_ids: &[u32],
-    image_names: &[&str],
-) -> bool {
-    output.lines().any(|line| {
-        tasklist_process_info(line).is_some_and(|process| {
-            process_ids.contains(&process.process_id)
-                && image_names
-                    .iter()
-                    .any(|image| process.image_name.eq_ignore_ascii_case(image))
-        })
-    })
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct TasklistProcessInfo {
+struct RunningProcess {
+    id: u32,
     image_name: String,
-    process_id: u32,
 }
 
-fn tasklist_process_info(line: &str) -> Option<TasklistProcessInfo> {
-    let (image_name, process_id) = tasklist_first_two_fields(line)?;
-    let process_id = process_id.trim().parse::<u32>().ok()?;
-
-    Some(TasklistProcessInfo {
-        image_name: image_name.to_string(),
-        process_id,
-    })
+impl RunningProcess {
+    fn is_one_of(&self, image_names: &[&str]) -> bool {
+        image_names
+            .iter()
+            .any(|image| self.image_name.eq_ignore_ascii_case(image))
+    }
 }
 
-fn tasklist_first_two_fields(line: &str) -> Option<(&str, &str)> {
-    let line = line.trim();
+/// Every running process's ID and executable name, from one Toolhelp snapshot. Starting
+/// tasklist for this took hundreds of milliseconds.
+#[cfg(windows)]
+fn running_processes() -> std::io::Result<Vec<RunningProcess>> {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
 
-    if let Some(rest) = line.strip_prefix('"') {
-        let (image_name, rest) = rest.split_once('"')?;
-        let process_id = rest.strip_prefix(',')?.trim_start();
-
-        if let Some(process_id) = process_id.strip_prefix('"') {
-            return process_id
-                .split_once('"')
-                .map(|(process_id, _)| (image_name, process_id));
+    // SAFETY: the snapshot handle is checked, only read through `entry` with its size set, and
+    // closed before returning.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return Err(std::io::Error::last_os_error());
         }
 
-        return process_id
-            .split_once(',')
-            .map(|(process_id, _)| (image_name, process_id));
-    }
+        let mut processes = Vec::new();
+        let mut entry = PROCESSENTRY32W {
+            dwSize: size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        let mut more = Process32FirstW(snapshot, &mut entry) != 0;
+        while more {
+            let name = &entry.szExeFile;
+            let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+            processes.push(RunningProcess {
+                id: entry.th32ProcessID,
+                image_name: String::from_utf16_lossy(&name[..len]),
+            });
+            more = Process32NextW(snapshot, &mut entry) != 0;
+        }
+        CloseHandle(snapshot);
 
-    let mut fields = line.split_whitespace();
-    Some((fields.next()?, fields.next()?))
+        Ok(processes)
+    }
 }
 
 #[cfg(windows)]
@@ -486,100 +461,43 @@ mod tests {
     }
 
     #[test]
-    fn tasklist_output_detects_valorant_process() {
-        let output = r#""VALORANT-Win64-Shipping.exe","1234","Console","1","120,000 K""#;
+    fn process_image_names_match_in_any_case() {
+        let process = RunningProcess {
+            id: 1234,
+            image_name: "valorant-win64-shipping.exe".to_string(),
+        };
 
-        assert!(tasklist_contains_image(
-            output,
-            "VALORANT-Win64-Shipping.exe"
-        ));
+        assert!(process.is_one_of(&VALORANT_PROCESS_IMAGES));
+        assert!(!process.is_one_of(&RIOT_CLIENT_PROCESS_IMAGES));
     }
 
+    #[cfg(windows)]
     #[test]
-    fn tasklist_output_ignores_no_matching_process_message() {
-        let output = "INFO: No tasks are running which match the specified criteria.";
+    fn closing_an_image_ends_its_processes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let exe = dir.path().join("prime-close-test.exe");
+        fs::copy(r"C:\Windows\System32\ping.exe", &exe).expect("copy ping");
+        let mut child = Command::new(&exe)
+            .args(["-n", "30", "127.0.0.1"])
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("start ping copy");
 
-        assert!(!tasklist_contains_image(
-            output,
-            "VALORANT-Win64-Shipping.exe"
-        ));
+        close_process_images(["prime-close-test.exe"]).expect("close");
+
+        // Already exited by the time closing returns.
+        let status = child.try_wait().expect("check").expect("exited");
+        assert_eq!(status.code(), Some(1));
     }
 
+    #[cfg(windows)]
     #[test]
-    fn tasklist_output_supports_table_fallback() {
-        let output = "VALORANT.exe   1234 Console  1  120,000 K";
+    fn running_processes_include_this_test() {
+        let this = std::process::id();
 
-        assert!(tasklist_contains_image(output, "VALORANT.exe"));
-    }
+        let processes = running_processes().expect("process snapshot");
 
-    #[test]
-    fn tasklist_process_info_parses_csv_pid() {
-        let output = r#""RiotClientUx.exe","1234","Console","1","120,000 K""#;
-
-        assert_eq!(
-            tasklist_process_info(output),
-            Some(TasklistProcessInfo {
-                image_name: "RiotClientUx.exe".to_string(),
-                process_id: 1234,
-            })
-        );
-    }
-
-    #[test]
-    fn tasklist_process_info_supports_table_fallback() {
-        let output = "RiotClientUx.exe   1234 Console  1  120,000 K";
-
-        assert_eq!(
-            tasklist_process_info(output),
-            Some(TasklistProcessInfo {
-                image_name: "RiotClientUx.exe".to_string(),
-                process_id: 1234,
-            })
-        );
-    }
-
-    #[test]
-    fn riot_client_visible_window_match_requires_visible_pid() {
-        let output = r#""RiotClientUx.exe","1234","Console","1","120,000 K"
-"VALORANT.exe","5678","Console","1","120,000 K""#;
-
-        assert!(tasklist_contains_pid_with_image(
-            output,
-            &[1234],
-            &RIOT_CLIENT_PROCESS_IMAGES
-        ));
-        assert!(!tasklist_contains_pid_with_image(
-            output,
-            &[5678],
-            &RIOT_CLIENT_PROCESS_IMAGES
-        ));
-    }
-
-    #[test]
-    fn valorant_visible_window_match_requires_visible_pid() {
-        let output = r#""VALORANT-Win64-Shipping.exe","1234","Console","1","120,000 K"
-"RiotClientUx.exe","5678","Console","1","120,000 K""#;
-
-        assert!(tasklist_contains_pid_with_image(
-            output,
-            &[1234],
-            &VALORANT_PROCESS_IMAGES
-        ));
-        assert!(!tasklist_contains_pid_with_image(
-            output,
-            &[5678],
-            &VALORANT_PROCESS_IMAGES
-        ));
-    }
-
-    #[test]
-    fn riot_client_visible_window_match_supports_service_process() {
-        let output = r#""RiotClientServices.exe","1234","Console","1","120,000 K""#;
-
-        assert!(tasklist_contains_pid_with_image(
-            output,
-            &[1234],
-            &RIOT_CLIENT_PROCESS_IMAGES
-        ));
+        assert!(processes.iter().any(|process| process.id == this
+            && process.image_name.to_ascii_lowercase().ends_with(".exe")));
     }
 }

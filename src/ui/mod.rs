@@ -121,7 +121,8 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
         subscriptions.push(iced::time::every(LOADING_TICK_INTERVAL).map(|_| Message::LoadingTick));
     }
 
-    if app.launching_account.is_some() {
+    // Once Riot Client shows, the button stops waiting for it.
+    if app.launching_account.is_some() && !app.launch_client_open {
         subscriptions.push(
             iced::time::every(LAUNCH_PROGRESS_CHECK_INTERVAL).map(|_| Message::LaunchProgressTick),
         );
