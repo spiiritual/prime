@@ -434,10 +434,12 @@ pub struct SkinCatalog {
 }
 
 impl SkinCatalog {
+    #[cfg(test)]
     pub fn from_skins(skins: Vec<WeaponSkin>) -> Self {
         Self::from_skins_and_tiers(skins, &ContentTierCatalog::default())
     }
 
+    #[cfg(test)]
     pub fn from_skins_and_tiers(skins: Vec<WeaponSkin>, tiers: &ContentTierCatalog) -> Self {
         Self::from_weapon_skins(skins.into_iter().map(|skin| (None, skin)), tiers)
     }

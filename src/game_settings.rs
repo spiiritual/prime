@@ -216,6 +216,7 @@ impl GameSettingsProfileRepository {
         serde_json::from_str(&contents).map_err(GameSettingsError::Json)
     }
 
+    #[cfg(test)]
     pub fn profile_metadata(&self) -> Result<Vec<GameSettingsProfileMetadata>, GameSettingsError> {
         let mut profiles = self.saved_metadata()?;
         profiles.retain(|profile| profile.purpose == GameSettingsProfilePurpose::Profile);
