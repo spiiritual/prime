@@ -275,7 +275,9 @@ pub enum StorageError {
 mod tests {
     use tempfile::tempdir;
 
-    use crate::account::{AccountPenaltyStatus, AccountProfile, CompetitiveRank, Shard};
+    use crate::account::{
+        AccountPenaltyDuration, AccountPenaltyStatus, AccountProfile, CompetitiveRank, Shard,
+    };
 
     use super::*;
 
@@ -453,7 +455,10 @@ mod tests {
         let dir = tempdir().expect("temp dir");
         let repo = AccountRepository::new(dir.path().join("accounts.json"));
         let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
-        account.penalty_status = AccountPenaltyStatus::penalized(Some("Premier comms".to_string()));
+        account.penalty_status = AccountPenaltyStatus::penalized_for(
+            Some("Premier comms".to_string()),
+            AccountPenaltyDuration::default(),
+        );
         let mut state = StoredState::default();
         state.push_account(account);
 

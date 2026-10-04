@@ -237,10 +237,6 @@ impl AccountPenaltyDuration {
         }
     }
 
-    pub fn unknown() -> Self {
-        Self::default()
-    }
-
     fn label_at(&self, now: OffsetDateTime) -> Option<String> {
         let time_label = self.ends_at_unix.map(|ends_at_unix| {
             let seconds = ends_at_unix.saturating_sub(now.unix_timestamp());
@@ -313,31 +309,11 @@ pub enum AccountPenaltyStatus {
 }
 
 impl AccountPenaltyStatus {
-    pub fn penalized(rating_name: Option<String>) -> Self {
-        Self::penalized_for(rating_name, AccountPenaltyDuration::unknown())
-    }
-
+    #[cfg(test)]
     pub fn penalized_for(rating_name: Option<String>, duration: AccountPenaltyDuration) -> Self {
-        Self::penalized_many(vec![AccountPenalty::new(rating_name, duration)])
-    }
-
-    pub fn penalized_many(penalties: Vec<AccountPenalty>) -> Self {
-        let penalties = penalties
-            .into_iter()
-            .map(|penalty| AccountPenalty::new(penalty.rating_name, penalty.duration))
-            .collect::<Vec<_>>();
-
         Self::Penalized {
-            penalties: if penalties.is_empty() {
-                vec![AccountPenalty::new(None, AccountPenaltyDuration::unknown())]
-            } else {
-                penalties
-            },
+            penalties: vec![AccountPenalty::new(rating_name, duration)],
         }
-    }
-
-    pub fn is_penalized(&self) -> bool {
-        matches!(self, Self::Penalized { .. })
     }
 
     pub fn tooltip_label(&self) -> Option<String> {
@@ -794,17 +770,18 @@ mod tests {
         let account = AccountProfile::new("Main", Shard::Na).expect("account");
 
         assert_eq!(account.penalty_status, AccountPenaltyStatus::Unchecked);
-        assert!(!account.penalty_status.is_penalized());
     }
 
     #[test]
     fn penalty_status_tooltip_uses_rating_name_when_available() {
         assert_eq!(
-            AccountPenaltyStatus::penalized(Some("AFK".to_string())).tooltip_label(),
+            AccountPenaltyStatus::penalized_for(Some("AFK".to_string()), Default::default())
+                .tooltip_label(),
             Some("Penalized: AFK".to_string())
         );
         assert_eq!(
-            AccountPenaltyStatus::penalized(Some("  ".to_string())).tooltip_label(),
+            AccountPenaltyStatus::penalized_for(Some("  ".to_string()), Default::default())
+                .tooltip_label(),
             Some("Penalized".to_string())
         );
     }
@@ -833,7 +810,8 @@ mod tests {
         let now = OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
 
         assert_eq!(
-            AccountPenaltyStatus::penalized_many(vec![
+            AccountPenaltyStatus::Penalized {
+                penalties: vec![
                 AccountPenalty::new(
                     Some("comms".to_string()),
                     AccountPenaltyDuration::new(Some(1_800_003_600), None),
@@ -842,7 +820,7 @@ mod tests {
                     Some("AFK".to_string()),
                     AccountPenaltyDuration::new(Some(1_800_007_200), Some(1)),
                 )
-            ])
+            ]}
             .tooltip_label_at(now),
             Some(
                 "Penalized: comms - Ends in 1h 0m 0s\nPenalized: AFK - Ends in 2h 0m 0s (1 game remaining)"

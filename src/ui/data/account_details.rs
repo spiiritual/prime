@@ -212,12 +212,12 @@ pub(in crate::ui) fn penalty_status_from_response(
         AccountPenaltyStatus::NotPenalized
     } else {
         active_penalties.sort_by_key(|penalty| penalty.sort_key);
-        AccountPenaltyStatus::penalized_many(
-            active_penalties
+        AccountPenaltyStatus::Penalized {
+            penalties: active_penalties
                 .into_iter()
                 .map(|summary| summary.penalty)
                 .collect(),
-        )
+        }
     }
 }
 

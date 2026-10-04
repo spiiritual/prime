@@ -805,22 +805,24 @@ fn penalty_status_includes_all_active_penalties() {
             &penalty_response([Some("2027-02-01T00:00:00Z"), Some("2027-03-01T00:00:00Z")]),
             now
         ),
-        AccountPenaltyStatus::penalized_many(vec![
-            AccountPenalty::new(
-                Some("Queue Dodge".to_string()),
-                AccountPenaltyDuration::new(
-                    Some(expiry_timestamp("2027-02-01T00:00:00Z")),
-                    Some(1)
+        AccountPenaltyStatus::Penalized {
+            penalties: vec![
+                AccountPenalty::new(
+                    Some("Queue Dodge".to_string()),
+                    AccountPenaltyDuration::new(
+                        Some(expiry_timestamp("2027-02-01T00:00:00Z")),
+                        Some(1)
+                    )
+                ),
+                AccountPenalty::new(
+                    Some("Queue Dodge".to_string()),
+                    AccountPenaltyDuration::new(
+                        Some(expiry_timestamp("2027-03-01T00:00:00Z")),
+                        Some(1)
+                    )
                 )
-            ),
-            AccountPenalty::new(
-                Some("Queue Dodge".to_string()),
-                AccountPenaltyDuration::new(
-                    Some(expiry_timestamp("2027-03-01T00:00:00Z")),
-                    Some(1)
-                )
-            )
-        ])
+            ]
+        }
     );
 }
 
