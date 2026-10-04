@@ -108,7 +108,7 @@ pub(super) fn fills_page(app: &PrimeApp) -> bool {
 }
 
 /// Whether to show the names and levels players hide, beside the page title.
-pub(super) fn hidden_details_toggle(app: &PrimeApp) -> Element<'_, Message> {
+pub(in crate::ui) fn hidden_details_toggle(app: &PrimeApp) -> Element<'_, Message> {
     let on = app.show_hidden_details;
     let knob = container(space()).width(14).height(14).style(move |_| {
         container::Style::default()

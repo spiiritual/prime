@@ -6,7 +6,7 @@ use iced::widget::operation::{AbsoluteOffset, scroll_to};
 use iced::widget::{checkbox, column, container, row, space, stack};
 use iced::{Color, Element, Length, Padding, Rectangle, Task, Theme, Vector, alignment};
 
-use crate::ui::components::anchored_popover;
+use crate::ui::components::{anchored_popover, card_style};
 use crate::ui::data::live_match::{LIVE_MATCH_WEAPON_GROUPS, shown_weapons, weapon_name};
 use crate::ui::data::{format_bytes, typed_riot_client_path};
 use crate::ui::shell::popover_style;
@@ -562,7 +562,7 @@ fn storage_controls(app: &PrimeApp) -> Element<'_, Message> {
     )
     .padding(14)
     .width(Length::Fill)
-    .style(card_style);
+    .style(|_| card_style(10.0));
 
     column![
         column![
@@ -840,18 +840,8 @@ fn token_import_controls(app: &PrimeApp) -> Element<'_, Message> {
     )
     .padding(14)
     .width(Length::Fill)
-    .style(card_style)
+    .style(|_| card_style(10.0))
     .into()
-}
-
-fn card_style(_: &Theme) -> container::Style {
-    container::Style::default()
-        .background(theme::SURFACE)
-        .border(iced::Border {
-            color: theme::LINE,
-            width: 1.0,
-            radius: 10.0.into(),
-        })
 }
 
 fn clear_cache_style(

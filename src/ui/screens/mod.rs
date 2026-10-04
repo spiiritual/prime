@@ -10,12 +10,15 @@ use iced::Element;
 use super::theme::text;
 use super::{Message, PrimeApp, Tab};
 
+pub(super) use accounts::header_actions as accounts_header_actions;
 #[cfg(test)]
 pub(super) use accounts::missing_rank_label;
 pub(super) use accounts::{captured_on_label, save_settings_on_add_checkbox};
 pub(super) use game_settings::original_settings;
 #[cfg(test)]
 pub(super) use game_settings::selected_preset;
+pub(super) use live_match::hidden_details_toggle as live_match_hidden_details_toggle;
+pub(super) use loadout::sub_tabs as loadout_sub_tabs;
 pub(super) use settings::scroll_to_settings_section;
 pub(super) use shop::bundle_details;
 
@@ -38,21 +41,6 @@ pub(super) fn fills_page(app: &PrimeApp, tab: Tab) -> bool {
         Tab::Settings => false,
         Tab::LiveMatch => live_match::fills_page(app),
     }
-}
-
-/// Import, Add current and Add account, beside the Accounts title.
-pub(super) fn accounts_header_actions(app: &PrimeApp) -> Element<'_, Message> {
-    accounts::header_actions(app)
-}
-
-/// Loadout's Skins and Battle Pass switch, which sits beside the page title.
-pub(super) fn loadout_sub_tabs(app: &PrimeApp) -> Element<'_, Message> {
-    loadout::sub_tabs(app)
-}
-
-/// Whether to show what players hide, beside the Live Match title.
-pub(super) fn live_match_hidden_details_toggle(app: &PrimeApp) -> Element<'_, Message> {
-    live_match::hidden_details_toggle(app)
 }
 
 /// A tab's menu that stays beside its scrolling page; only Settings has one.

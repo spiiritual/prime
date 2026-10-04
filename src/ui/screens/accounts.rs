@@ -77,7 +77,7 @@ fn settings_profiles_open(app: &PrimeApp) -> bool {
 }
 
 /// Import, Add current and Add account, beside the page title.
-pub(super) fn header_actions(app: &PrimeApp) -> Element<'_, Message> {
+pub(in crate::ui) fn header_actions(app: &PrimeApp) -> Element<'_, Message> {
     let capture_idle = !app.launcher_capture_in_progress && !app.launch_in_progress();
     let capturing = |kind| app.launcher_capture_kind == Some(kind);
 

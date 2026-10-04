@@ -94,7 +94,7 @@ pub(super) fn fills_page(app: &PrimeApp) -> bool {
 }
 
 /// Skins and Battle Pass, beside the page title.
-pub(super) fn sub_tabs(app: &PrimeApp) -> Element<'_, Message> {
+pub(in crate::ui) fn sub_tabs(app: &PrimeApp) -> Element<'_, Message> {
     let tab_button = |tab: LoadoutTab| {
         let selected = app.active_loadout_tab == tab;
         button(text(tab.to_string()).size(13).font(if selected {
