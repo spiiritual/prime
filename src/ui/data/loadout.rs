@@ -585,50 +585,13 @@ fn ids_match(left: &str, right: &str) -> bool {
 }
 
 fn remaining_seconds_until_utc_at(end_time: &str, now: OffsetDateTime) -> Option<i64> {
-    let end = parse_utc_timestamp(end_time)?;
+    let end = OffsetDateTime::parse(end_time.trim(), &Rfc3339).ok()?;
 
     Some(
         end.unix_timestamp()
             .saturating_sub(now.unix_timestamp())
             .max(0),
     )
-}
-
-fn parse_utc_timestamp(value: &str) -> Option<OffsetDateTime> {
-    let trimmed = value.trim();
-    let timestamp = trimmed
-        .strip_suffix('Z')
-        .or_else(|| trimmed.strip_suffix("+00:00"))
-        .unwrap_or(trimmed);
-    let (date, time) = timestamp.split_once('T')?;
-    let mut date_parts = date.split('-');
-    let year = date_parts.next()?.parse::<i32>().ok()?;
-    let month = date_parts.next()?.parse::<u8>().ok()?;
-    let day = date_parts.next()?.parse::<u8>().ok()?;
-
-    if date_parts.next().is_some() {
-        return None;
-    }
-
-    let mut time_parts = time.split(':');
-    let hour = time_parts.next()?.parse::<u8>().ok()?;
-    let minute = time_parts.next()?.parse::<u8>().ok()?;
-    let second_part = time_parts.next()?;
-
-    if time_parts.next().is_some() {
-        return None;
-    }
-
-    let second = second_part
-        .split_once('.')
-        .map(|(seconds, _)| seconds)
-        .unwrap_or(second_part)
-        .parse::<u8>()
-        .ok()?;
-    let date = Date::from_calendar_date(year, Month::try_from(month).ok()?, day).ok()?;
-    let time = Time::from_hms(hour, minute, second).ok()?;
-
-    Some(PrimitiveDateTime::new(date, time).assume_utc())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
