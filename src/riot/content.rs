@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use iced::futures::try_join;
 use serde::{Deserialize, de::DeserializeOwned};
 use thiserror::Error;
 
@@ -40,8 +41,10 @@ impl ValorantContentApi {
     /// Weapons and their skins. `/v1/weapons` already embeds every skin, so this avoids a second
     /// multi-megabyte download of `/v1/weapons/skins`.
     pub async fn weapon_content(&self) -> Result<WeaponContent, ContentError> {
-        let weapons = self.content_data::<Vec<Weapon>>(WEAPONS_URL).await?;
-        let tiers = self.content_tier_catalog().await?;
+        let (weapons, tiers) = try_join!(
+            self.content_data::<Vec<Weapon>>(WEAPONS_URL),
+            self.content_tier_catalog()
+        )?;
 
         Ok(WeaponContent::from_weapons_and_tiers(weapons, &tiers))
     }
@@ -66,15 +69,13 @@ impl ValorantContentApi {
     }
 
     pub async fn accessory_catalog(&self) -> Result<AccessoryCatalog, ContentError> {
-        let buddies = self.content_data::<Vec<Buddy>>(BUDDIES_URL).await?;
-        let sprays = self.content_data::<Vec<Spray>>(SPRAYS_URL).await?;
-        let player_cards = self
-            .content_data::<Vec<PlayerCard>>(PLAYER_CARDS_URL)
-            .await?;
-        let player_titles = self
-            .content_data::<Vec<PlayerTitle>>(PLAYER_TITLES_URL)
-            .await?;
-        let flex = self.content_data::<Vec<Flex>>(FLEX_URL).await?;
+        let (buddies, sprays, player_cards, player_titles, flex) = try_join!(
+            self.content_data::<Vec<Buddy>>(BUDDIES_URL),
+            self.content_data::<Vec<Spray>>(SPRAYS_URL),
+            self.content_data::<Vec<PlayerCard>>(PLAYER_CARDS_URL),
+            self.content_data::<Vec<PlayerTitle>>(PLAYER_TITLES_URL),
+            self.content_data::<Vec<Flex>>(FLEX_URL)
+        )?;
 
         Ok(
             AccessoryCatalog::from_parts(buddies, sprays, player_cards, player_titles)
@@ -107,9 +108,11 @@ impl ValorantContentApi {
 
     /// Map, queue and agent names for a live match.
     pub async fn match_catalog(&self) -> Result<MatchCatalog, ContentError> {
-        let maps = self.content_data::<Vec<Map>>(MAPS_URL).await?;
-        let queues = self.content_data::<Vec<Queue>>(QUEUES_URL).await?;
-        let agents = self.content_data::<Vec<Agent>>(AGENTS_URL).await?;
+        let (maps, queues, agents) = try_join!(
+            self.content_data::<Vec<Map>>(MAPS_URL),
+            self.content_data::<Vec<Queue>>(QUEUES_URL),
+            self.content_data::<Vec<Agent>>(AGENTS_URL)
+        )?;
 
         Ok(MatchCatalog::from_parts(maps, queues, agents))
     }
