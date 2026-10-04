@@ -17,9 +17,66 @@ use super::image_assets::{
 use super::loadout::{SkinDisplay, resolve_current_skin};
 use super::session::{has_saved_login, resolve_credentials};
 
-/// The weapons whose skins the page shows, in its column order: Vandal, Phantom, Sheriff,
-/// Operator.
-pub(in crate::ui) const SHOWN_WEAPONS: [&str; 4] = [
+/// The weapons whose skins the page can show, by category in collection order, as ID and name.
+pub(in crate::ui) const LIVE_MATCH_WEAPON_GROUPS: [(&str, &[(&str, &str)]); 7] = [
+    (
+        "Sidearms",
+        &[
+            ("29a0cfab-485b-f5d5-779a-b59f85e204a8", "Classic"),
+            ("42da8ccc-40d5-affc-beec-15aa47b42eda", "Shorty"),
+            ("44d4e95c-4157-0037-81b2-17841bf2e8e3", "Frenzy"),
+            ("1baa85b4-4c70-1284-64bb-6481dfc3bb4e", "Ghost"),
+            ("e336c6b8-418d-9340-d77f-7a9e4cfe0702", "Sheriff"),
+            ("410b2e0b-4ceb-1321-1727-20858f7f3477", "Bandit"),
+        ],
+    ),
+    (
+        "SMGs",
+        &[
+            ("f7e1b454-4ad4-1063-ec0a-159e56b58941", "Stinger"),
+            ("462080d1-4035-2937-7c09-27aa2a5c27a7", "Spectre"),
+        ],
+    ),
+    (
+        "Shotguns",
+        &[
+            ("910be174-449b-c412-ab22-d0873436b21b", "Bucky"),
+            ("ec845bf4-4f79-ddda-a3da-0db3774b2794", "Judge"),
+        ],
+    ),
+    (
+        "Rifles",
+        &[
+            ("ae3de142-4d85-2547-dd26-4e90bed35cf7", "Bulldog"),
+            ("4ade7faa-4cf1-8376-95ef-39884480959b", "Guardian"),
+            ("8db0a1bf-4a50-832a-4566-faaaa6d250ca", "Warden"),
+            ("ee8e8d15-496b-07ac-e5f6-8fae5d4c7b1a", "Phantom"),
+            ("9c82e19d-4575-0200-1a81-3eacf00cf872", "Vandal"),
+        ],
+    ),
+    (
+        "Snipers",
+        &[
+            ("c4883e50-4494-202c-3ec3-6b8a9284f00b", "Marshal"),
+            ("5f0aaf7a-4289-3998-d5ff-eb9a5cf7ef5c", "Outlaw"),
+            ("a03b24d3-4319-996d-0f8c-94bbfba1dfc7", "Operator"),
+        ],
+    ),
+    (
+        "Heavies",
+        &[
+            ("55d8a0f4-4274-ca67-fe2c-06ab45efdf58", "Ares"),
+            ("63e6c2b6-4a8e-869c-3d4c-e38355226584", "Odin"),
+        ],
+    ),
+    (
+        "Melee",
+        &[("2f59173c-4bed-b6c3-2191-dea9b58be9c7", "Melee")],
+    ),
+];
+/// Shown until the user picks others in Settings: Vandal, Phantom, Sheriff, Operator. Four is
+/// as many skin columns as fit the page at the window's minimum width.
+const DEFAULT_SHOWN_WEAPONS: [&str; 4] = [
     "9c82e19d-4575-0200-1a81-3eacf00cf872",
     "ee8e8d15-496b-07ac-e5f6-8fae5d4c7b1a",
     "e336c6b8-418d-9340-d77f-7a9e4cfe0702",
@@ -77,6 +134,8 @@ pub(in crate::ui) struct LiveMatch {
     pub(in crate::ui) score: Result<MatchScore, ScoreUnavailable>,
     pub(in crate::ui) allies: Vec<LivePlayer>,
     pub(in crate::ui) enemies: Vec<LivePlayer>,
+    /// The weapon IDs the players' skins are for, in column order.
+    pub(in crate::ui) weapons: Vec<String>,
     /// Whether every player's skins have loaded, so they aren't asked for again.
     pub(in crate::ui) loadouts_loaded: bool,
 }
@@ -96,7 +155,8 @@ pub(in crate::ui) struct LivePlayer {
     pub(in crate::ui) name: Option<(String, String)>,
     pub(in crate::ui) card_id: Option<String>,
     pub(in crate::ui) rank: RankState,
-    pub(in crate::ui) skins: [SkinCell; 4],
+    /// One per weapon in `LiveMatch::weapons`; empty until they load.
+    pub(in crate::ui) skins: Vec<SkinCell>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -125,6 +185,7 @@ pub(in crate::ui) async fn fetch_live_match(
     client_version: String,
     image_cache: ImageCache,
     previous: Option<LiveMatch>,
+    weapons: Vec<String>,
 ) -> Result<LiveMatchResult, LiveMatchError> {
     let request = |error: RiotApiError| LiveMatchError::Request(error.to_string());
     let api = RiotApi::shared().map_err(request)?;
@@ -173,6 +234,7 @@ pub(in crate::ui) async fn fetch_live_match(
                 live
             }
         };
+        show_weapons(&mut live, weapons);
         fill_missing(&api, credentials, region, &mut live, &image_cache).await;
         (AccountActivity::InMatch, Some(live))
     } else if let Some(player) = api
@@ -198,6 +260,7 @@ pub(in crate::ui) async fn fetch_live_match(
             Some(path) => Some(path),
             None => map_art(catalog.as_deref(), &response.map_id, &image_cache).await,
         };
+        show_weapons(&mut live, weapons);
         fill_missing(&api, credentials, region, &mut live, &image_cache).await;
         (AccountActivity::AgentSelect, Some(live))
     } else if api
@@ -217,6 +280,68 @@ pub(in crate::ui) async fn fetch_live_match(
         live,
         refreshed: refreshed_api_context(&account, resolved),
     })
+}
+
+/// The weapons Settings shows, or the default set unless the saved choice is as many different
+/// known weapons, which a hand-edited accounts.json may not be.
+pub(in crate::ui) fn shown_weapons(saved: Option<&[String]>) -> Vec<String> {
+    let known = |id: &String| {
+        LIVE_MATCH_WEAPON_GROUPS
+            .iter()
+            .flat_map(|(_, weapons)| weapons.iter())
+            .any(|(known, _)| known == id)
+    };
+    match saved {
+        Some(weapons)
+            if weapons.len() == DEFAULT_SHOWN_WEAPONS.len()
+                && weapons.iter().all(known)
+                && weapons
+                    .iter()
+                    .enumerate()
+                    .all(|(index, id)| !weapons[..index].contains(id)) =>
+        {
+            weapons.to_vec()
+        }
+        _ => DEFAULT_SHOWN_WEAPONS.map(str::to_string).to_vec(),
+    }
+}
+
+/// The saved choice after picking a weapon for a column. A weapon already in another column
+/// swaps into this one's old place, and the default set saves as `None`.
+pub(in crate::ui) fn pick_shown_weapon(
+    saved: Option<&[String]>,
+    column: usize,
+    weapon: &str,
+) -> Option<Vec<String>> {
+    let mut weapons = shown_weapons(saved);
+    if column < weapons.len() {
+        match weapons.iter().position(|id| id == weapon) {
+            Some(other) => weapons.swap(column, other),
+            None => weapons[column] = weapon.to_string(),
+        }
+    }
+    (weapons != DEFAULT_SHOWN_WEAPONS).then_some(weapons)
+}
+
+/// The column header for a weapon ID.
+pub(in crate::ui) fn weapon_name(weapon: &str) -> &'static str {
+    LIVE_MATCH_WEAPON_GROUPS
+        .iter()
+        .flat_map(|(_, weapons)| weapons.iter())
+        .find(|(id, _)| id.eq_ignore_ascii_case(weapon))
+        .map_or("Weapon", |(_, name)| name)
+}
+
+/// Skins loaded for other weapons than Settings now shows are dropped and load again.
+fn show_weapons(live: &mut LiveMatch, weapons: Vec<String>) {
+    if live.weapons == weapons {
+        return;
+    }
+    live.weapons = weapons;
+    live.loadouts_loaded = false;
+    for player in live.allies.iter_mut().chain(live.enemies.iter_mut()) {
+        player.skins.clear();
+    }
 }
 
 async fn map_art(
@@ -301,9 +426,10 @@ async fn fill_missing(
     );
 
     if let Some(((loadouts, valid), weapon_content)) = loadouts {
+        let weapons = live.weapons.clone();
         for loadout in &loadouts {
             if let Some(player) = player_mut(live, &loadout.subject) {
-                player.skins = skin_cells(loadout, &weapon_content);
+                player.skins = skin_cells(loadout, &weapon_content, &weapons);
                 for cell in &mut player.skins {
                     if let SkinCell::Skin(skin) = cell {
                         cache_skin_icon(skin, image_cache).await;
@@ -386,6 +512,7 @@ pub(in crate::ui) fn live_match_from_core_game(
         score: Err(ScoreUnavailable::NotFound),
         allies,
         enemies,
+        weapons: Vec::new(),
         loadouts_loaded: false,
     };
     carry_over(&mut live, previous);
@@ -440,6 +567,7 @@ pub(in crate::ui) fn live_match_from_pregame(
         allies,
         // Riot doesn't reveal the enemy team until the match starts.
         enemies: Vec::new(),
+        weapons: Vec::new(),
         loadouts_loaded: false,
     };
     carry_over(&mut live, previous);
@@ -467,7 +595,7 @@ fn live_player(
         name: None,
         card_id: Some(identity.player_card_id.clone()).filter(|id| !id.trim().is_empty()),
         rank: RankState::Unavailable(RANK_NOT_LOADED.to_string()),
-        skins: std::array::from_fn(|_| SkinCell::Unavailable),
+        skins: Vec::new(),
     }
 }
 
@@ -489,6 +617,7 @@ fn carry_over(live: &mut LiveMatch, previous: Option<&LiveMatch>) {
         player.rank = old.rank.clone();
         player.skins = old.skins.clone();
     }
+    live.weapons.clone_from(&previous.weapons);
     live.loadouts_loaded = previous.loadouts_loaded && previous.phase == live.phase;
 }
 
@@ -507,30 +636,38 @@ fn mode_name(catalog: Option<&MatchCatalog>, queue_id: Option<&str>) -> Option<S
 }
 
 /// The skins of the shown weapons. A weapon's own default skin is "Standard", told by its ID.
-pub(in crate::ui) fn skin_cells(loadout: &MatchLoadout, content: &WeaponContent) -> [SkinCell; 4] {
-    SHOWN_WEAPONS.map(|weapon_id| {
-        let Some(skin_id) = loadout.socket_item(weapon_id, SKIN_SOCKET) else {
-            return SkinCell::Unavailable;
-        };
-        let is_default = content
-            .weapons
-            .resolve(weapon_id)
-            .default_skin_uuid
-            .is_some_and(|default| default.eq_ignore_ascii_case(skin_id));
-        if is_default {
-            return SkinCell::Standard;
-        }
-        SkinCell::Skin(SkinDisplay::from(resolve_current_skin(
-            &content.skins,
-            skin_id,
-            loadout
-                .socket_item(weapon_id, SKIN_LEVEL_SOCKET)
-                .unwrap_or_default(),
-            loadout
-                .socket_item(weapon_id, CHROMA_SOCKET)
-                .unwrap_or_default(),
-        )))
-    })
+pub(in crate::ui) fn skin_cells(
+    loadout: &MatchLoadout,
+    content: &WeaponContent,
+    weapons: &[String],
+) -> Vec<SkinCell> {
+    weapons
+        .iter()
+        .map(|weapon_id| {
+            let weapon_id = weapon_id.as_str();
+            let Some(skin_id) = loadout.socket_item(weapon_id, SKIN_SOCKET) else {
+                return SkinCell::Unavailable;
+            };
+            let is_default = content
+                .weapons
+                .resolve(weapon_id)
+                .default_skin_uuid
+                .is_some_and(|default| default.eq_ignore_ascii_case(skin_id));
+            if is_default {
+                return SkinCell::Standard;
+            }
+            SkinCell::Skin(SkinDisplay::from(resolve_current_skin(
+                &content.skins,
+                skin_id,
+                loadout
+                    .socket_item(weapon_id, SKIN_LEVEL_SOCKET)
+                    .unwrap_or_default(),
+                loadout
+                    .socket_item(weapon_id, CHROMA_SOCKET)
+                    .unwrap_or_default(),
+            )))
+        })
+        .collect()
 }
 
 /// The city in Riot's game server ID, such as "Ashburn" for
@@ -829,7 +966,8 @@ mod tests {
             live_match_from_pregame(AccountId::new(), "self", &pregame(), Some(&catalog()), None);
         agent_select.allies[1].name = Some(("Ally".to_string(), "NA1".to_string()));
         agent_select.allies[1].rank = ranked(19);
-        agent_select.allies[1].skins[0] = SkinCell::Standard;
+        agent_select.allies[1].skins = vec![SkinCell::Standard];
+        agent_select.weapons = vec!["vandal".to_string()];
         agent_select.loadouts_loaded = true;
 
         let live = in_match(Some(&agent_select));
@@ -837,7 +975,8 @@ mod tests {
         let ally = &live.allies[0];
         assert_eq!(ally.name, Some(("Ally".to_string(), "NA1".to_string())));
         assert_eq!(ally.rank, ranked(19));
-        assert_eq!(ally.skins[0], SkinCell::Standard);
+        assert_eq!(ally.skins, [SkinCell::Standard]);
+        assert_eq!(live.weapons, ["vandal"]);
         // The match's loadouts include the enemies, so they still load.
         assert!(!live.loadouts_loaded);
         assert!(matches!(live.enemies[0].rank, RankState::Unavailable(_)));
@@ -898,7 +1037,8 @@ mod tests {
 
     #[test]
     fn standard_skins_are_told_by_the_weapons_default_skin_id() {
-        let vandal = SHOWN_WEAPONS[0];
+        let vandal = DEFAULT_SHOWN_WEAPONS[0];
+        let shown = shown_weapons(None);
         let content = WeaponContent::from_weapons_and_tiers(
             vec![Weapon {
                 uuid: vandal.to_string(),
@@ -927,12 +1067,69 @@ mod tests {
             .expect("loadout")
         };
 
-        let standard = skin_cells(&loadout("DEFAULT-SKIN"), &content);
-        let prime = skin_cells(&loadout("prime-skin"), &content);
+        let standard = skin_cells(&loadout("DEFAULT-SKIN"), &content, &shown);
+        let prime = skin_cells(&loadout("prime-skin"), &content, &shown);
 
         assert_eq!(standard[0], SkinCell::Standard);
         assert!(matches!(&prime[0], SkinCell::Skin(skin) if skin.display_name == "Prime Vandal"));
         assert_eq!(prime[1], SkinCell::Unavailable);
+    }
+
+    #[test]
+    fn picking_a_column_replaces_it_or_swaps_with_the_weapons_other_column() {
+        let names = |weapons: &[String]| -> Vec<&str> {
+            weapons.iter().map(|id| weapon_name(id)).collect()
+        };
+        let id = |name| {
+            LIVE_MATCH_WEAPON_GROUPS
+                .iter()
+                .flat_map(|(_, weapons)| weapons.iter())
+                .find(|(_, weapon)| *weapon == name)
+                .map(|(id, _)| *id)
+                .expect("weapon")
+        };
+        assert_eq!(
+            names(&shown_weapons(None)),
+            ["Vandal", "Phantom", "Sheriff", "Operator"]
+        );
+
+        let ghost = pick_shown_weapon(None, 2, id("Ghost")).expect("changed");
+        assert_eq!(names(&ghost), ["Vandal", "Phantom", "Ghost", "Operator"]);
+
+        let swapped = pick_shown_weapon(Some(&ghost), 0, id("Operator")).expect("changed");
+        assert_eq!(names(&swapped), ["Operator", "Phantom", "Ghost", "Vandal"]);
+
+        // Back to the default saves nothing.
+        assert_eq!(pick_shown_weapon(Some(&ghost), 2, id("Sheriff")), None);
+    }
+
+    #[test]
+    fn a_saved_choice_that_isnt_four_different_known_weapons_shows_the_default() {
+        let default = shown_weapons(None);
+        let mut duplicate = default.clone();
+        duplicate[1] = duplicate[0].clone();
+        let mut unknown = default.clone();
+        unknown[3] = "not-a-weapon".to_string();
+
+        for saved in [&default[..3], &duplicate[..], &unknown[..], &[]] {
+            assert_eq!(shown_weapons(Some(saved)), default);
+        }
+    }
+
+    #[test]
+    fn changing_the_shown_weapons_reloads_skins() {
+        let mut live = in_match(None);
+        live.weapons = shown_weapons(None);
+        live.allies[0].skins = vec![SkinCell::Standard; 4];
+        live.loadouts_loaded = true;
+
+        show_weapons(&mut live, shown_weapons(None));
+        assert!(live.loadouts_loaded);
+
+        show_weapons(&mut live, vec!["melee".to_string()]);
+        assert!(!live.loadouts_loaded);
+        assert!(live.allies[0].skins.is_empty());
+        assert_eq!(live.weapons, ["melee"]);
     }
 
     #[test]

@@ -34,7 +34,7 @@ use super::data::launch_flow::{
     finish_verified_launcher_session_login, launch_account, load_accounts, prepare_login_capture,
     start_current_account_capture, valorant_is_running,
 };
-use super::data::live_match::{LiveMatchError, fetch_live_match};
+use super::data::live_match::{LiveMatchError, fetch_live_match, pick_shown_weapon, shown_weapons};
 use super::data::loadout::fetch_loadout;
 use super::data::shop::fetch_storefront;
 use super::data::{cache_account_api_context, typed_riot_client_path};
@@ -115,6 +115,7 @@ impl PrimeApp {
                 settings_profiles: Vec::new(),
                 expanded_presets: std::collections::HashSet::new(),
                 open_preset_menu: None,
+                open_weapon_picker: None,
                 selected_preset: None,
                 preset_name_prompt: None,
                 settings_saving_account: None,
@@ -271,6 +272,7 @@ impl PrimeApp {
         } else if self.account_switcher_open
             || self.open_account_menu.is_some()
             || self.open_preset_menu.is_some()
+            || self.open_weapon_picker.is_some()
         {
             Message::DismissPopovers
         } else if self.settings_check.is_some() {
@@ -288,6 +290,7 @@ impl PrimeApp {
         self.account_switcher_open = false;
         self.open_account_menu = None;
         self.open_preset_menu = None;
+        self.open_weapon_picker = None;
     }
 
     /// Shows a status message. Setting the same text again restarts its display time, so a
@@ -373,6 +376,7 @@ impl PrimeApp {
                 self.now = iced::time::Instant::now();
                 self.image_viewer = None;
                 self.bundle_details = None;
+                self.open_weapon_picker = None;
                 self.close_account_surfaces();
                 self.unavailable_launch_warning = None;
                 Task::batch([
@@ -1257,6 +1261,29 @@ impl PrimeApp {
                     return Task::none();
                 }
                 self.state.minimize_on_close = enabled;
+                self.save_task()
+            }
+            Message::LiveMatchWeaponPicked { column, weapon } => {
+                // Loading accounts.json would undo a change made before it arrives.
+                if !self.accounts_loaded {
+                    return Task::none();
+                }
+                self.open_weapon_picker = None;
+                self.state.live_match_weapons =
+                    pick_shown_weapon(self.state.live_match_weapons.as_deref(), column, weapon);
+                self.save_task()
+            }
+            Message::ToggleWeaponPicker(column) => {
+                self.open_weapon_picker =
+                    (self.open_weapon_picker != Some(column)).then_some(column);
+                Task::none()
+            }
+            Message::ResetLiveMatchWeapons => {
+                if !self.accounts_loaded {
+                    return Task::none();
+                }
+                self.open_weapon_picker = None;
+                self.state.live_match_weapons = None;
                 self.save_task()
             }
             Message::AccountAvailabilitiesLoaded(result) => {
@@ -2991,6 +3018,7 @@ impl PrimeApp {
                 self.client_version_input.clone(),
                 self.image_cache.clone(),
                 previous,
+                shown_weapons(self.state.live_match_weapons.as_deref()),
             ),
             move |result| Message::LiveMatchLoaded(request.id, result),
         )
@@ -3053,7 +3081,17 @@ impl PrimeApp {
             .insert(result.account_id, iced::time::Instant::now());
         self.live_match = result.live;
         self.live_match_error = None;
-        Task::batch([save, self.player_card_art_task()])
+        // Columns changed in Settings while this load ran load again, rather than a minute later.
+        let stale_columns = self.active_tab == Tab::LiveMatch
+            && self.live_match.as_ref().is_some_and(|live| {
+                live.weapons != shown_weapons(self.state.live_match_weapons.as_deref())
+            });
+        let reload = if stale_columns {
+            self.poll_live_match()
+        } else {
+            Task::none()
+        };
+        Task::batch([save, self.player_card_art_task(), reload])
     }
 
     /// Remembers the player card an account's loadout reported, for its avatar.

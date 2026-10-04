@@ -6,13 +6,21 @@ use iced::widget::operation::{AbsoluteOffset, scroll_to};
 use iced::widget::{checkbox, column, container, row, space, stack};
 use iced::{Color, Element, Length, Padding, Rectangle, Task, Theme, Vector, alignment};
 
+use crate::ui::components::anchored_popover;
+use crate::ui::data::live_match::{LIVE_MATCH_WEAPON_GROUPS, shown_weapons, weapon_name};
 use crate::ui::data::{format_bytes, typed_riot_client_path};
+use crate::ui::shell::popover_style;
 use crate::ui::theme::{self, Icon, button, text};
 use crate::ui::{AppUpdateStatus, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, SettingsSection};
 
 const SECTION_NAV_WIDTH: f32 = 170.0;
 const KEY_WIDTH: f32 = 110.0;
 const ERROR_TEXT: Color = iced::color!(0xFF8A94);
+const WEAPON_SLOT_WIDTH: f32 = 148.0;
+const WEAPON_SLOT_HEIGHT: f32 = 36.0;
+const WEAPON_PICKER_WIDTH: f32 = 452.0;
+const OPEN_SLOT_BORDER: Color = iced::color!(0x3A4250);
+const CURRENT_PILL_BORDER: Color = iced::color!(0xFF4F5E, 0x55 as f32 / 255.0);
 
 /// Sits beside the scrolling page, so it stays in view.
 pub(super) fn section_nav(app: &PrimeApp) -> Element<'_, Message> {
@@ -44,6 +52,12 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
                 .into(),
         ),
         section(
+            SettingsSection::LiveMatch,
+            "The weapons whose skins show beside each player, left to right. Click a column to \
+             change it.",
+            live_match_weapon_controls(app),
+        ),
+        section(
             SettingsSection::Storage,
             "Profiles hold session tokens only, never passwords.",
             storage_controls(app),
@@ -68,6 +82,7 @@ fn section_id(section: SettingsSection) -> Id {
     Id::new(match section {
         SettingsSection::RiotClient => "settings-riot-client",
         SettingsSection::SystemTray => "settings-system-tray",
+        SettingsSection::LiveMatch => "settings-live-match",
         SettingsSection::Storage => "settings-storage",
         SettingsSection::Updates => "settings-updates",
         SettingsSection::Advanced => "settings-advanced",
@@ -145,10 +160,7 @@ fn section_nav_item(section: SettingsSection, selected: bool) -> Element<'static
         .style(move |_, status| {
             let background = if selected {
                 Some(theme::SURFACE.into())
-            } else if matches!(
-                status,
-                iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
-            ) {
+            } else if hovered(status) {
                 Some(
                     Color {
                         a: 0.5,
@@ -285,6 +297,234 @@ fn riot_client_path_controls(app: &PrimeApp) -> Element<'_, Message> {
     ]
     .spacing(6)
     .into()
+}
+
+/// A slot per skin column, left to right as on the page, each opening a weapon picker.
+fn live_match_weapon_controls(app: &PrimeApp) -> Element<'_, Message> {
+    let shown = shown_weapons(app.state.live_match_weapons.as_deref());
+    let mut columns = shown
+        .iter()
+        .enumerate()
+        .fold(row![].spacing(8), |columns, (column, weapon)| {
+            let open = app.open_weapon_picker == Some(column);
+            columns.push(anchored_popover(
+                weapon_slot(column, weapon_name(weapon), open),
+                weapon_picker(column, &shown),
+                open,
+                WEAPON_SLOT_HEIGHT + 6.0,
+                // The popover lines up with its anchor's right edge, so a negative inset of
+                // the width difference lines it up with the slot's left edge instead.
+                WEAPON_SLOT_WIDTH - WEAPON_PICKER_WIDTH,
+            ))
+        })
+        .align_y(alignment::Vertical::Center)
+        .width(Length::Fill);
+    if app.state.live_match_weapons.is_some() {
+        columns = columns.push(space().width(Length::Fill)).push(
+            iced::widget::button(
+                row![
+                    theme::icon(Icon::RotateCcw, 13.0, theme::MUTED),
+                    text("Reset to default")
+                        .size(12)
+                        .font(theme::MEDIUM_FONT)
+                        .color(theme::MUTED),
+                ]
+                .spacing(6)
+                .align_y(alignment::Vertical::Center),
+            )
+            .padding([8, 10])
+            .style(|_, status| iced::widget::button::Style {
+                background: hovered(status).then(|| theme::SURFACE.into()),
+                border: iced::border::rounded(8),
+                ..Default::default()
+            })
+            .on_press(Message::ResetLiveMatchWeapons),
+        );
+    }
+    columns.into()
+}
+
+fn hovered(status: iced::widget::button::Status) -> bool {
+    matches!(
+        status,
+        iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+    )
+}
+
+/// The column's number, weapon and a chevron, raised while its picker is open.
+fn weapon_slot(column: usize, name: &'static str, open: bool) -> Element<'static, Message> {
+    iced::widget::button(
+        row![
+            text((column + 1).to_string())
+                .size(11)
+                .font(theme::MONO_SEMIBOLD_FONT)
+                .line_height(theme::MONO_LINE_HEIGHT)
+                .color(theme::FAINT),
+            text(name)
+                .size(13)
+                .font(theme::SEMIBOLD_FONT)
+                .width(Length::Fill),
+            theme::icon(
+                if open {
+                    Icon::ChevronUp
+                } else {
+                    Icon::ChevronDown
+                },
+                14.0,
+                if open { theme::TEXT } else { theme::MUTED },
+            ),
+        ]
+        .spacing(10)
+        .height(Length::Fill)
+        .align_y(alignment::Vertical::Center),
+    )
+    .padding(Padding {
+        top: 0.0,
+        right: 10.0,
+        bottom: 0.0,
+        left: 12.0,
+    })
+    .width(WEAPON_SLOT_WIDTH)
+    .height(WEAPON_SLOT_HEIGHT)
+    .style(move |_, status| iced::widget::button::Style {
+        background: Some(if open || hovered(status) {
+            theme::RAISED.into()
+        } else {
+            theme::SURFACE.into()
+        }),
+        text_color: theme::TEXT,
+        border: iced::Border {
+            color: if open { OPEN_SLOT_BORDER } else { theme::LINE },
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        ..Default::default()
+    })
+    .on_press(Message::ToggleWeaponPicker(column))
+    .into()
+}
+
+/// Every weapon by category. The column's own weapon is highlighted, and weapons in other
+/// columns show that column's number, since picking one swaps the two.
+fn weapon_picker(column: usize, shown: &[String]) -> Element<'static, Message> {
+    let groups = LIVE_MATCH_WEAPON_GROUPS.into_iter().fold(
+        column![].spacing(10),
+        |groups, (category, weapons)| {
+            let pills = weapons.iter().fold(
+                row![].spacing(2).align_y(alignment::Vertical::Center),
+                |pills, &(id, name)| {
+                    let at = shown.iter().position(|shown| shown == id);
+                    pills.push(weapon_pill(column, id, name, at))
+                },
+            );
+            groups.push(
+                row![
+                    text(category.to_uppercase())
+                        .size(9)
+                        .font(theme::SEMIBOLD_FONT)
+                        .color(theme::FAINT)
+                        .width(64),
+                    pills,
+                ]
+                .spacing(8)
+                .align_y(alignment::Vertical::Center),
+            )
+        },
+    );
+    let hint = row![
+        theme::icon(Icon::ArrowLeftRight, 12.0, theme::FAINT),
+        text("Numbered weapons are in another column. Picking one swaps the two.")
+            .size(11)
+            .color(theme::FAINT),
+    ]
+    .spacing(6)
+    .align_y(alignment::Vertical::Center);
+
+    // Opaque, so clicks on its gaps don't reach the page under it.
+    iced::widget::opaque(
+        container(
+            column![
+                groups,
+                container(space())
+                    .width(Length::Fill)
+                    .height(1)
+                    .style(|_| container::Style::default().background(theme::LINE)),
+                hint,
+            ]
+            .spacing(10),
+        )
+        .padding(Padding {
+            top: 12.0,
+            right: 12.0,
+            bottom: 10.0,
+            left: 12.0,
+        })
+        .width(WEAPON_PICKER_WIDTH)
+        .style(popover_style),
+    )
+}
+
+/// `at` is the column the weapon is already in, if any.
+fn weapon_pill(
+    column: usize,
+    id: &'static str,
+    name: &'static str,
+    at: Option<usize>,
+) -> Element<'static, Message> {
+    let current = at == Some(column);
+    let label = text(name).size(12).font(if current {
+        theme::SEMIBOLD_FONT
+    } else {
+        theme::MEDIUM_FONT
+    });
+    let content: Element<_> = match at {
+        Some(other) if other != column => row![
+            label.color(theme::MUTED),
+            container(
+                text((other + 1).to_string())
+                    .size(9)
+                    .font(theme::MONO_SEMIBOLD_FONT)
+                    .line_height(theme::MONO_LINE_HEIGHT)
+                    .color(theme::MUTED),
+            )
+            .center(14)
+            .style(|_| {
+                container::Style::default()
+                    .background(theme::LINE)
+                    .border(iced::border::rounded(4))
+            }),
+        ]
+        .spacing(5)
+        .align_y(alignment::Vertical::Center)
+        .into(),
+        _ => label.into(),
+    };
+
+    iced::widget::button(content)
+        .padding([5, 8])
+        .style(move |_, status| {
+            let background = if current {
+                Some(theme::ACCENT_SOFT.into())
+            } else {
+                hovered(status).then(|| theme::MENU_HOVER.into())
+            };
+            iced::widget::button::Style {
+                background,
+                text_color: theme::TEXT,
+                border: iced::Border {
+                    color: if current {
+                        CURRENT_PILL_BORDER
+                    } else {
+                        Color::TRANSPARENT
+                    },
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .on_press(Message::LiveMatchWeaponPicked { column, weapon: id })
+        .into()
 }
 
 fn storage_controls(app: &PrimeApp) -> Element<'_, Message> {
@@ -494,11 +734,7 @@ fn token_import_controls(app: &PrimeApp) -> Element<'_, Message> {
             .padding([10, 12])
             .width(Length::Fill)
             .style(|_, status| iced::widget::button::Style {
-                background: matches!(
-                    status,
-                    iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
-                )
-                .then(|| theme::SURFACE.into()),
+                background: hovered(status).then(|| theme::SURFACE.into()),
                 text_color: theme::TEXT,
                 border: iced::Border {
                     color: theme::LINE,

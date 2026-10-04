@@ -26,6 +26,9 @@ pub struct StoredState {
         skip_serializing_if = "Clone::clone"
     )]
     pub minimize_on_close: bool,
+    /// The weapon IDs whose skins Live Match shows, in column order. `None` is the default set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_match_weapons: Option<Vec<String>>,
 }
 
 fn minimize_on_close_default() -> bool {
@@ -40,6 +43,7 @@ impl Default for StoredState {
             selected_account: None,
             riot_client_path: None,
             minimize_on_close: minimize_on_close_default(),
+            live_match_weapons: None,
         }
     }
 }

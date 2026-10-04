@@ -34,7 +34,6 @@ const ACCOUNT_MENU_WIDTH: f32 = 232.0;
 /// Where the menu opens under its row, and how far in from the row's right edge.
 const ACCOUNT_MENU_TOP_OFFSET: f32 = 44.0;
 const ACCOUNT_MENU_RIGHT_INSET: f32 = 8.0;
-const MENU_ITEM_HOVER: Color = iced::color!(0x262C38);
 const DANGER_TEXT: Color = iced::color!(0xFF8A94);
 const CAPTURE_TEXT: Color = iced::color!(0x231A05);
 const SEARCH_WIDTH: f32 = 220.0;
@@ -1089,7 +1088,7 @@ pub(super) fn menu_item(
             status,
             iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
         )
-        .then(|| MENU_ITEM_HOVER.into()),
+        .then(|| theme::MENU_HOVER.into()),
         border: iced::border::rounded(6),
         ..Default::default()
     })

@@ -12,7 +12,7 @@ use crate::ui::components::{
 use crate::ui::data::account_details::{AccountAvailability, Busy};
 use crate::ui::data::live_match::{
     LiveMatch, LiveMatchError, LivePlayer, MatchPhase, RankState, ShownIdentity, SkinCell,
-    agent_line, match_meta, match_title, shown_identity, team_average_rank,
+    agent_line, match_meta, match_title, shown_identity, team_average_rank, weapon_name,
 };
 use crate::ui::data::shop::RarityTier;
 use crate::ui::theme::{self, Icon, button, text};
@@ -26,7 +26,6 @@ const RANK_WIDTH: f32 = 140.0;
 const SKIN_WIDTH: f32 = 112.0;
 const SKIN_HEIGHT: f32 = 40.0;
 const MATCH_BAR_HEIGHT: f32 = 65.0;
-const WEAPON_HEADERS: [&str; 4] = ["VANDAL", "PHANTOM", "SHERIFF", "OPERATOR"];
 /// A skin's glow and outline, as on Loadout's tiles.
 const SKIN_GLOW_ALPHA: f32 = 0x30 as f32 / 255.0;
 const SKIN_BORDER_ALPHA: f32 = 0x55 as f32 / 255.0;
@@ -165,10 +164,10 @@ pub(super) fn streamer_toggle(app: &PrimeApp) -> Element<'_, Message> {
 
 fn match_page<'a>(app: &'a PrimeApp, live: &'a LiveMatch) -> Element<'a, Message> {
     let mut teams = Column::new()
-        .push(team(app, &live.allies, true))
+        .push(team(app, live, &live.allies, true))
         .spacing(16);
     teams = match live.phase {
-        MatchPhase::InProgress => teams.push(team(app, &live.enemies, false)),
+        MatchPhase::InProgress => teams.push(team(app, live, &live.enemies, false)),
         MatchPhase::AgentSelect => teams.push(
             container(
                 text("The enemy team shows once the match starts.")
@@ -281,13 +280,18 @@ fn match_bar(live: &LiveMatch) -> Element<'_, Message> {
         .into()
 }
 
-fn team<'a>(app: &'a PrimeApp, players: &'a [LivePlayer], allies: bool) -> Element<'a, Message> {
+fn team<'a>(
+    app: &'a PrimeApp,
+    live: &'a LiveMatch,
+    players: &'a [LivePlayer],
+    allies: bool,
+) -> Element<'a, Message> {
     let (label, swatch) = if allies {
         ("YOUR TEAM", theme::OK)
     } else {
         ("ENEMY TEAM", theme::ACCENT)
     };
-    let header_text = |label: &'static str, width: f32| {
+    let header_text = |label: String, width: f32| {
         text(label)
             .size(9)
             .font(theme::SEMIBOLD_FONT)
@@ -311,13 +315,16 @@ fn team<'a>(app: &'a PrimeApp, players: &'a [LivePlayer], allies: bool) -> Eleme
     .align_y(alignment::Vertical::Center)
     .width(IDENTITY_WIDTH);
     let header = Row::with_children(
-        [team_label.into(), header_text("RANK", RANK_WIDTH).into()]
-            .into_iter()
-            .chain(
-                WEAPON_HEADERS
-                    .into_iter()
-                    .map(|weapon| header_text(weapon, SKIN_WIDTH).into()),
-            ),
+        [
+            team_label.into(),
+            header_text("RANK".to_string(), RANK_WIDTH).into(),
+        ]
+        .into_iter()
+        .chain(
+            live.weapons
+                .iter()
+                .map(|weapon| header_text(weapon_name(weapon).to_uppercase(), SKIN_WIDTH).into()),
+        ),
     )
     .spacing(12)
     .align_y(alignment::Vertical::Center)
@@ -329,8 +336,11 @@ fn team<'a>(app: &'a PrimeApp, players: &'a [LivePlayer], allies: bool) -> Eleme
     });
 
     Column::with_children(
-        std::iter::once(header.into())
-            .chain(players.iter().map(|player| player_row(app, player, swatch))),
+        std::iter::once(header.into()).chain(
+            players
+                .iter()
+                .map(|player| player_row(app, player, live.weapons.len(), swatch)),
+        ),
     )
     .spacing(4)
     .into()
@@ -339,6 +349,7 @@ fn team<'a>(app: &'a PrimeApp, players: &'a [LivePlayer], allies: bool) -> Eleme
 fn player_row<'a>(
     app: &'a PrimeApp,
     player: &'a LivePlayer,
+    weapons: usize,
     team_color: Color,
 ) -> Element<'a, Message> {
     let own = player.is_self
@@ -445,13 +456,16 @@ fn player_row<'a>(
     .width(IDENTITY_WIDTH)
     .clip(true);
 
-    let cells = Row::with_children(
-        [identity.into(), rank_cell(app, &player.rank)]
-            .into_iter()
-            .chain(player.skins.iter().map(skin_cell)),
-    )
-    .spacing(12)
-    .align_y(alignment::Vertical::Center);
+    let cells =
+        Row::with_children(
+            [identity.into(), rank_cell(app, &player.rank)]
+                .into_iter()
+                .chain((0..weapons).map(|index| {
+                    skin_cell(player.skins.get(index).unwrap_or(&SkinCell::Unavailable))
+                })),
+        )
+        .spacing(12)
+        .align_y(alignment::Vertical::Center);
 
     let (background, border) = if player.is_self {
         (theme::RAISED, SELF_ROW_BORDER)

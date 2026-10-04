@@ -37,14 +37,15 @@ progress and rewards.
 
 Live Match: while the selected account is in agent select or a match, a sidebar indicator shows the
 map and score and opens the Live Match page (it has no nav item and no Launch button). The page
-shows the map, mode, round, server and both teams with names, agents, levels, ranks and Vandal,
-Phantom, Sheriff and Operator skins. It polls on the one-minute availability timer only while open
-and the window is visible, and each poll is also the account's availability check. Players who
+shows the map, mode, round, server and both teams with names, agents, levels, ranks and the skins
+of the 4 weapons picked per column in Settings (Vandal, Phantom, Sheriff and Operator by default).
+It polls on the one-minute availability timer only while open and the window is visible, and
+each poll is also the account's availability check. Players who
 hide their name in game stay hidden until "Respect streamer mode" is turned off (on at every
 start); the user's own saved accounts are never hidden.
 
 Settings tab: Riot Client path, "keep in the system tray when closed" (on by default; while minimized or in the tray it
-polls every 30 minutes so sessions keep refreshing; the tray menu quits), client version
+polls every 30 minutes so sessions keep refreshing; the tray menu quits), Live Match's skin columns, client version
 (fetched at startup), image cache size and clearing, app updates, and a Riot redirect-token import as an
 advanced fallback for API access.
 
@@ -77,6 +78,8 @@ Dependencies run one way: `src/riot` → `src/ui/data` → `src/ui/app.rs` → v
 
 Local data: `%APPDATA%\spiiritual\prime\config\` holds `accounts.json`, `launcher-backups\` and
 `settings-profiles\`. Downloaded images go in `%LOCALAPPDATA%\spiiritual\prime\cache\images\`.
+`accounts.json` rejects unknown fields, so a build older than a setting it holds can't load it.
+Settings left at their default aren't written, which keeps that rare.
 
 ## Rules
 

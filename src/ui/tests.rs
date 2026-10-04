@@ -22,7 +22,9 @@ use super::data::launch_flow::CapturedAccountDraft;
 use super::data::launch_flow::{
     LaunchAccountResult, is_pending_launcher_capture_error, load_accounts, require_launcher_session,
 };
-use super::data::live_match::{LiveMatch, LiveMatchError, LiveMatchResult, MatchPhase};
+use super::data::live_match::{
+    LiveMatch, LiveMatchError, LiveMatchResult, MatchPhase, shown_weapons,
+};
 use super::data::loadout::{
     BattlePassProgressDisplay, LoadoutResult, LoadoutSummary, battle_pass_progress_from_responses,
     combine_loadout_sections, weapon_category, weapon_order,
@@ -4309,6 +4311,35 @@ fn minimized_polling_only_runs_when_minimize_on_close_is_chosen() {
 }
 
 #[test]
+fn live_match_weapons_are_saved_from_settings() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let ghost = "1baa85b4-4c70-1284-64bb-6481dfc3bb4e";
+
+    let _ = app.update(Message::ToggleWeaponPicker(2));
+    assert_eq!(app.open_weapon_picker, Some(2));
+    let task = app.update(Message::LiveMatchWeaponPicked {
+        column: 2,
+        weapon: ghost,
+    });
+
+    assert!(task.units() > 0, "saves accounts.json");
+    assert_eq!(app.open_weapon_picker, None, "picking closes the picker");
+    let weapons = app.state.live_match_weapons.as_deref().expect("saved");
+    assert_eq!(weapons[2], ghost);
+
+    let _ = app.update(Message::ToggleWeaponPicker(1));
+    let _ = app.update(Message::ToggleWeaponPicker(1));
+    assert_eq!(app.open_weapon_picker, None, "its slot closes it again");
+    let _ = app.update(Message::ToggleWeaponPicker(1));
+    let _ = app.update(Message::EscapePressed);
+    assert_eq!(app.open_weapon_picker, None, "Escape closes it");
+
+    let _ = app.update(Message::ResetLiveMatchWeapons);
+    assert_eq!(app.state.live_match_weapons, None);
+}
+
+#[test]
 fn minimize_on_close_is_not_changed_before_accounts_load() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
@@ -6178,6 +6209,7 @@ fn live_snapshot(account_id: AccountId) -> LiveMatch {
         score: Ok(crate::riot::local_client::MatchScore { ally: 5, enemy: 2 }),
         allies: Vec::new(),
         enemies: Vec::new(),
+        weapons: shown_weapons(None),
         loadouts_loaded: true,
     }
 }
@@ -6354,6 +6386,30 @@ fn a_live_match_reply_updates_the_accounts_availability() {
     assert!(app.fresh_availability(main.id).is_some());
     assert_eq!(app.live_match, Some(live_snapshot(main.id)));
     assert_eq!(app.live_match_request, None);
+}
+
+#[test]
+fn a_live_match_loaded_for_columns_changed_since_loads_again() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, main, _) = live_match_app(dir.path());
+    let _ = app.update(Message::TabSelected(super::Tab::LiveMatch));
+    let request = app.live_match_request.expect("request").id;
+    // Picked in Settings while the load ran.
+    app.state.live_match_weapons = Some(
+        ["1baa85b4-4c70-1284-64bb-6481dfc3bb4e"]
+            .into_iter()
+            .chain(shown_weapons(None).iter().skip(1).map(String::as_str))
+            .map(str::to_string)
+            .collect(),
+    );
+
+    let _ = app.update(Message::LiveMatchLoaded(
+        request,
+        Ok(live_result(main.id, AccountActivity::InMatch, None)),
+    ));
+
+    assert!(app.live_match.is_some(), "the loaded match shows meanwhile");
+    assert!(app.live_match_request.is_some(), "and loads again at once");
 }
 
 #[test]

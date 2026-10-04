@@ -388,6 +388,8 @@ struct PrimeApp {
     expanded_presets: HashSet<String>,
     /// The preset whose Rename and Delete menu is open.
     open_preset_menu: Option<String>,
+    /// The Live Match column whose weapon picker is open in Settings.
+    open_weapon_picker: Option<usize>,
     /// The preset the Apply panel is for; the first one when unset or deleted.
     selected_preset: Option<String>,
     /// The name dialog for saving or renaming a preset.
@@ -796,15 +798,17 @@ impl TabScrollOffsets {
 enum SettingsSection {
     RiotClient,
     SystemTray,
+    LiveMatch,
     Storage,
     Updates,
     Advanced,
 }
 
 impl SettingsSection {
-    const ALL: [SettingsSection; 5] = [
+    const ALL: [SettingsSection; 6] = [
         SettingsSection::RiotClient,
         SettingsSection::SystemTray,
+        SettingsSection::LiveMatch,
         SettingsSection::Storage,
         SettingsSection::Updates,
         SettingsSection::Advanced,
@@ -816,6 +820,7 @@ impl std::fmt::Display for SettingsSection {
         f.write_str(match self {
             SettingsSection::RiotClient => "Riot Client",
             SettingsSection::SystemTray => "System tray",
+            SettingsSection::LiveMatch => "Live Match",
             SettingsSection::Storage => "Storage & cache",
             SettingsSection::Updates => "Updates",
             SettingsSection::Advanced => "Advanced",
@@ -939,6 +944,14 @@ enum Message {
     CloseRequested(window::Id),
     Tray(tray::TrayAction),
     MinimizeOnCloseToggled(bool),
+    /// Opens or closes the weapon picker under one of Settings' Live Match columns, from 0.
+    ToggleWeaponPicker(usize),
+    ResetLiveMatchWeapons,
+    /// A weapon ID picked for one of Live Match's skin columns, counted from 0.
+    LiveMatchWeaponPicked {
+        column: usize,
+        weapon: &'static str,
+    },
     StatusTimerTick(iced::time::Instant),
     /// A frame while a dialog or toast settles in.
     AnimationFrame(iced::time::Instant),

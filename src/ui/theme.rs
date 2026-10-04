@@ -21,6 +21,8 @@ pub(super) const ACCENT: Color = color!(0xFF4F5E);
 pub(super) const ACCENT_SOFT: Color = color!(0xFF4F5E, 0.12);
 pub(super) const OK: Color = color!(0x4CC974);
 pub(super) const GOLD: Color = color!(0xE8BE55);
+/// A popover item under the pointer or selected.
+pub(super) const MENU_HOVER: Color = color!(0x262C38);
 
 /// One static file per weight. cosmic-text only picks a face whose weight matches exactly, and
 /// registers a variable font at its default weight alone, so a variable font's other weights
@@ -261,6 +263,7 @@ pub(super) fn choice_style(_: &Theme, status: Status, selected: bool) -> Style {
 pub(super) enum Icon {
     /// Prime's own mark, not a Lucide icon.
     Logo,
+    ArrowLeftRight,
     ArrowRight,
     Check,
     ChevronDown,
@@ -287,6 +290,7 @@ pub(super) enum Icon {
     Plus,
     Power,
     RefreshCw,
+    RotateCcw,
     Settings,
     Settings2,
     Shirt,
@@ -315,6 +319,7 @@ impl Icon {
     fn svg(self) -> &'static [u8] {
         match self {
             Icon::Logo => include_bytes!("../../assets/logo.svg"),
+            Icon::ArrowLeftRight => include_bytes!("../../assets/icons/arrow-left-right.svg"),
             Icon::ArrowRight => include_bytes!("../../assets/icons/arrow-right.svg"),
             Icon::Check => include_bytes!("../../assets/icons/check.svg"),
             Icon::ChevronDown => include_bytes!("../../assets/icons/chevron-down.svg"),
@@ -343,6 +348,7 @@ impl Icon {
             Icon::Plus => include_bytes!("../../assets/icons/plus.svg"),
             Icon::Power => include_bytes!("../../assets/icons/power.svg"),
             Icon::RefreshCw => include_bytes!("../../assets/icons/refresh-cw.svg"),
+            Icon::RotateCcw => include_bytes!("../../assets/icons/rotate-ccw.svg"),
             Icon::Settings => include_bytes!("../../assets/icons/settings.svg"),
             Icon::Settings2 => include_bytes!("../../assets/icons/settings-2.svg"),
             Icon::Shirt => include_bytes!("../../assets/icons/shirt.svg"),
