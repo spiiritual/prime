@@ -207,6 +207,18 @@ pub(in crate::ui) async fn cache_skin_icon(skin: &mut SkinDisplay, image_cache: 
         cached_icon(image_cache, "skins", &skin.uuid, skin.display_icon.as_ref()).await;
 }
 
+/// Caches each skin's icon, several at a time.
+pub(in crate::ui) async fn cache_skin_icons<'a>(
+    skins: impl IntoIterator<Item = &'a mut SkinDisplay>,
+    image_cache: &'a ImageCache,
+) {
+    let downloads = skins
+        .into_iter()
+        .map(|skin| -> IconDownload<'a> { Box::pin(cache_skin_icon(skin, image_cache)) })
+        .collect();
+    download_icons(downloads).await;
+}
+
 pub(in crate::ui) async fn cache_map_art(
     map: &ResolvedMap,
     image_cache: &ImageCache,

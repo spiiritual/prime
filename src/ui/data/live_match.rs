@@ -12,7 +12,7 @@ use super::account_details::{
     rank_name_for_competitive_tier, refreshed_api_context,
 };
 use super::image_assets::{
-    cache_map_art, cache_skin_icon, fetch_match_catalog, fetch_weapon_content,
+    cache_map_art, cache_skin_icons, fetch_match_catalog, fetch_weapon_content,
 };
 use super::loadout::{SkinDisplay, resolve_current_skin};
 use super::session::{has_saved_login, resolve_credentials};
@@ -463,13 +463,18 @@ async fn fill_missing(
         for loadout in &loadouts {
             if let Some(player) = player_mut(live, &loadout.subject) {
                 player.skins = skin_cells(loadout, &weapon_content, &weapons);
-                for cell in &mut player.skins {
-                    if let SkinCell::Skin(skin) = cell {
-                        cache_skin_icon(skin, image_cache).await;
-                    }
-                }
             }
         }
+        let skins = live
+            .allies
+            .iter_mut()
+            .chain(live.enemies.iter_mut())
+            .flat_map(|player| player.skins.iter_mut())
+            .filter_map(|cell| match cell {
+                SkinCell::Skin(skin) if skin.cached_icon.is_none() => Some(skin),
+                _ => None,
+            });
+        cache_skin_icons(skins, image_cache).await;
         live.loadouts_loaded = valid;
     }
     let names = names
