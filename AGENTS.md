@@ -40,8 +40,12 @@ map and score and opens the Live Match page (it has no nav item and no Launch bu
 shows the map, mode, round, server and both teams with names, agents, levels, ranks and Vandal,
 Phantom, Sheriff and Operator skins. It polls on the one-minute availability timer only while open
 and the window is visible, and each poll is also the account's availability check. Players who
-hide their name in game stay hidden until "Respect streamer mode" is turned off (on at every
-start); the user's own saved accounts are never hidden.
+hide their name in game show as hidden, since Riot's name service returns no name for them while
+the match runs; the user's own saved accounts are never hidden and fall back to their saved Riot ID.
+A "Show hidden details" switch beside the page title (off at every start) shows the levels players
+hide (`HideAccountLevel`) and the names of players in streamer mode (`Incognito`). The names come
+from the Riot Client running on this PC, signed in as any account; they're looked up right away and
+on each poll, and without the Riot Client they show as unavailable, with the reason on hover.
 
 Settings tab: Riot Client path, "keep in the system tray when closed" (on by default; while minimized or in the tray it
 polls every 30 minutes so sessions keep refreshing; the tray menu quits), client version
@@ -116,6 +120,10 @@ Local data: `%APPDATA%\spiiritual\prime\config\` holds `accounts.json`, `launche
   presence (`https://127.0.0.1:{port}/chat/v4/presences`, port and password from its lockfile,
   read per request and never saved). Without it the page says the score is unavailable.
 - The server label is the city in the match's `GamePodID`, such as "Ashburn".
+- During a match the name service returns blank names for players with `Incognito` (streamer
+  mode; `HideAccountLevel` is a separate setting). The local Riot Client's
+  `POST /player-account/lookup/v2/namesets-for-puuids` (`{"puuids": [...]}`, v1 is gone) ignores
+  streamer mode, so with "Show hidden details" on Live Match names them from it.
 
 ## Tests
 

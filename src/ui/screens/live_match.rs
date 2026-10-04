@@ -4,7 +4,7 @@ use iced::gradient::Linear;
 use iced::widget::image::Handle;
 use iced::widget::text::Wrapping;
 use iced::widget::{Column, Row, Stack, column, container, image, row, space, stack, tooltip};
-use iced::{Color, ContentFit, Element, Length, Padding, Radians, Theme, alignment};
+use iced::{Color, ContentFit, Element, Length, Padding, Radians, alignment};
 
 use crate::ui::components::{
     account_avatar, card_style, empty_state, radial_glow, skeleton, unavailable_state,
@@ -108,9 +108,9 @@ pub(super) fn fills_page(app: &PrimeApp) -> bool {
     app.live_match.is_none() || matches!(app.live_match_error, Some(LiveMatchError::SignIn(_)))
 }
 
-/// Whether players who hide their name stay hidden, beside the page title.
-pub(super) fn streamer_toggle(app: &PrimeApp) -> Element<'_, Message> {
-    let on = app.respect_streamer_mode;
+/// Whether to show the names and levels players hide, beside the page title.
+pub(super) fn hidden_details_toggle(app: &PrimeApp) -> Element<'_, Message> {
+    let on = app.show_hidden_details;
     let knob = container(space()).width(14).height(14).style(move |_| {
         container::Style::default()
             .background(if on { Color::WHITE } else { theme::MUTED })
@@ -134,11 +134,11 @@ pub(super) fn streamer_toggle(app: &PrimeApp) -> Element<'_, Message> {
     button(
         row![
             theme::icon(
-                if on { Icon::EyeOff } else { Icon::Eye },
+                if on { Icon::Eye } else { Icon::EyeOff },
                 15.0,
                 theme::MUTED
             ),
-            text("Respect streamer mode")
+            text("Show hidden details")
                 .size(13)
                 .font(theme::MEDIUM_FONT)
                 .width(Length::Fill),
@@ -154,12 +154,12 @@ pub(super) fn streamer_toggle(app: &PrimeApp) -> Element<'_, Message> {
         left: 12.0,
     })
     .width(236)
-    .style(|theme: &Theme, status| {
+    .style(|theme: &iced::Theme, status| {
         let mut style = theme::button_style(theme, status);
         style.border.radius = 9.0.into();
         style
     })
-    .on_press(Message::StreamerModeToggled)
+    .on_press(Message::HiddenDetailsToggled)
     .into()
 }
 
@@ -341,15 +341,17 @@ fn player_row<'a>(
     player: &'a LivePlayer,
     team_color: Color,
 ) -> Element<'a, Message> {
-    let own = player.is_self
-        || app.state.accounts.iter().any(|account| {
-            account
-                .puuid
-                .as_deref()
-                .is_some_and(|puuid| puuid.eq_ignore_ascii_case(&player.puuid))
-        });
-    let respect = app.respect_streamer_mode;
-    let identity = shown_identity(player, respect, own);
+    let own_account = app.state.accounts.iter().find(|account| {
+        account
+            .puuid
+            .as_deref()
+            .is_some_and(|puuid| puuid.eq_ignore_ascii_case(&player.puuid))
+    });
+    let own = player.is_self || own_account.is_some();
+    let saved_name = own_account
+        .and_then(|account| Some((account.game_name.as_deref()?, account.tag_line.as_deref()?)));
+    let show_hidden = app.show_hidden_details;
+    let identity = shown_identity(player, show_hidden, own, saved_name);
 
     let avatar: Element<_> = match identity {
         ShownIdentity::Hidden => container(theme::icon(Icon::EyeOff, 16.0, theme::FAINT))
@@ -396,12 +398,25 @@ fn player_row<'a>(
                     .color(theme::FAINT)
                     .wrapping(Wrapping::None),
             ),
-        ShownIdentity::Shown { name: None, .. } => name_row.push(
-            text("Name unavailable")
+        ShownIdentity::Shown {
+            name: None,
+            streamer,
+        } => {
+            let unavailable = text("Name unavailable")
                 .size(13)
                 .font(theme::SEMIBOLD_FONT)
-                .color(theme::MUTED),
-        ),
+                .color(theme::MUTED);
+            // A hidden name that didn't load says why, such as the Riot Client not running.
+            match app
+                .live_match
+                .as_ref()
+                .and_then(|live| live.hidden_names_error.clone())
+                .filter(|_| streamer)
+            {
+                Some(reason) => name_row.push(with_tip(unavailable.into(), reason)),
+                None => name_row.push(unavailable),
+            }
+        }
     };
     if player.is_self {
         name_row = name_row.push(chip(
@@ -433,7 +448,7 @@ fn player_row<'a>(
         avatar,
         column![
             name_row,
-            text(agent_line(player, respect, own))
+            text(agent_line(player, show_hidden, own))
                 .size(11)
                 .color(theme::MUTED)
                 .wrapping(Wrapping::None),

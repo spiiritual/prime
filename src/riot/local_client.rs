@@ -1,5 +1,6 @@
-//! The Riot Client's local API on this PC, read only for a live match's score. No Riot server
-//! reports the score; only the chat presence the Riot Client shares with friends has it.
+//! The Riot Client's local API on this PC, read only for a live match. No Riot server reports
+//! the score; only the chat presence the Riot Client shares with friends has it. Its Player
+//! Account lookup also names players who hide their name in game.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -85,15 +86,19 @@ fn lockfile_path() -> Option<PathBuf> {
     )
 }
 
-/// The score of the match `puuid` is playing, from the local Riot Client's chat presences.
-pub async fn match_score(puuid: &str) -> Result<MatchScore, ScoreUnavailable> {
-    let auth = lockfile_path()
+fn read_lockfile() -> Option<LocalApiAuth> {
+    lockfile_path()
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|contents| parse_lockfile(&contents))
-        .ok_or(ScoreUnavailable::RiotClientNotRunning)?;
-    let failed = |error: reqwest::Error| {
-        ScoreUnavailable::Failed(crate::http_error::format_reqwest_error(&error))
-    };
+}
+
+/// Sends `request` (built from a client and the base URL) with the lockfile's Basic auth and
+/// returns the response body.
+async fn local_request(
+    auth: &LocalApiAuth,
+    request: impl FnOnce(&reqwest::Client, &str) -> reqwest::RequestBuilder,
+) -> Result<String, String> {
+    let failed = |error: reqwest::Error| crate::http_error::format_reqwest_error(&error);
     // The Riot Client serves its local API with a self-signed certificate, and this client only
     // ever talks to 127.0.0.1.
     let client = reqwest::Client::builder()
@@ -104,8 +109,7 @@ pub async fn match_score(puuid: &str) -> Result<MatchScore, ScoreUnavailable> {
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(failed)?;
-    let body = client
-        .get(format!("https://127.0.0.1:{}/chat/v4/presences", auth.port))
+    request(&client, &format!("https://127.0.0.1:{}", auth.port))
         .basic_auth("riot", Some(&auth.password))
         .send()
         .await
@@ -114,9 +118,82 @@ pub async fn match_score(puuid: &str) -> Result<MatchScore, ScoreUnavailable> {
         .map_err(failed)?
         .text()
         .await
-        .map_err(failed)?;
+        .map_err(failed)
+}
+
+/// The score of the match `puuid` is playing, from the local Riot Client's chat presences.
+pub async fn match_score(puuid: &str) -> Result<MatchScore, ScoreUnavailable> {
+    let auth = read_lockfile().ok_or(ScoreUnavailable::RiotClientNotRunning)?;
+    let body = local_request(&auth, |client, base| {
+        client.get(format!("{base}/chat/v4/presences"))
+    })
+    .await
+    .map_err(ScoreUnavailable::Failed)?;
 
     presence_score(&body, puuid)
+}
+
+/// Riot IDs for `puuids` as `(puuid, game name, tag line)`, from the local Riot Client's Player
+/// Account lookup. Unlike VALORANT's name service it ignores streamer mode, so it names players
+/// who hide their name in a match. Needs the Riot Client running on this PC, signed in as any
+/// account; the error says why there are no names.
+pub async fn player_account_names(
+    puuids: &[String],
+) -> Result<Vec<(String, String, String)>, String> {
+    let auth = read_lockfile().ok_or_else(|| {
+        "Hidden names come from the Riot Client on this PC, which isn't running.".to_string()
+    })?;
+    let body = local_request(&auth, |client, base| {
+        client
+            .post(format!(
+                "{base}/player-account/lookup/v2/namesets-for-puuids"
+            ))
+            .json(&serde_json::json!({ "puuids": puuids }))
+    })
+    .await
+    .map_err(|error| format!("The Riot Client on this PC didn't answer: {error}"))?;
+    Ok(namesets(&body))
+}
+
+#[derive(Deserialize)]
+struct Namesets {
+    #[serde(default)]
+    namesets: Vec<Nameset>,
+}
+
+// Riot may send `null` for any of these, which a plain `String` with `default` rejects.
+#[derive(Deserialize)]
+struct Nameset {
+    #[serde(default)]
+    puuid: Option<String>,
+    #[serde(default)]
+    alias: Option<Alias>,
+}
+
+#[derive(Deserialize)]
+struct Alias {
+    #[serde(rename = "gameName", default)]
+    game_name: Option<String>,
+    #[serde(rename = "tagLine", default)]
+    tag_line: Option<String>,
+}
+
+/// The named entries of a namesets response; entries without a PUUID or game name are left out.
+pub fn namesets(body: &str) -> Vec<(String, String, String)> {
+    serde_json::from_str::<Namesets>(body)
+        .map(|response| response.namesets)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|nameset| {
+            let alias = nameset.alias?;
+            let game_name = alias.game_name.filter(|name| !name.trim().is_empty())?;
+            Some((
+                nameset.puuid?,
+                game_name,
+                alias.tag_line.unwrap_or_default(),
+            ))
+        })
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -238,6 +315,46 @@ mod tests {
             presence_score(&presences("self", &serde_json::json!({})), "self"),
             Err(ScoreUnavailable::NotFound)
         );
+    }
+
+    #[test]
+    fn reads_named_namesets() {
+        // The v2 shape the Riot Client returned in a live match, plus entries without a name.
+        let consoles = serde_json::json!({
+            "switchNameset": {"nickname": ""},
+            "xboxNameset": {"classicGamertag": "", "modernGamertag": "", "modernSuffix": ""},
+            "playstationNameset": {"onlineId": ""}
+        });
+        let mut streamer = serde_json::json!({
+            "puuid": "streamer",
+            "providerId": "",
+            "error": "",
+            "alias": {"gameName": "Streamer", "tagLine": "TTV"}
+        });
+        streamer
+            .as_object_mut()
+            .expect("object")
+            .extend(consoles.as_object().expect("object").clone());
+        let body = serde_json::json!({
+            "namesets": [
+                streamer,
+                {"puuid": "console", "error": "", "alias": {"gameName": null, "tagLine": null}},
+                {"puuid": null, "alias": {"gameName": "Nobody", "tagLine": "0000"}},
+                {"puuid": "blank", "alias": {"gameName": " ", "tagLine": ""}},
+                {"puuid": "missing", "error": "not found", "alias": null}
+            ]
+        })
+        .to_string();
+
+        assert_eq!(
+            namesets(&body),
+            [(
+                "streamer".to_string(),
+                "Streamer".to_string(),
+                "TTV".to_string()
+            )]
+        );
+        assert!(namesets("not json").is_empty());
     }
 
     #[test]

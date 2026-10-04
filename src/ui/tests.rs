@@ -6219,6 +6219,7 @@ fn live_snapshot(account_id: AccountId) -> LiveMatch {
         allies: Vec::new(),
         enemies: Vec::new(),
         loadouts_loaded: true,
+        hidden_names_error: None,
     }
 }
 
@@ -6436,16 +6437,32 @@ fn switching_accounts_clears_the_live_match() {
 }
 
 #[test]
-fn streamer_mode_is_respected_until_toggled() {
+fn hidden_details_stay_hidden_until_toggled() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    assert!(app.respect_streamer_mode);
+    assert!(!app.show_hidden_details);
 
-    let _ = app.update(Message::StreamerModeToggled);
-    assert!(!app.respect_streamer_mode);
+    let _ = app.update(Message::HiddenDetailsToggled);
+    assert!(app.show_hidden_details);
 
-    let _ = app.update(Message::StreamerModeToggled);
-    assert!(app.respect_streamer_mode);
+    let _ = app.update(Message::HiddenDetailsToggled);
+    assert!(!app.show_hidden_details);
+}
+
+#[test]
+fn showing_hidden_details_loads_hidden_names_now() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, _) = live_match_app(dir.path());
+    let _ = app.update(Message::TabSelected(super::Tab::LiveMatch));
+    app.live_match_request = None;
+    app.live_match_in_flight = false;
+
+    assert_eq!(app.update(Message::HiddenDetailsToggled).units(), 1);
+    assert!(app.live_match_request.is_some());
+
+    app.live_match_request = None;
+    app.live_match_in_flight = false;
+    assert_eq!(app.update(Message::HiddenDetailsToggled).units(), 0);
 }
 
 #[test]

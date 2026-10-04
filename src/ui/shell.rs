@@ -498,7 +498,7 @@ impl PrimeApp {
             _ if self.active_tab == Tab::Loadout => Some(screens::loadout_sub_tabs(self)),
             _ if self.active_tab == Tab::Accounts => Some(screens::accounts_header_actions(self)),
             _ if self.active_tab == Tab::LiveMatch => {
-                Some(screens::live_match_streamer_toggle(self))
+                Some(screens::live_match_hidden_details_toggle(self))
             }
             _ if self.active_tab != Tab::Shop => None,
             Some(summary) => Some(currency_balance_display(summary)),

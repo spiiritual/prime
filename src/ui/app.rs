@@ -99,7 +99,7 @@ impl PrimeApp {
                 live_match_request: None,
                 live_match_in_flight: false,
                 live_match_error: None,
-                respect_streamer_mode: true,
+                show_hidden_details: false,
                 next_request_id: 0,
                 profile_identity_refreshing: Default::default(),
                 account_ranks_loading: Default::default(),
@@ -1876,9 +1876,14 @@ impl PrimeApp {
                 self.live_match_error = None;
                 self.poll_live_match()
             }
-            Message::StreamerModeToggled => {
-                self.respect_streamer_mode = !self.respect_streamer_mode;
-                Task::none()
+            Message::HiddenDetailsToggled => {
+                self.show_hidden_details = !self.show_hidden_details;
+                // Hidden players' names load now instead of on the next poll.
+                if self.show_hidden_details {
+                    self.poll_live_match()
+                } else {
+                    Task::none()
+                }
             }
             Message::LiveMatchLoaded(request_id, result) => {
                 self.handle_live_match_loaded(request_id, result)
@@ -2989,12 +2994,14 @@ impl PrimeApp {
             .live_match
             .clone()
             .filter(|live| live.account_id == account.id);
+        let show_hidden = self.show_hidden_details;
         Task::perform(
             fetch_live_match(
                 account,
                 self.client_version_input.clone(),
                 self.image_cache.clone(),
                 previous,
+                show_hidden,
             ),
             move |result| Message::LiveMatchLoaded(request.id, result),
         )

@@ -50,9 +50,9 @@ pub(super) fn loadout_sub_tabs(app: &PrimeApp) -> Element<'_, Message> {
     loadout::sub_tabs(app)
 }
 
-/// Whether hidden players stay hidden, beside the Live Match title.
-pub(super) fn live_match_streamer_toggle(app: &PrimeApp) -> Element<'_, Message> {
-    live_match::streamer_toggle(app)
+/// Whether to show what players hide, beside the Live Match title.
+pub(super) fn live_match_hidden_details_toggle(app: &PrimeApp) -> Element<'_, Message> {
+    live_match::hidden_details_toggle(app)
 }
 
 /// A tab's menu that stays beside its scrolling page; only Settings has one.

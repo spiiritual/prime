@@ -4,7 +4,7 @@ use iced::futures::stream::{self, StreamExt};
 
 use crate::riot::client::RiotApiError;
 use crate::riot::content::{MatchCatalog, WeaponContent};
-use crate::riot::local_client::{MatchScore, ScoreUnavailable, match_score};
+use crate::riot::local_client::{MatchScore, ScoreUnavailable, match_score, player_account_names};
 use crate::riot::models::{CoreGameMatchResponse, MatchLoadout, PregameMatchResponse};
 
 use super::account_details::{
@@ -79,6 +79,8 @@ pub(in crate::ui) struct LiveMatch {
     pub(in crate::ui) enemies: Vec<LivePlayer>,
     /// Whether every player's skins have loaded, so they aren't asked for again.
     pub(in crate::ui) loadouts_loaded: bool,
+    /// Why the last lookup of hidden players' names failed.
+    pub(in crate::ui) hidden_names_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -125,6 +127,8 @@ pub(in crate::ui) async fn fetch_live_match(
     client_version: String,
     image_cache: ImageCache,
     previous: Option<LiveMatch>,
+    // Whether to name players who hide their name, from the Riot Client on this PC.
+    show_hidden: bool,
 ) -> Result<LiveMatchResult, LiveMatchError> {
     let request = |error: RiotApiError| LiveMatchError::Request(error.to_string());
     let api = RiotApi::shared().map_err(request)?;
@@ -173,7 +177,15 @@ pub(in crate::ui) async fn fetch_live_match(
                 live
             }
         };
-        fill_missing(&api, credentials, region, &mut live, &image_cache).await;
+        fill_missing(
+            &api,
+            credentials,
+            region,
+            &mut live,
+            &image_cache,
+            show_hidden,
+        )
+        .await;
         (AccountActivity::InMatch, Some(live))
     } else if let Some(player) = api
         .pregame_player(credentials, region)
@@ -198,7 +210,15 @@ pub(in crate::ui) async fn fetch_live_match(
             Some(path) => Some(path),
             None => map_art(catalog.as_deref(), &response.map_id, &image_cache).await,
         };
-        fill_missing(&api, credentials, region, &mut live, &image_cache).await;
+        fill_missing(
+            &api,
+            credentials,
+            region,
+            &mut live,
+            &image_cache,
+            show_hidden,
+        )
+        .await;
         (AccountActivity::AgentSelect, Some(live))
     } else if api
         .party_player(credentials, region)
@@ -235,10 +255,17 @@ async fn fill_missing(
     region: ValorantRegion,
     live: &mut LiveMatch,
     image_cache: &ImageCache,
+    show_hidden: bool,
 ) {
     let players = || live.allies.iter().chain(&live.enemies);
+    // The name service gives no name for players who hide theirs while the match runs, so
+    // they're left out rather than asked for on every poll.
     let unnamed: Vec<String> = players()
-        .filter(|player| player.name.is_none())
+        .filter(|player| player.name.is_none() && !player.incognito)
+        .map(|player| player.puuid.clone())
+        .collect();
+    let hidden: Vec<String> = players()
+        .filter(|player| show_hidden && player.incognito && player.name.is_none())
         .map(|player| player.puuid.clone())
         .collect();
     let unranked: Vec<String> = players()
@@ -248,7 +275,7 @@ async fn fill_missing(
     let (match_id, phase, loadouts_loaded) =
         (live.match_id.clone(), live.phase, live.loadouts_loaded);
 
-    let (loadouts, names, ranks, score) = iced::futures::join!(
+    let (loadouts, names, hidden_names, ranks, score) = iced::futures::join!(
         async {
             if loadouts_loaded {
                 return None;
@@ -278,6 +305,12 @@ async fn fill_missing(
             api.player_names(credentials, &unnamed)
                 .await
                 .unwrap_or_default()
+        },
+        async {
+            if hidden.is_empty() {
+                return None;
+            }
+            Some(player_account_names(&hidden).await)
         },
         stream::iter(unranked)
             .map(|puuid| async move {
@@ -313,13 +346,21 @@ async fn fill_missing(
         }
         live.loadouts_loaded = valid;
     }
-    for entry in names {
-        if let Some(player) = player_mut(live, &entry.subject)
-            && !entry.game_name.trim().is_empty()
-        {
-            player.name = Some((entry.game_name, entry.tag_line));
+    let names = names
+        .into_iter()
+        .map(|entry| (entry.subject, entry.game_name, entry.tag_line));
+    let hidden_names = match hidden_names {
+        Some(Ok(hidden_names)) => {
+            live.hidden_names_error = None;
+            hidden_names
         }
-    }
+        Some(Err(error)) => {
+            live.hidden_names_error = Some(error);
+            Vec::new()
+        }
+        None => Vec::new(),
+    };
+    apply_names(live, names.chain(hidden_names));
     for (puuid, rank) in ranks {
         if let Some(player) = player_mut(live, &puuid) {
             player.rank = rank;
@@ -327,6 +368,21 @@ async fn fill_missing(
     }
     if let Some(score) = score {
         live.score = score;
+    }
+}
+
+/// Sets players' names from `(puuid, game name, tag line)`. Blank names, which the name service
+/// gives players who hide theirs, never replace a name.
+pub(in crate::ui) fn apply_names(
+    live: &mut LiveMatch,
+    names: impl IntoIterator<Item = (String, String, String)>,
+) {
+    for (puuid, game_name, tag_line) in names {
+        if let Some(player) = player_mut(live, &puuid)
+            && !game_name.trim().is_empty()
+        {
+            player.name = Some((game_name, tag_line));
+        }
     }
 }
 
@@ -387,6 +443,7 @@ pub(in crate::ui) fn live_match_from_core_game(
         allies,
         enemies,
         loadouts_loaded: false,
+        hidden_names_error: None,
     };
     carry_over(&mut live, previous);
     live
@@ -441,6 +498,7 @@ pub(in crate::ui) fn live_match_from_pregame(
         // Riot doesn't reveal the enemy team until the match starts.
         enemies: Vec::new(),
         loadouts_loaded: false,
+        hidden_names_error: None,
     };
     carry_over(&mut live, previous);
     live
@@ -611,10 +669,10 @@ pub(in crate::ui) fn indicator_detail(live: &LiveMatch) -> String {
     }
 }
 
-/// How a player's name shows under the streamer mode setting.
+/// How a player's name shows under the "Show hidden details" setting.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::ui) enum ShownIdentity<'a> {
-    /// The player hides their name and streamer mode is respected.
+    /// The player hides their name and hidden details aren't shown.
     Hidden,
     Shown {
         /// `None` when the name didn't load.
@@ -625,38 +683,38 @@ pub(in crate::ui) enum ShownIdentity<'a> {
 }
 
 /// `own` is whether the player is one of the user's saved accounts, which are never hidden.
-pub(in crate::ui) fn shown_identity(
-    player: &LivePlayer,
-    respect_streamer_mode: bool,
+/// `saved_name` is that account's saved Riot ID, shown when Riot gives no name, as the name
+/// service doesn't for a player who hides theirs.
+pub(in crate::ui) fn shown_identity<'a>(
+    player: &'a LivePlayer,
+    show_hidden: bool,
     own: bool,
-) -> ShownIdentity<'_> {
+    saved_name: Option<(&'a str, &'a str)>,
+) -> ShownIdentity<'a> {
     let hides = player.incognito && !own;
-    if hides && respect_streamer_mode {
+    if hides && !show_hidden {
         return ShownIdentity::Hidden;
     }
     ShownIdentity::Shown {
         name: player
             .name
             .as_ref()
-            .map(|(name, tag)| (name.as_str(), tag.as_str())),
+            .map(|(name, tag)| (name.as_str(), tag.as_str()))
+            .or(saved_name.filter(|_| own)),
         streamer: hides,
     }
 }
 
-/// "Jett · Lv 214", with the level left out when unknown or hidden while streamer mode is
-/// respected. In agent select: "Jett (picking)" or "No agent yet".
-pub(in crate::ui) fn agent_line(
-    player: &LivePlayer,
-    respect_streamer_mode: bool,
-    own: bool,
-) -> String {
+/// "Jett · Lv 214", with the level left out when unknown, or hidden by the player while hidden
+/// details aren't shown. In agent select: "Jett (picking)" or "No agent yet".
+pub(in crate::ui) fn agent_line(player: &LivePlayer, show_hidden: bool, own: bool) -> String {
     let agent = match (&player.agent, player.agent_pick) {
         (_, AgentPick::NotPicked) => "No agent yet".to_string(),
         (Some(agent), AgentPick::Picking) => format!("{agent} (picking)"),
         (Some(agent), AgentPick::Locked) => agent.clone(),
         (None, _) => "Unknown agent".to_string(),
     };
-    let level_hidden = player.hides_level && respect_streamer_mode && !own;
+    let level_hidden = player.hides_level && !show_hidden && !own;
     match player.level.filter(|_| !level_hidden) {
         Some(level) => format!("{agent} · Lv {level}"),
         None => agent,
@@ -857,7 +915,7 @@ mod tests {
         let lines: Vec<_> = live
             .allies
             .iter()
-            .map(|player| agent_line(player, true, false))
+            .map(|player| agent_line(player, false, false))
             .collect();
         assert_eq!(
             lines,
@@ -870,30 +928,77 @@ mod tests {
     }
 
     #[test]
-    fn streamer_mode_hides_names_and_levels_of_players_who_hide_them() {
+    fn hidden_names_and_levels_show_only_when_asked_for() {
         let mut player = in_match(None).enemies.remove(0);
         player.name = Some(("Streamer".to_string(), "TTV".to_string()));
         player.hides_level = true;
 
-        assert_eq!(shown_identity(&player, true, false), ShownIdentity::Hidden);
-        assert_eq!(agent_line(&player, true, false), "Jett");
         assert_eq!(
-            shown_identity(&player, false, false),
+            shown_identity(&player, false, false, None),
+            ShownIdentity::Hidden
+        );
+        assert_eq!(agent_line(&player, false, false), "Jett");
+        assert_eq!(
+            shown_identity(&player, true, false, None),
             ShownIdentity::Shown {
                 name: Some(("Streamer", "TTV")),
                 streamer: true,
             }
         );
-        assert_eq!(agent_line(&player, false, false), "Jett · Lv 214");
+        assert_eq!(agent_line(&player, true, false), "Jett · Lv 214");
         // The user's own saved accounts are never hidden.
         assert_eq!(
-            shown_identity(&player, true, true),
+            shown_identity(&player, false, true, None),
             ShownIdentity::Shown {
                 name: Some(("Streamer", "TTV")),
                 streamer: false,
             }
         );
-        assert_eq!(agent_line(&player, true, true), "Jett · Lv 214");
+        assert_eq!(agent_line(&player, false, true), "Jett · Lv 214");
+    }
+
+    #[test]
+    fn an_own_account_without_a_name_from_riot_shows_its_saved_riot_id() {
+        let player = in_match(None).enemies.remove(0);
+        assert!(player.incognito && player.name.is_none());
+
+        assert_eq!(
+            shown_identity(&player, false, true, Some(("Alt", "0001"))),
+            ShownIdentity::Shown {
+                name: Some(("Alt", "0001")),
+                streamer: false,
+            }
+        );
+        // Another player's saved name is never used.
+        assert_eq!(
+            shown_identity(&player, true, false, Some(("Alt", "0001"))),
+            ShownIdentity::Shown {
+                name: None,
+                streamer: true,
+            }
+        );
+    }
+
+    #[test]
+    fn hidden_names_fill_blank_name_service_entries() {
+        let mut live = in_match(None);
+        let enemy = live.enemies[0].puuid.clone();
+        let names = [
+            (enemy.clone(), String::new(), String::new()),
+            (
+                enemy.to_uppercase(),
+                "Streamer".to_string(),
+                "TTV".to_string(),
+            ),
+            (enemy, " ".to_string(), String::new()),
+        ];
+
+        apply_names(&mut live, names);
+
+        assert_eq!(
+            live.enemies[0].name,
+            Some(("Streamer".to_string(), "TTV".to_string()))
+        );
     }
 
     #[test]

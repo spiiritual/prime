@@ -359,8 +359,8 @@ struct PrimeApp {
     /// Whether a Live Match load is signing in, even one an account switch left behind.
     live_match_in_flight: bool,
     live_match_error: Option<LiveMatchError>,
-    /// Whether players who hide their name in game stay hidden. On at every start.
-    respect_streamer_mode: bool,
+    /// Whether Live Match shows the names and levels players hide. Off at every start.
+    show_hidden_details: bool,
     next_request_id: u64,
     /// Accounts whose Riot profile refresh is running.
     profile_identity_refreshing: HashSet<AccountId>,
@@ -1015,7 +1015,7 @@ enum Message {
     /// The reply to the Live Match load with this request ID.
     LiveMatchLoaded(u64, Result<LiveMatchResult, LiveMatchError>),
     RetryLiveMatch,
-    StreamerModeToggled,
+    HiddenDetailsToggled,
     OpenImageViewer(ImageViewerRequest),
     ImageViewerImageLoaded(ImageViewerSource, Result<PathBuf, String>),
     CloseImageViewer,
