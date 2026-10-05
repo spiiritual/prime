@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::account::{AccountId, AccountProfile};
+use crate::riot::chat_proxy::PresenceStatus;
 
 const STORAGE_VERSION: u32 = 1;
 
@@ -28,6 +29,10 @@ pub struct StoredState {
     /// The weapon IDs whose skins Live Match shows, in column order. `None` is the default set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_match_weapons: Option<Vec<String>>,
+    /// What friends see while VALORANT runs through Prime's chat proxy, and what the next launch
+    /// starts with. Online, the default, isn't written.
+    #[serde(default, skip_serializing_if = "PresenceStatus::is_online")]
+    pub presence_status: PresenceStatus,
 }
 
 fn minimize_on_close_default() -> bool {
@@ -43,6 +48,7 @@ impl Default for StoredState {
             riot_client_path: None,
             minimize_on_close: minimize_on_close_default(),
             live_match_weapons: None,
+            presence_status: PresenceStatus::default(),
         }
     }
 }
@@ -409,6 +415,30 @@ mod tests {
         state.minimize_on_close = false;
         repo.save(&state).expect("save");
         assert!(!repo.load().expect("load").minimize_on_close);
+    }
+
+    #[test]
+    fn presence_status_defaults_to_online_and_only_others_are_saved() {
+        let dir = tempdir().expect("temp dir");
+        let repo = AccountRepository::new(dir.path().join("accounts.json"));
+        let mut state = StoredState::default();
+        assert_eq!(
+            state.presence_status,
+            crate::riot::chat_proxy::PresenceStatus::Online
+        );
+
+        repo.save(&state).expect("save");
+        let saved = fs::read_to_string(repo.path()).expect("read");
+        assert!(!saved.contains("presence_status"), "{saved}");
+
+        state.presence_status = crate::riot::chat_proxy::PresenceStatus::Invisible;
+        repo.save(&state).expect("save");
+        let saved = fs::read_to_string(repo.path()).expect("read");
+        assert!(saved.contains("invisible"), "{saved}");
+        assert_eq!(
+            repo.load().expect("load").presence_status,
+            crate::riot::chat_proxy::PresenceStatus::Invisible
+        );
     }
 
     #[test]
