@@ -12,6 +12,11 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use x509_parser::prelude::{FromDer, X509Certificate};
 
+mod presence;
+
+pub use presence::PresenceStatus;
+use presence::rewrite_presence_content;
+
 pub const LOCALHOST_DOMAIN: &str = "deceive-localhost.molenzwiebel.xyz";
 pub const PROXY_CERT_URL: &str = "https://mln.cx/deceive/localhost.pfx";
 pub const CLIENT_CONFIG_BASE_URL: &str = "https://clientconfig.rpg.riotgames.com";
@@ -21,24 +26,6 @@ pub const CERT_MIN_VALID_DAYS: i64 = 20;
 const CERT_HTTP_TIMEOUT: StdDuration = StdDuration::from_secs(20);
 const CONFIG_BODY_LIMIT: usize = 512 * 1024;
 const CHAT_PUMP_BUFFER: usize = 16 * 1024;
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum PresenceStatus {
-    #[default]
-    Offline,
-    Online,
-    Mobile,
-}
-
-impl PresenceStatus {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Online => "chat",
-            Self::Offline => "offline",
-            Self::Mobile => "mobile",
-        }
-    }
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChatEndpoint {
@@ -82,7 +69,10 @@ pub fn rewrite_client_config(
         .and_then(|port| port.as_u64())
         .and_then(|port| u16::try_from(port).ok());
     let mut original_affinities = HashMap::new();
-    if let Some(affinities) = object.get("chat.affinities").and_then(|value| value.as_object()) {
+    if let Some(affinities) = object
+        .get("chat.affinities")
+        .and_then(|value| value.as_object())
+    {
         for (region, host) in affinities {
             if let Some(host) = host.as_str() {
                 original_affinities.insert(region.clone(), host.to_string());
@@ -130,7 +120,7 @@ pub fn rewrite_client_config(
 
 pub fn affinity_from_pas_jwt(jwt: &str) -> Option<String> {
     let payload = jwt.trim().split('.').nth(1)?;
-    let decoded = BASE64_URL.decode(payload.trim_end_matches('=')) .ok()?;
+    let decoded = BASE64_URL.decode(payload.trim_end_matches('=')).ok()?;
     let payload: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
     payload
         .get("affinity")
@@ -238,246 +228,7 @@ fn proxy_http_client() -> Result<reqwest::Client, ChatProxyError> {
         .timeout(CERT_HTTP_TIMEOUT)
         .user_agent(concat!("prime/", env!("CARGO_PKG_VERSION")))
         .build()
-        .map_err(|error| {
-            ChatProxyError::Http(crate::http_error::format_reqwest_error(&error))
-        })
-}
-
-pub fn rewrite_presence_content(
-    content: &str,
-    status: PresenceStatus,
-    connect_to_muc: bool,
-) -> String {
-    if !content.contains("<presence") {
-        return content.to_string();
-    }
-
-    let mut output = String::with_capacity(content.len());
-    let mut rest = content;
-
-    while let Some(start) = rest.find("<presence") {
-        output.push_str(&rest[..start]);
-        let stanza = &rest[start..];
-
-        let Some(open_end) = tag_open_end(stanza, 0) else {
-            output.push_str(stanza);
-            rest = "";
-            break;
-        };
-
-        if stanza.as_bytes()[open_end - 1] == b'/' {
-            output.push_str(&stanza[..=open_end]);
-            rest = &stanza[open_end + 1..];
-            continue;
-        }
-
-        let Some(close) = stanza.find("</presence>") else {
-            output.push_str(stanza);
-            rest = "";
-            break;
-        };
-        let end = close + "</presence>".len();
-
-        if let Some(rewritten) = rewrite_presence_stanza(&stanza[..end], status, connect_to_muc) {
-            output.push_str(&rewritten);
-        }
-        rest = &stanza[end..];
-    }
-
-    output.push_str(rest);
-    output
-}
-
-fn rewrite_presence_stanza(
-    stanza: &str,
-    status: PresenceStatus,
-    connect_to_muc: bool,
-) -> Option<String> {
-    let open_end = tag_open_end(stanza, 0)?;
-    let open_tag = &stanza[..=open_end];
-
-    if !connect_to_muc && open_tag.contains("to=") {
-        return None;
-    }
-    if open_tag.ends_with("/>") {
-        return Some(stanza.to_string());
-    }
-
-    let close = "</presence>";
-    let inner_end = stanza.find(close)?;
-    let mut inner = stanza[open_end + 1..inner_end].to_string();
-
-    let league_st = block_range(&inner, "league_of_legends")
-        .and_then(|(start, end)| element_text(&inner[start..=end], "st"));
-    let normalize = status != PresenceStatus::Online || league_st.as_deref() != Some("dnd");
-
-    if normalize {
-        inner = replace_xml_element_text(inner, "show", status.as_str());
-        transform_block(&mut inner, "league_of_legends", |block| {
-            Some(replace_xml_element_text(block, "st", status.as_str()))
-        });
-    }
-
-    if status == PresenceStatus::Online {
-        return Some(format!("{open_tag}{inner}{close}"));
-    }
-
-    inner = remove_xml_elements(inner, "status");
-    for game in [
-        "bacon",
-        "lion",
-        "keystone",
-        "riot_client",
-        "teamfighttactics",
-        "valorant",
-    ] {
-        inner = remove_xml_elements(inner, game);
-    }
-
-    if status == PresenceStatus::Mobile {
-        transform_block(&mut inner, "league_of_legends", |block| {
-            let block = remove_xml_elements(block, "p");
-            Some(remove_xml_elements(block, "m"))
-        });
-    } else {
-        inner = remove_xml_elements(inner, "league_of_legends");
-    }
-
-    Some(format!("{open_tag}{inner}{close}"))
-}
-
-fn find_tag_open(haystack: &str, tag: &str, from: usize) -> Option<usize> {
-    let pattern = format!("<{tag}");
-    let mut search = from.min(haystack.len());
-
-    while let Some(found) = haystack[search..].find(&pattern) {
-        let start = search + found;
-        let after = start + pattern.len();
-        let boundary = haystack[after..]
-            .chars()
-            .next()
-            .is_none_or(|next| next == '>' || next == '/' || next.is_whitespace());
-
-        if boundary {
-            return Some(start);
-        }
-        search = after;
-    }
-
-    None
-}
-
-fn tag_open_end(chunk: &str, start: usize) -> Option<usize> {
-    let bytes = chunk.as_bytes();
-    let mut in_single = false;
-    let mut in_double = false;
-    let mut index = start;
-
-    while index < bytes.len() {
-        let byte = bytes[index];
-
-        if in_single {
-            if byte == b'\'' {
-                in_single = false;
-            }
-        } else if in_double {
-            if byte == b'"' {
-                in_double = false;
-            }
-        } else if byte == b'\'' {
-            in_single = true;
-        } else if byte == b'"' {
-            in_double = true;
-        } else if byte == b'>' {
-            return Some(index);
-        }
-
-        index += 1;
-    }
-
-    None
-}
-
-fn block_range(text: &str, tag: &str) -> Option<(usize, usize)> {
-    let start = find_tag_open(text, tag, 0)?;
-    let open_end = tag_open_end(text, start)?;
-
-    if text.as_bytes()[open_end - 1] == b'/' {
-        return Some((start, open_end));
-    }
-
-    let close_pattern = format!("</{tag}");
-    let relative = text[open_end..].find(&close_pattern)?;
-    let close_start = open_end + relative;
-    let close_end = tag_open_end(text, close_start)?;
-
-    Some((start, close_end))
-}
-
-fn transform_block(text: &mut String, tag: &str, transform: impl FnOnce(String) -> Option<String>) {
-    let Some((start, end)) = block_range(text, tag) else {
-        return;
-    };
-
-    match transform(text[start..=end].to_string()) {
-        Some(replacement) => text.replace_range(start..=end, &replacement),
-        None => text.replace_range(start..=end, ""),
-    }
-}
-
-fn element_text(haystack: &str, tag: &str) -> Option<String> {
-    let start = find_tag_open(haystack, tag, 0)?;
-    let open_end = tag_open_end(haystack, start)?;
-
-    if haystack.as_bytes()[open_end - 1] == b'/' {
-        return Some(String::new());
-    }
-
-    let content_start = open_end + 1;
-    let close = format!("</{tag}>");
-    let relative = haystack[content_start..].find(&close)?;
-
-    Some(haystack[content_start..content_start + relative].to_string())
-}
-
-fn remove_xml_elements(mut text: String, tag: &str) -> String {
-    let mut from = 0;
-
-    while let Some((start, end)) = block_range(&text[from..], tag)
-        .map(|(start, end)| (start + from, end + from))
-    {
-        text.replace_range(start..=end, "");
-        from = start;
-    }
-
-    text
-}
-
-fn replace_xml_element_text(mut text: String, tag: &str, replacement: &str) -> String {
-    let close = format!("</{tag}>");
-    let mut from = 0;
-
-    while let Some(start) = find_tag_open(&text, tag, from) {
-        let Some(open_end) = tag_open_end(&text, start) else {
-            break;
-        };
-
-        if text.as_bytes()[open_end - 1] == b'/' {
-            from = open_end + 1;
-            continue;
-        }
-
-        let content_start = open_end + 1;
-        let Some(relative) = text[content_start..].find(&close) else {
-            break;
-        };
-        let content_end = content_start + relative;
-
-        text.replace_range(content_start..content_end, replacement);
-        from = content_end + replacement.len() + close.len();
-    }
-
-    text
+        .map_err(|error| ChatProxyError::Http(crate::http_error::format_reqwest_error(&error)))
 }
 
 #[derive(Clone, Debug, Default)]
@@ -503,7 +254,6 @@ impl ConfigProxyEndpoint {
 pub struct ChatProxyControl {
     status: Arc<Mutex<PresenceStatus>>,
     enabled: Arc<Mutex<bool>>,
-    pub connect_to_muc: bool,
 }
 
 impl ChatProxyControl {
@@ -511,7 +261,6 @@ impl ChatProxyControl {
         Self {
             status: Arc::new(Mutex::new(status)),
             enabled: Arc::new(Mutex::new(true)),
-            connect_to_muc: true,
         }
     }
 
@@ -695,8 +444,8 @@ pub async fn run_chat_proxy(
     let acceptor = native_tls::TlsAcceptor::new(identity)
         .map_err(|error| ChatProxyError::Tls(error.to_string()))?;
     let acceptor = tokio_native_tls::TlsAcceptor::from(acceptor);
-    let connector = native_tls::TlsConnector::new()
-        .map_err(|error| ChatProxyError::Tls(error.to_string()))?;
+    let connector =
+        native_tls::TlsConnector::new().map_err(|error| ChatProxyError::Tls(error.to_string()))?;
     let connector = tokio_native_tls::TlsConnector::from(connector);
 
     loop {
@@ -774,7 +523,7 @@ where
         let (enabled, status) = control.current();
 
         if enabled && text.contains("<presence") {
-            let rewritten = rewrite_presence_content(&text, status, control.connect_to_muc);
+            let rewritten = rewrite_presence_content(&text, status);
 
             if writer.write_all(rewritten.as_bytes()).await.is_err() {
                 break;
@@ -872,91 +621,6 @@ mod tests {
         assert_eq!(affinity_from_pas_jwt("a.b.c"), None);
     }
 
-    fn presence_stanza() -> String {
-        "<presence from='user@example/RC' id='b-1'><games>\
-        <league_of_legends><st>chat</st><s.t>1</s.t><p>e30=</p><m>abc</m></league_of_legends>\
-        <valorant><st>chat</st><p>e30=</p></valorant>\
-        <keystone><st>chat</st></keystone></games>\
-        <show>chat</show><status>In Lobby</status></presence>"
-            .to_string()
-    }
-
-    #[test]
-    fn offline_presence_strips_game_blocks_and_status() {
-        let rewritten = rewrite_presence_content(
-            &presence_stanza(),
-            PresenceStatus::Offline,
-            true,
-        );
-
-        assert!(rewritten.contains("<show>offline</show>"));
-        assert!(rewritten.contains("from='user@example/RC'"));
-        assert!(!rewritten.contains("league_of_legends"));
-        assert!(!rewritten.contains("valorant"));
-        assert!(!rewritten.contains("keystone"));
-        assert!(!rewritten.contains("<status>"));
-    }
-
-    #[test]
-    fn mobile_presence_keeps_league_without_party_details() {
-        let rewritten =
-            rewrite_presence_content(&presence_stanza(), PresenceStatus::Mobile, true);
-
-        assert!(rewritten.contains("<show>mobile</show>"));
-        assert!(rewritten.contains("league_of_legends"));
-        assert!(!rewritten.contains("valorant"));
-        assert!(!rewritten.contains("<p>"));
-        assert!(!rewritten.contains("<m>"));
-    }
-
-    #[test]
-    fn online_presence_passes_through() {
-        let stanza = presence_stanza();
-
-        assert_eq!(
-            rewrite_presence_content(&stanza, PresenceStatus::Online, true),
-            stanza
-        );
-    }
-
-    #[test]
-    fn online_presence_keeps_do_not_disturb() {
-        let stanza = "<presence from='user@example/RC'><games>\
-            <league_of_legends><st>dnd</st></league_of_legends></games>\
-            <show>away</show></presence>";
-
-        assert_eq!(
-            rewrite_presence_content(stanza, PresenceStatus::Online, true),
-            stanza
-        );
-    }
-
-    #[test]
-    fn lobby_chat_is_dropped_unless_enabled() {
-        let stanza = "<presence to='room@example' from='user@example/RC'>\
-            <show>chat</show></presence>";
-
-        assert!(
-            rewrite_presence_content(stanza, PresenceStatus::Offline, false)
-                .trim()
-                .is_empty()
-        );
-        assert!(
-            rewrite_presence_content(stanza, PresenceStatus::Offline, true)
-                .contains("<show>offline</show>")
-        );
-    }
-
-    #[test]
-    fn non_presence_traffic_passes_through() {
-        let stanza = "<message from='a@b'><body>hi</body></message>";
-
-        assert_eq!(
-            rewrite_presence_content(stanza, PresenceStatus::Offline, true),
-            stanza
-        );
-    }
-
     #[test]
     fn loopback_check_matches_only_this_pc() {
         let loopback: SocketAddr = "127.0.0.1:443".parse().expect("loopback");
@@ -983,22 +647,13 @@ mod tests {
 
     #[test]
     fn proxy_control_reads_live_status() {
-        let control = ChatProxyControl::new(PresenceStatus::Offline);
+        let control = ChatProxyControl::new(PresenceStatus::Invisible);
 
-        assert_eq!(control.current(), (true, PresenceStatus::Offline));
+        assert_eq!(control.current(), (true, PresenceStatus::Invisible));
 
         control.set_status(PresenceStatus::Mobile);
         control.set_enabled(false);
 
         assert_eq!(control.current(), (false, PresenceStatus::Mobile));
-    }
-
-    #[test]
-    fn finds_element_text() {
-        assert_eq!(
-            element_text("<show>chat</show>", "show").as_deref(),
-            Some("chat")
-        );
-        assert_eq!(element_text("<a/>", "a").as_deref(), Some(""));
     }
 }
