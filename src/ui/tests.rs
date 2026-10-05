@@ -37,7 +37,7 @@ use super::data::shop::{
     AccessoryKind, BundleItem, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
     StoreSummary, currency_balances_from_wallet, format_whole_number,
 };
-use super::{Dialog, InvisibleLaunchFailure, LaunchedChatProxy, UnavailableLaunchWarning};
+use super::{Dialog, LaunchedChatProxy, QuitAction, StatusLaunchFailure, UnavailableLaunchWarning};
 use super::{
     Message, PendingSettingsChange, PendingSettingsCheck, PresetNamePrompt, PresetNameTarget,
     PrimeApp, SettingsChange, Status, StatusKind, countdown_timer_interval,
@@ -2403,22 +2403,25 @@ fn proxy_failure_for(account: &AccountProfile) -> Message {
 }
 
 #[test]
-fn a_failed_chat_proxy_asks_before_launching_online_when_invisible() {
-    let dir = tempdir().expect("temp dir");
-    let mut app = test_app(dir.path());
-    let account = launchable_account(&app, "Main");
-    app.state.push_account(account.clone());
-    app.state.presence_status = PresenceStatus::Invisible;
-    app.launching_account = Some(account.id);
+fn a_failed_chat_proxy_asks_before_launching_online_unless_online() {
+    for status in [PresenceStatus::Invisible, PresenceStatus::Mobile] {
+        let dir = tempdir().expect("temp dir");
+        let mut app = test_app(dir.path());
+        let account = launchable_account(&app, "Main");
+        app.state.push_account(account.clone());
+        app.state.presence_status = status;
+        app.launching_account = Some(account.id);
 
-    let task = app.update(proxy_failure_for(&account));
+        let task = app.update(proxy_failure_for(&account));
 
-    assert_eq!(task.units(), 0, "nothing launches");
-    assert_eq!(app.launching_account, None);
-    let failure = app.invisible_launch_failure.as_ref().expect("dialog");
-    assert_eq!(failure.account_id, account.id);
-    assert!(failure.error.contains("certificate"), "{}", failure.error);
-    assert_eq!(app.open_dialog(), Some(Dialog::InvisibleLaunchFailed));
+        assert_eq!(task.units(), 0, "nothing launches with {status:?}");
+        assert_eq!(app.launching_account, None);
+        let failure = app.status_launch_failure.as_ref().expect("dialog");
+        assert_eq!(failure.account_id, account.id);
+        assert_eq!(failure.status, status);
+        assert!(failure.error.contains("certificate"), "{}", failure.error);
+        assert_eq!(app.open_dialog(), Some(Dialog::StatusLaunchFailed));
+    }
 }
 
 #[test]
@@ -2433,7 +2436,7 @@ fn a_failed_chat_proxy_still_launches_when_online() {
 
     assert!(task.units() > 0, "launches without the proxy");
     assert_eq!(app.launching_account, Some(account.id));
-    assert!(app.invisible_launch_failure.is_none());
+    assert!(app.status_launch_failure.is_none());
     assert!(app.chat_proxy.is_none());
     assert_eq!(app.status.kind, StatusKind::Warning);
 }
@@ -2469,7 +2472,7 @@ fn cancelling_after_an_invisible_failure_keeps_the_running_proxy() {
     });
 
     let _ = app.update(proxy_failure_for(&account));
-    let _ = app.update(Message::CancelInvisibleLaunch);
+    let _ = app.update(Message::CancelStatusLaunch);
 
     assert!(app.chat_proxy.is_some(), "Riot Client is still on it");
 }
@@ -2519,9 +2522,10 @@ fn launch_online_launches_the_account_whose_proxy_failed() {
     let mut app = test_app(dir.path());
     let account = launchable_account(&app, "Main");
     app.state.push_account(account.clone());
-    app.invisible_launch_failure = Some(InvisibleLaunchFailure {
+    app.status_launch_failure = Some(StatusLaunchFailure {
         account_id: account.id,
         display_name: account.display_name.clone(),
+        status: PresenceStatus::Invisible,
         error: "offline".to_string(),
     });
 
@@ -2529,24 +2533,25 @@ fn launch_online_launches_the_account_whose_proxy_failed() {
 
     assert!(task.units() > 0);
     assert_eq!(app.launching_account, Some(account.id));
-    assert!(app.invisible_launch_failure.is_none());
+    assert!(app.status_launch_failure.is_none());
 }
 
 #[test]
-fn escape_cancels_the_invisible_launch_dialog() {
+fn escape_cancels_the_status_launch_dialog() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
     let account = launchable_account(&app, "Main");
     app.state.push_account(account.clone());
-    app.invisible_launch_failure = Some(InvisibleLaunchFailure {
+    app.status_launch_failure = Some(StatusLaunchFailure {
         account_id: account.id,
         display_name: account.display_name.clone(),
+        status: PresenceStatus::Invisible,
         error: "offline".to_string(),
     });
 
     let _ = app.update(Message::EscapePressed);
 
-    assert!(app.invisible_launch_failure.is_none());
+    assert!(app.status_launch_failure.is_none());
     assert_eq!(app.launching_account, None);
 }
 
@@ -4056,6 +4061,85 @@ fn the_image_cache_is_not_cleared_twice_at_once() {
     assert_eq!(first.units(), 1);
     assert_eq!(second.units(), 0);
     assert_eq!(after.units(), 1);
+}
+
+fn app_with_chat_through_prime(dir: &Path) -> PrimeApp {
+    let mut app = test_app(dir);
+    app.state.minimize_on_close = false;
+    app.chat_proxy = Some(LaunchedChatProxy {
+        account_id: AccountId::new(),
+        proxy: ChatProxy::detached(PresenceStatus::Online, true),
+    });
+    app
+}
+
+#[test]
+fn closing_asks_before_dropping_riot_client_chat() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = app_with_chat_through_prime(dir.path());
+
+    let task = app.update(Message::CloseRequested(iced::window::Id::unique()));
+
+    assert_eq!(task.units(), 0, "doesn't quit yet");
+    assert_eq!(app.confirm_quit, Some(QuitAction::Exit));
+    assert_eq!(app.open_dialog(), Some(Dialog::Quit));
+
+    let _ = app.update(Message::EscapePressed);
+    assert_eq!(app.confirm_quit, None);
+}
+
+#[test]
+fn closing_quits_at_once_when_chat_doesnt_go_through_prime() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = app_with_chat_through_prime(dir.path());
+    app.chat_proxy = Some(LaunchedChatProxy {
+        account_id: AccountId::new(),
+        proxy: ChatProxy::detached(PresenceStatus::Online, false),
+    });
+
+    let task = app.update(Message::CloseRequested(iced::window::Id::unique()));
+
+    assert!(task.units() > 0);
+    assert_eq!(app.confirm_quit, None);
+}
+
+#[test]
+fn quitting_from_the_tray_brings_the_window_back_to_ask() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = app_with_chat_through_prime(dir.path());
+    app.window_minimized = true;
+
+    let task = app.update(Message::Tray(super::tray::TrayAction::Quit));
+
+    assert!(task.units() > 0, "shows the window");
+    assert!(!app.window_minimized);
+    assert_eq!(app.confirm_quit, Some(QuitAction::Exit));
+
+    let task = app.update(Message::ConfirmQuit);
+    assert!(task.units() > 0, "quits");
+    assert_eq!(app.confirm_quit, None);
+}
+
+#[test]
+fn an_update_asks_before_restarting_drops_riot_client_chat() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = app_with_chat_through_prime(dir.path());
+    app.app_update_status =
+        super::AppUpdateStatus::Available(crate::updater::sample_update("9.9.9"));
+
+    let task = app.update(Message::DownloadAppUpdate);
+
+    assert_eq!(task.units(), 0);
+    assert_eq!(app.confirm_quit, Some(QuitAction::InstallUpdate));
+    assert_eq!(app.open_dialog(), Some(Dialog::Quit));
+
+    let task = app.update(Message::ConfirmQuit);
+    assert!(task.units() > 0, "downloads");
+    assert_eq!(app.confirm_quit, None);
+    assert!(matches!(
+        app.app_update_status,
+        super::AppUpdateStatus::Downloading(_)
+    ));
 }
 
 #[test]

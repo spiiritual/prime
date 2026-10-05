@@ -55,10 +55,11 @@ does. While VALORANT runs on this PC, Riot Client here is signed in as the selec
 chat goes through that proxy, Prime shows a sidebar control above the version label with the status
 friends see: Online, Mobile or Invisible. A change applies at once and is saved (`presence_status` in
 `accounts.json`, written only when not Online), so the next launch starts with it. If the proxy
-can't start and the saved status is Invisible, the launch asks before going online; with Online it
+can't start and the saved status is Invisible or Mobile, the launch asks before going online; with Online it
 launches anyway and warns that the status can't be changed this session. Prime checks the game every
-5 seconds while a proxy runs and stops the proxy when Riot Client closes. Quitting Prime while
-VALORANT runs drops Riot Client's chat until Riot Client restarts.
+5 seconds while a proxy runs and stops the proxy when Riot Client closes. Quitting Prime drops Riot
+Client's chat until Riot Client restarts, so while chat goes through the proxy, quitting (from the
+tray too) and restarting for an update ask first.
 
 Settings tab: Riot Client path, "keep in the system tray when closed" (on by default; while minimized or in the tray it
 polls every 30 minutes so sessions keep refreshing; the tray menu quits), Live Match's skin columns, client version

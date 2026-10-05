@@ -16,9 +16,9 @@ use super::data::account_details::{AccountAvailability, Busy};
 use super::data::live_match::{MatchPhase, indicator_detail};
 use super::theme::{self, button, text};
 use super::{
-    AccountExportOutput, CapturedAccountDraft, ImageViewerImage, InvisibleLaunchFailure,
-    LoadoutTab, LoginCapture, LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message,
-    PendingSettingsChange, PresetNamePrompt, PresetNameTarget, PrimeApp, SettingsChange, Tab,
+    AccountExportOutput, CapturedAccountDraft, ImageViewerImage, LoadoutTab, LoginCapture,
+    LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange, PresetNamePrompt,
+    PresetNameTarget, PrimeApp, QuitAction, SettingsChange, StatusLaunchFailure, Tab,
     UnavailableLaunchWarning, screens,
 };
 use super::{Dialog, StatusKind, appear_progress, status_bar_visible, status_spinner_active};
@@ -98,8 +98,9 @@ impl PrimeApp {
                 Dialog::UnavailableLaunch => {
                     unavailable_launch_prompt_overlay(self.unavailable_launch_warning.as_ref()?)
                 }
-                Dialog::InvisibleLaunchFailed => {
-                    invisible_launch_failed_prompt_overlay(self.invisible_launch_failure.as_ref()?)
+                Dialog::Quit => quit_prompt_overlay(self.confirm_quit?),
+                Dialog::StatusLaunchFailed => {
+                    status_launch_failed_prompt_overlay(self.status_launch_failure.as_ref()?)
                 }
                 Dialog::AppUpdate => app_update_prompt_overlay(
                     self.app_update_status.prompt_update()?,
@@ -2035,25 +2036,56 @@ fn unavailable_launch_prompt_overlay(warning: &UnavailableLaunchWarning) -> Elem
     )
 }
 
-fn invisible_launch_failed_prompt_overlay(
-    failure: &InvisibleLaunchFailure,
-) -> Element<'_, Message> {
+fn quit_prompt_overlay(action: QuitAction) -> Element<'static, Message> {
+    let (title, doing, label) = match action {
+        QuitAction::Exit => ("Quit Prime?", "Quitting", "Quit"),
+        QuitAction::InstallUpdate => (
+            "Restart Prime to update?",
+            "Restarting",
+            "Download & restart",
+        ),
+    };
     dialog(
         480.0,
-        Some(("CAN\u{2019}T GO INVISIBLE".to_string(), theme::GOLD)),
+        Some(("CHAT GOES THROUGH PRIME".to_string(), theme::GOLD)),
+        title.to_string(),
+        Some(format!(
+            "VALORANT\u{2019}s chat goes through Prime. {doing} disconnects Riot Client\u{2019}s \
+             chat until Riot Client restarts."
+        )),
+        None,
+        vec![
+            dialog_button("Cancel", Some(Message::CancelQuit)),
+            dialog_action(
+                theme::Icon::Power,
+                label,
+                theme::danger_button_style,
+                Some(Message::ConfirmQuit),
+            ),
+        ],
+    )
+}
+
+fn status_launch_failed_prompt_overlay(failure: &StatusLaunchFailure) -> Element<'_, Message> {
+    let (step, effect) = match failure.status {
+        PresenceStatus::Mobile => ("CAN\u{2019}T SHOW AS MOBILE", "shows you as mobile"),
+        _ => ("CAN\u{2019}T GO INVISIBLE", "makes you invisible"),
+    };
+    dialog(
+        480.0,
+        Some((step.to_string(), theme::GOLD)),
         format!("Launch {} online?", failure.display_name),
-        Some(
-            "Prime couldn\u{2019}t start the chat proxy that makes you invisible, so friends \
-             would see you online."
-                .to_string(),
-        ),
+        Some(format!(
+            "Prime couldn\u{2019}t start the chat proxy that {effect}, so friends would see you \
+             online."
+        )),
         Some(column![dialog_note(
             theme::Icon::TriangleAlert,
             theme::GOLD,
             failure.error.as_str(),
         )]),
         vec![
-            dialog_button("Cancel", Some(Message::CancelInvisibleLaunch)),
+            dialog_button("Cancel", Some(Message::CancelStatusLaunch)),
             dialog_action(
                 theme::Icon::Play,
                 "Launch online",

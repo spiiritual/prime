@@ -9,7 +9,6 @@ use crate::account::{
 use crate::account_transfer::{export_account, import_account};
 use crate::image_cache::{CacheUsage, ImageCache};
 use crate::riot::auth::{RedirectTokens, parse_redirect_tokens};
-use crate::riot::chat_proxy::PresenceStatus;
 use crate::riot::launcher_session::{
     CapturedLauncherSession, adopt_launcher_session_backup, remove_launcher_session_backup,
 };
@@ -41,7 +40,7 @@ use super::data::{cache_account_api_context, typed_riot_client_path};
 use super::{
     AccountsTab, AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, LoginCapture,
     LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange,
-    PendingSettingsCheck, PresetNamePrompt, PresetNameTarget, PrimeApp, SettingsChange,
+    PendingSettingsCheck, PresetNamePrompt, PresetNameTarget, PrimeApp, QuitAction, SettingsChange,
     SettingsSection, Status, StatusKind, Tab, TabScrollOffsets, ViewRequest,
     background_refresh_active, screens,
 };
@@ -134,7 +133,8 @@ impl PrimeApp {
                 chat_proxy: None,
                 local_game: None,
                 local_game_checking: false,
-                invisible_launch_failure: None,
+                status_launch_failure: None,
+                confirm_quit: None,
                 window_minimized: false,
                 status_changed_at: iced::time::Instant::now(),
                 toast_appeared_at: iced::time::Instant::now(),
@@ -199,6 +199,7 @@ impl PrimeApp {
     pub(super) fn open_dialog(&self) -> Option<super::Dialog> {
         use super::Dialog;
         [
+            (self.confirm_quit.is_some(), Dialog::Quit),
             (self.show_add_account_prompt, Dialog::AddAccount),
             (self.login_capture.is_some(), Dialog::LoginCapture),
             (self.pending_account.is_some(), Dialog::CapturedAccount),
@@ -220,8 +221,8 @@ impl PrimeApp {
                 Dialog::UnavailableLaunch,
             ),
             (
-                self.invisible_launch_failure.is_some(),
-                Dialog::InvisibleLaunchFailed,
+                self.status_launch_failure.is_some(),
+                Dialog::StatusLaunchFailed,
             ),
             (
                 self.app_update_status.prompt_update().is_some(),
@@ -248,6 +249,8 @@ impl PrimeApp {
     fn escape_message(&self) -> Option<Message> {
         let message = if super::image_viewer_enabled() && self.image_viewer.is_some() {
             Message::CloseImageViewer
+        } else if self.confirm_quit.is_some() {
+            Message::CancelQuit
         } else if self.show_add_account_prompt {
             Message::CancelAddAccountCapture
         } else if let Some(capture) = &self.login_capture {
@@ -273,8 +276,8 @@ impl PrimeApp {
             Message::CancelPresetName
         } else if self.unavailable_launch_warning.is_some() {
             Message::CancelUnavailableLaunch
-        } else if self.invisible_launch_failure.is_some() {
-            Message::CancelInvisibleLaunch
+        } else if self.status_launch_failure.is_some() {
+            Message::CancelStatusLaunch
         } else if self.app_update_status.prompt_update().is_some() {
             Message::DismissAppUpdate
         } else if self.open_bundle_details().is_some() {
@@ -1249,6 +1252,10 @@ impl PrimeApp {
             }
             Message::CloseRequested(id) => {
                 if !self.state.minimize_on_close {
+                    if self.chat_carried() {
+                        self.confirm_quit = Some(QuitAction::Exit);
+                        return Task::none();
+                    }
                     return iced::exit();
                 }
 
@@ -1284,8 +1291,25 @@ impl PrimeApp {
                 ])
             }
             Message::Tray(super::tray::TrayAction::Quit) => {
+                if self.chat_carried() {
+                    // The question needs the window, so it comes back from the tray.
+                    self.confirm_quit = Some(QuitAction::Exit);
+                    return self.update(Message::Tray(super::tray::TrayAction::Open));
+                }
                 super::tray::remove();
                 iced::exit()
+            }
+            Message::ConfirmQuit => match self.confirm_quit.take() {
+                Some(QuitAction::Exit) => {
+                    super::tray::remove();
+                    iced::exit()
+                }
+                Some(QuitAction::InstallUpdate) => self.download_app_update(true),
+                None => Task::none(),
+            },
+            Message::CancelQuit => {
+                self.confirm_quit = None;
+                Task::none()
             }
             Message::MinimizeOnCloseToggled(enabled) => {
                 // Loading accounts.json would undo a change made before it arrives.
@@ -2367,14 +2391,15 @@ impl PrimeApp {
                         self.chat_proxy = Some(super::LaunchedChatProxy { account_id, proxy });
                         self.run_account_launch(account, Some(port))
                     }
-                    Err(error) if self.state.presence_status == PresenceStatus::Invisible => {
+                    Err(error) if !self.state.presence_status.is_online() => {
                         self.launching_account = None;
                         self.launch_progress_checking = false;
                         self.clear_progress_status();
                         self.close_popovers();
-                        self.invisible_launch_failure = Some(super::InvisibleLaunchFailure {
+                        self.status_launch_failure = Some(super::StatusLaunchFailure {
                             account_id,
                             display_name: account.display_name,
+                            status: self.state.presence_status,
                             error,
                         });
                         Task::none()
@@ -2395,11 +2420,11 @@ impl PrimeApp {
                 if self.launching_account.is_some() || self.launch_preflight_account.is_some() {
                     return Task::none();
                 }
-                let Some(failure) = self.invisible_launch_failure.take() else {
+                let Some(failure) = self.status_launch_failure.take() else {
                     return Task::none();
                 };
                 if failure.account_id != account_id {
-                    self.invisible_launch_failure = Some(failure);
+                    self.status_launch_failure = Some(failure);
                     return Task::none();
                 }
                 let Some(account) = self.account_by_id(account_id).cloned() else {
@@ -2413,8 +2438,8 @@ impl PrimeApp {
                 self.chat_proxy = None;
                 self.run_account_launch(account, None)
             }
-            Message::CancelInvisibleLaunch => {
-                self.invisible_launch_failure = None;
+            Message::CancelStatusLaunch => {
+                self.status_launch_failure = None;
                 Task::none()
             }
             Message::LocalGameTick => {
@@ -2542,7 +2567,7 @@ impl PrimeApp {
                 }
                 Task::none()
             }
-            Message::DownloadAppUpdate => self.download_app_update(),
+            Message::DownloadAppUpdate => self.download_app_update(false),
             Message::AppUpdatePrepared(result) => self.handle_app_update_prepared(result),
         }
     }
@@ -2613,7 +2638,8 @@ impl PrimeApp {
         Task::none()
     }
 
-    fn download_app_update(&mut self) -> Task<Message> {
+    /// `confirmed` once the user agreed to drop Riot Client's chat by restarting.
+    fn download_app_update(&mut self, confirmed: bool) -> Task<Message> {
         let Some(update) = self.app_update_status.pending_update().cloned() else {
             self.set_status(Status::info("No Prime update is available to download"));
             return Task::none();
@@ -2624,6 +2650,10 @@ impl PrimeApp {
             self.set_status(Status::error(format!(
                 "Could not start the update: wait for {work}"
             )));
+            return Task::none();
+        }
+        if !confirmed && self.chat_carried() {
+            self.confirm_quit = Some(QuitAction::InstallUpdate);
             return Task::none();
         }
 
@@ -2966,6 +2996,13 @@ impl PrimeApp {
             }
             _ => Task::none(),
         }
+    }
+
+    /// Whether Riot Client's chat runs through Prime's proxy, so quitting Prime drops it.
+    fn chat_carried(&self) -> bool {
+        self.chat_proxy
+            .as_ref()
+            .is_some_and(|launched| launched.proxy.connected())
     }
 
     /// The window is back on screen after being minimized or hidden: catch up the clock and the

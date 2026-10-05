@@ -17,7 +17,7 @@ use iced::{Size, Subscription, Theme, window};
 
 use crate::account::AccountId;
 use crate::image_cache::{CacheUsage, ImageCache};
-use crate::riot::chat_proxy::ChatProxy;
+use crate::riot::chat_proxy::{ChatProxy, PresenceStatus};
 use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{AvailableUpdate, UpdateCheckOutcome};
 
@@ -440,7 +440,9 @@ struct PrimeApp {
     /// The last check of what runs on this PC, made while a chat proxy runs.
     local_game: Option<LocalGame>,
     local_game_checking: bool,
-    invisible_launch_failure: Option<InvisibleLaunchFailure>,
+    status_launch_failure: Option<StatusLaunchFailure>,
+    /// A quit waiting on the user, because it would drop Riot Client's chat.
+    confirm_quit: Option<QuitAction>,
     window_minimized: bool,
     status_changed_at: iced::time::Instant,
     /// When the toast last appeared. A toast already on screen changes text without rising again.
@@ -572,12 +574,20 @@ struct LaunchedChatProxy {
     proxy: ChatProxy,
 }
 
-/// A launch stopped because the chat proxy couldn't start while the saved status is Invisible.
+/// A launch stopped because the chat proxy couldn't start while the saved status isn't Online.
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct InvisibleLaunchFailure {
+struct StatusLaunchFailure {
     account_id: AccountId,
     display_name: String,
+    status: PresenceStatus,
     error: String,
+}
+
+/// How Prime is about to quit: closing, or restarting to install an update.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum QuitAction {
+    Exit,
+    InstallUpdate,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -755,6 +765,7 @@ impl AppUpdateStatus {
 /// The dialog on screen, one at a time, in the order the shell picks them.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Dialog {
+    Quit,
     AddAccount,
     LoginCapture,
     CapturedAccount,
@@ -766,7 +777,7 @@ enum Dialog {
     DeleteSettingsProfile,
     PresetName,
     UnavailableLaunch,
-    InvisibleLaunchFailed,
+    StatusLaunchFailed,
     AppUpdate,
     BundleDetails,
 }
@@ -1110,7 +1121,10 @@ enum Message {
     ChatProxyStarted(AccountId, Result<ChatProxy, String>),
     /// Launches without the chat proxy, from the "Can't go invisible" dialog.
     LaunchOnline(AccountId),
-    CancelInvisibleLaunch,
+    CancelStatusLaunch,
+    /// Quits anyway, from the dialog that warns it drops Riot Client's chat.
+    ConfirmQuit,
+    CancelQuit,
     LocalGameTick,
     LocalGameChecked(LocalGame),
     ToggleStatusMenu,
