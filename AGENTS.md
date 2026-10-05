@@ -50,6 +50,16 @@ hide (`HideAccountLevel`) and the names of players in streamer mode (`Incognito`
 from the Riot Client running on this PC, signed in as any account; they're looked up right away and
 on each poll, and without the Riot Client they show as unavailable, with the reason on hover.
 
+Invisible status: every launch goes through a chat proxy (`src/riot/chat_proxy/`), the way Deceive
+does. While VALORANT runs on this PC, Riot Client here is signed in as the selected account and its
+chat goes through that proxy, a sidebar control above the version label shows the status friends
+see: Online, Mobile or Invisible. A change applies at once and is saved (`presence_status` in
+`accounts.json`, written only when not Online), so the next launch starts with it. If the proxy
+can't start and the saved status is Invisible, the launch asks before going online; with Online it
+launches anyway and warns that the status can't be changed this session. Prime checks the game every
+5 seconds while a proxy runs and stops the proxy when Riot Client closes. Quitting Prime while
+VALORANT runs drops Riot Client's chat until Riot Client restarts.
+
 Settings tab: Riot Client path, "keep in the system tray when closed" (on by default; while minimized or in the tray it
 polls every 30 minutes so sessions keep refreshing; the tray menu quits), Live Match's skin columns, client version
 (fetched at startup), image cache size and clearing, app updates, and a Riot redirect-token import as an
@@ -73,7 +83,8 @@ Off by default, so release builds leave it out.
 Dependencies run one way: `src/riot` → `src/ui/data` → `src/ui/app.rs` → views.
 
 - `src/riot/`: Riot HTTP client, endpoints, response models, the public content API (`content.rs`),
-  redirect-token parsing (`auth.rs`), and launcher session capture and restore (`launcher_session/`).
+  redirect-token parsing (`auth.rs`), launcher session capture and restore (`launcher_session/`), and
+  the chat proxy for the invisible status (`chat_proxy/`).
 - `src/ui/data/`: async loaders and view models for Shop, Loadout, Battle Pass, account details, the
   launch flow, images and settings profiles.
 - `src/ui/app.rs`: how `PrimeApp` handles each `Message`. `src/ui/mod.rs` holds the state, `Message` and
@@ -85,6 +96,7 @@ Dependencies run one way: `src/riot` → `src/ui/data` → `src/ui/app.rs` → v
 
 Local data: `%APPDATA%\spiiritual\prime\config\` holds `accounts.json`, `launcher-backups\` and
 `settings-profiles\`. Downloaded images go in `%LOCALAPPDATA%\spiiritual\prime\cache\images\`.
+The chat proxy's certificate is cached in `%LOCALAPPDATA%\spiiritual\prime\cache\chat-proxy-localhost.pfx`.
 `accounts.json` rejects unknown fields, so a build older than a setting it holds can't load it.
 Settings left at their default aren't written, which keeps that rare.
 
@@ -97,6 +109,10 @@ Settings left at their default aren't written, which keeps that rare.
 - Shop and Loadout load when their tab opens. Loadout has no refresh button or account level indicator.
 - Keep direct dependencies current with crates.io when touching dependency metadata, then let Cargo
   update the lockfile.
+- The chat proxy trusts `deceive-localhost.molenzwiebel.xyz` to resolve to 127.0.0.1 and uses the
+  certificate Deceive publishes, private key included. Check the name resolves only to loopback
+  before each launch, bind proxy listeners to 127.0.0.1 only, and never send that certificate
+  anywhere.
 
 ## Riot API notes
 
@@ -130,6 +146,12 @@ Settings left at their default aren't written, which keeps that rare.
   mode; `HideAccountLevel` is a separate setting). The local Riot Client's
   `POST /player-account/lookup/v2/namesets-for-puuids` (`{"puuids": [...]}`, v1 is gone) ignores
   streamer mode, so with "Show hidden details" on Live Match names them from it.
+- The chat proxy passes `--client-config-url=http://127.0.0.1:{port}` (no quotes) and rewrites
+  `chat.host`, `chat.port` and `chat.affinities` in Riot's client config. The real server is the
+  player's affinity host from `riot-geo.pas.si.riotgames.com/pas/v1/service/chat`, unless
+  `chat.affinity.enabled` is false.
+- Who the local Riot Client is signed in as comes from its `GET /entitlements/v1/token` subject.
+  Only the subject is kept.
 
 ## Tests
 
