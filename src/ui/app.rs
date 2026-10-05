@@ -30,9 +30,9 @@ use super::data::image_assets::{
     cache_player_card_art, cache_rank_icons, fetch_current_client_version,
 };
 use super::data::launch_flow::{
-    PreviousAccountSync, check_riot_client_window_visible, finish_account_capture,
-    finish_verified_launcher_session_login, launch_account, load_accounts, prepare_login_capture,
-    start_chat_proxy, start_current_account_capture, valorant_is_running,
+    PreviousAccountSync, check_local_game, check_riot_client_window_visible,
+    finish_account_capture, finish_verified_launcher_session_login, launch_account, load_accounts,
+    prepare_login_capture, start_chat_proxy, start_current_account_capture, valorant_is_running,
 };
 use super::data::live_match::{LiveMatchError, fetch_live_match, pick_shown_weapon, shown_weapons};
 use super::data::loadout::fetch_loadout;
@@ -131,6 +131,8 @@ impl PrimeApp {
                 launch_progress_checking: false,
                 launch_client_open: false,
                 chat_proxy: None,
+                local_game: None,
+                local_game_checking: false,
                 invisible_launch_failure: None,
                 window_minimized: false,
                 status_changed_at: iced::time::Instant::now(),
@@ -2413,6 +2415,25 @@ impl PrimeApp {
                 self.invisible_launch_failure = None;
                 Task::none()
             }
+            Message::LocalGameTick => {
+                if self.chat_proxy.is_none() || self.local_game_checking {
+                    return Task::none();
+                }
+                self.local_game_checking = true;
+                Task::perform(check_local_game(), Message::LocalGameChecked)
+            }
+            Message::LocalGameChecked(game) => {
+                self.local_game_checking = false;
+                // Riot Client closed, so nothing will connect through this proxy again. During a
+                // launch it may not have started yet.
+                if !game.riot_client_running && self.launching_account.is_none() {
+                    self.chat_proxy = None;
+                    self.local_game = None;
+                } else {
+                    self.local_game = Some(game);
+                }
+                Task::none()
+            }
             Message::LaunchProgressTick => {
                 if self.launching_account.is_none() || self.launch_progress_checking {
                     return Task::none();
@@ -2466,11 +2487,13 @@ impl PrimeApp {
                         (None, None) => self.clear_progress_status(),
                     }
 
-                    if saved_backup {
+                    let save = if saved_backup {
                         self.save_task()
                     } else {
                         Task::none()
-                    }
+                    };
+                    // The control appears without waiting a full interval.
+                    Task::batch([save, Task::done(Message::LocalGameTick)])
                 }
                 Err(error) => {
                     self.launching_account = None;
@@ -3319,6 +3342,7 @@ impl PrimeApp {
         self.launching_account = Some(id);
         self.launch_progress_checking = false;
         self.launch_client_open = false;
+        self.local_game = None;
 
         // Shop and Loadout show the selected account, so they reload when launching switched it.
         let reload = if selection_changed {
@@ -3603,6 +3627,30 @@ impl PrimeApp {
 
     pub(super) fn launch_in_progress(&self) -> bool {
         self.launching_account.is_some() || self.launch_preflight_account.is_some()
+    }
+
+    /// Whether the status control shows: VALORANT runs on this PC, Riot Client here is signed in
+    /// as the selected account, and its chat goes through the proxy Prime launched that account
+    /// with. Otherwise a change would reach nobody, or the wrong account.
+    // Nothing draws the control yet.
+    #[allow(dead_code)]
+    pub(super) fn status_control_visible(&self) -> bool {
+        let (Some(account), Some(launched), Some(game)) = (
+            self.state.selected_account(),
+            self.chat_proxy.as_ref(),
+            self.local_game.as_ref(),
+        ) else {
+            return false;
+        };
+
+        launched.account_id == account.id
+            && launched.proxy.connected()
+            && game.valorant_running
+            && account
+                .puuid
+                .as_deref()
+                .zip(game.signed_in_puuid.as_deref())
+                .is_some_and(|(saved, signed_in)| saved.eq_ignore_ascii_case(signed_in))
     }
 
     /// Launch and login capture progress stays in the status bar while it runs, so background

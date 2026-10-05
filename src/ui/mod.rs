@@ -31,7 +31,9 @@ use data::game_settings::{
 };
 use data::image_assets::PlayerCardArt;
 use data::launch_flow::CapturedAccountDraft;
-use data::launch_flow::{LaunchAccountResult, LoadedAccounts, SHOP_RESET_CHECK_INTERVAL};
+use data::launch_flow::{
+    LaunchAccountResult, LoadedAccounts, LocalGame, SHOP_RESET_CHECK_INTERVAL,
+};
 use data::live_match::{LiveMatch, LiveMatchError, LiveMatchResult};
 use data::loadout::{LoadoutResult, LoadoutSummary};
 use data::shop::{StoreSummary, StorefrontResult};
@@ -39,6 +41,7 @@ use data::shop::{StoreSummary, StorefrontResult};
 const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
 const LAUNCH_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const ACCOUNT_AVAILABILITY_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+const LOCAL_GAME_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 /// While minimized with "minimize on close" on, a slow poll keeps every account's session in use
 /// so its refresh token doesn't sit idle. Access tokens last an hour, so each poll re-signs in.
 const BACKGROUND_SESSION_REFRESH_INTERVAL: Duration = Duration::from_secs(30 * 60);
@@ -153,6 +156,13 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
             subscriptions
                 .push(iced::time::every(interval).map(Message::AccountAvailabilityTimerTick));
         }
+    }
+
+    // Only a launch through the chat proxy can have its status changed, so only then is the game
+    // watched. Nobody sees the control while minimized.
+    if app.chat_proxy.is_some() && !app.window_minimized {
+        subscriptions
+            .push(iced::time::every(LOCAL_GAME_CHECK_INTERVAL).map(|_| Message::LocalGameTick));
     }
 
     Subscription::batch(subscriptions)
@@ -426,6 +436,9 @@ struct PrimeApp {
     launch_client_open: bool,
     /// The chat proxy the last launch went through. Dropping it stops the proxy.
     chat_proxy: Option<LaunchedChatProxy>,
+    /// The last check of what runs on this PC, made while a chat proxy runs.
+    local_game: Option<LocalGame>,
+    local_game_checking: bool,
     invisible_launch_failure: Option<InvisibleLaunchFailure>,
     window_minimized: bool,
     status_changed_at: iced::time::Instant,
@@ -553,8 +566,6 @@ struct UnavailableLaunchWarning {
 
 /// The chat proxy a launch went through, and for which account. Dropping it stops the proxy.
 #[derive(Clone, Debug)]
-// The fields are held, not read yet: dropping `proxy` is what stops it.
-#[allow(dead_code)]
 struct LaunchedChatProxy {
     account_id: AccountId,
     proxy: ChatProxy,
@@ -1099,6 +1110,8 @@ enum Message {
     /// Launches without the chat proxy, from the "Can't go invisible" dialog.
     LaunchOnline(AccountId),
     CancelInvisibleLaunch,
+    LocalGameTick,
+    LocalGameChecked(LocalGame),
     CheckForAppUpdate,
     AppUpdateChecked {
         user_requested: bool,

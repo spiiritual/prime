@@ -19,7 +19,8 @@ use super::data::game_settings::{
 };
 use super::data::launch_flow::CapturedAccountDraft;
 use super::data::launch_flow::{
-    LaunchAccountResult, is_pending_launcher_capture_error, load_accounts, require_launcher_session,
+    LaunchAccountResult, LocalGame, is_pending_launcher_capture_error, load_accounts,
+    require_launcher_session,
 };
 use super::data::live_match::{
     LiveMatch, LiveMatchError, LiveMatchResult, MatchPhase, shown_weapons,
@@ -2561,6 +2562,124 @@ fn a_failed_launch_stops_its_chat_proxy() {
     let _ = app.update(Message::LaunchFinished(Err("boom".to_string())));
 
     assert!(app.chat_proxy.is_none());
+}
+
+fn in_game_here(puuid: &str) -> LocalGame {
+    LocalGame {
+        valorant_running: true,
+        signed_in_puuid: Some(puuid.to_string()),
+        riot_client_running: true,
+    }
+}
+
+/// An app whose selected account plays here through Prime's connected chat proxy.
+fn app_in_game(dir: &Path) -> (PrimeApp, AccountProfile) {
+    let mut app = test_app(dir);
+    let account = launchable_account(&app, "Main");
+    app.state.push_account(account.clone());
+    app.chat_proxy = Some(LaunchedChatProxy {
+        account_id: account.id,
+        proxy: ChatProxy::detached(PresenceStatus::Online, true),
+    });
+    app.local_game = Some(in_game_here("Main-puuid"));
+    (app, account)
+}
+
+#[test]
+fn the_status_control_shows_while_the_selected_account_plays_here() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = app_in_game(dir.path());
+    assert!(app.status_control_visible());
+
+    app.local_game = Some(in_game_here("MAIN-PUUID"));
+    assert!(app.status_control_visible(), "PUUIDs compare without case");
+}
+
+#[test]
+fn the_status_control_hides_unless_every_condition_holds() {
+    type Change = fn(&mut PrimeApp);
+    let cases: [(&str, Change); 6] = [
+        ("VALORANT isn't running here", |app| {
+            app.local_game.as_mut().expect("game").valorant_running = false;
+        }),
+        ("Riot Client is signed in as someone else", |app| {
+            app.local_game.as_mut().expect("game").signed_in_puuid = Some("other".to_string());
+        }),
+        ("Riot Client didn't say who is signed in", |app| {
+            app.local_game.as_mut().expect("game").signed_in_puuid = None;
+        }),
+        ("chat isn't going through Prime", |app| {
+            let account_id = app.chat_proxy.as_ref().expect("proxy").account_id;
+            app.chat_proxy = Some(LaunchedChatProxy {
+                account_id,
+                proxy: ChatProxy::detached(PresenceStatus::Online, false),
+            });
+        }),
+        ("Prime launched another account", |app| {
+            app.chat_proxy.as_mut().expect("proxy").account_id = AccountId::new();
+        }),
+        ("Prime didn't launch the game", |app| app.chat_proxy = None),
+    ];
+
+    for (why, change) in cases {
+        let dir = tempdir().expect("temp dir");
+        let (mut app, _) = app_in_game(dir.path());
+        change(&mut app);
+        assert!(!app.status_control_visible(), "{why}");
+    }
+}
+
+#[test]
+fn the_status_control_hides_when_another_account_is_selected() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = app_in_game(dir.path());
+    let alt = launchable_account(&app, "Alt");
+    app.state.push_account(alt.clone());
+
+    let _ = app.update(Message::SelectAccount(alt.id));
+
+    assert!(!app.status_control_visible());
+}
+
+#[test]
+fn the_game_is_only_checked_while_a_proxy_runs() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = app_in_game(dir.path());
+
+    assert_eq!(app.update(Message::LocalGameTick).units(), 1);
+    assert_eq!(
+        app.update(Message::LocalGameTick).units(),
+        0,
+        "one check at a time"
+    );
+
+    app.local_game_checking = false;
+    app.chat_proxy = None;
+    assert_eq!(app.update(Message::LocalGameTick).units(), 0);
+}
+
+#[test]
+fn closing_riot_client_stops_the_chat_proxy() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = app_in_game(dir.path());
+    app.local_game_checking = true;
+
+    let _ = app.update(Message::LocalGameChecked(LocalGame::default()));
+
+    assert!(app.chat_proxy.is_none());
+    assert!(app.local_game.is_none());
+    assert!(!app.local_game_checking);
+}
+
+#[test]
+fn riot_client_starting_during_a_launch_keeps_the_proxy() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, account) = app_in_game(dir.path());
+    app.launching_account = Some(account.id);
+
+    let _ = app.update(Message::LocalGameChecked(LocalGame::default()));
+
+    assert!(app.chat_proxy.is_some());
 }
 
 #[test]

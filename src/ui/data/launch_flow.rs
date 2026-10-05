@@ -192,6 +192,28 @@ pub(in crate::ui) async fn valorant_is_running() -> bool {
         .unwrap_or(false)
 }
 
+/// What runs on this PC: whether VALORANT is up and who the Riot Client here is signed in as.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(in crate::ui) struct LocalGame {
+    pub(in crate::ui) valorant_running: bool,
+    pub(in crate::ui) signed_in_puuid: Option<String>,
+    pub(in crate::ui) riot_client_running: bool,
+}
+
+pub(in crate::ui) async fn check_local_game() -> LocalGame {
+    let valorant_running = valorant_is_running().await;
+    let signed_in_puuid = if valorant_running {
+        crate::riot::local_client::signed_in_puuid().await
+    } else {
+        None
+    };
+    LocalGame {
+        valorant_running,
+        signed_in_puuid,
+        riot_client_running: crate::riot::local_client::riot_client_running(),
+    }
+}
+
 pub(in crate::ui) async fn start_chat_proxy(
     status: crate::riot::chat_proxy::PresenceStatus,
 ) -> Result<crate::riot::chat_proxy::ChatProxy, String> {
