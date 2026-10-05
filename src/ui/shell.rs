@@ -1078,11 +1078,15 @@ fn presence_mark(status: PresenceStatus) -> Element<'static, Message> {
 }
 
 fn status_menu_item(status: PresenceStatus, is_selected: bool) -> Element<'static, Message> {
-    let title = text(presence_label(status)).size(13).font(if is_selected {
-        theme::SEMIBOLD_FONT
-    } else {
-        theme::BODY_FONT
-    });
+    // The design's line heights; the theme's relative 1.21 comes out a pixel short.
+    let title = text(presence_label(status))
+        .size(13)
+        .line_height(iced::widget::text::LineHeight::Absolute(16.0.into()))
+        .font(if is_selected {
+            theme::SEMIBOLD_FONT
+        } else {
+            theme::BODY_FONT
+        });
     // Only the selected item has one; the others' text runs to the item's edge.
     let check = is_selected.then(|| theme::icon(theme::Icon::Check, 15.0, theme::TEXT));
 
@@ -1093,6 +1097,7 @@ fn status_menu_item(status: PresenceStatus, is_selected: bool) -> Element<'stati
                 title,
                 text(presence_description(status))
                     .size(12)
+                    .line_height(iced::widget::text::LineHeight::Absolute(15.0.into()))
                     .color(theme::MUTED)
             ]
             .spacing(2)
