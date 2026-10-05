@@ -12,11 +12,23 @@ pub const VALORANT_PROCESS_IMAGES: [&str; 2] = ["VALORANT-Win64-Shipping.exe", "
 pub const RIOT_CLIENT_PROCESS_IMAGE: &str = "RiotClientServices.exe";
 const RIOT_CLIENT_PROCESS_IMAGES: [&str; 2] = ["RiotClientUx.exe", RIOT_CLIENT_PROCESS_IMAGE];
 
-pub fn launch_valorant(riot_client_path: Option<&Path>) -> Result<(), LaunchError> {
-    start_riot_client(
-        riot_client_path,
-        &["--launch-product=valorant", "--launch-patchline=live"],
-    )
+/// Starts VALORANT. With `chat_proxy_port`, Riot Client fetches its config from Prime's chat
+/// proxy instead of Riot, so friends see the status picked in Prime.
+pub fn launch_valorant(
+    riot_client_path: Option<&Path>,
+    chat_proxy_port: Option<u16>,
+) -> Result<(), LaunchError> {
+    start_riot_client(riot_client_path, &valorant_launch_args(chat_proxy_port))
+}
+
+fn valorant_launch_args(chat_proxy_port: Option<u16>) -> Vec<String> {
+    let mut args = vec![
+        "--launch-product=valorant".to_string(),
+        "--launch-patchline=live".to_string(),
+    ];
+    // Unquoted: Riot Client takes quotes as part of the URL.
+    args.extend(chat_proxy_port.map(|port| format!("--client-config-url=http://127.0.0.1:{port}")));
+    args
 }
 
 pub fn launch_riot_login_capture(riot_client_path: Option<&Path>) -> Result<(), LaunchError> {
@@ -26,7 +38,10 @@ pub fn launch_riot_login_capture(riot_client_path: Option<&Path>) -> Result<(), 
     )
 }
 
-fn start_riot_client(riot_client_path: Option<&Path>, args: &[&str]) -> Result<(), LaunchError> {
+fn start_riot_client(
+    riot_client_path: Option<&Path>,
+    args: &[impl AsRef<std::ffi::OsStr>],
+) -> Result<(), LaunchError> {
     let executable = match riot_client_path {
         Some(path) => path.to_path_buf(),
         None => default_riot_client_candidates()
@@ -284,6 +299,22 @@ pub enum LaunchError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_proxied_launch_points_riot_client_at_the_chat_proxy() {
+        assert_eq!(
+            valorant_launch_args(Some(51234)),
+            [
+                "--launch-product=valorant",
+                "--launch-patchline=live",
+                "--client-config-url=http://127.0.0.1:51234",
+            ]
+        );
+        assert_eq!(
+            valorant_launch_args(None),
+            ["--launch-product=valorant", "--launch-patchline=live"]
+        );
+    }
 
     #[test]
     fn parses_executable_paths_from_riot_install_manifest() {

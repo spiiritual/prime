@@ -106,7 +106,7 @@ async fn prepare_account_launch(
         let previous_sync =
             sync_signed_in_launcher_session(&saved_sessions).map_err(|error| error.to_string());
         apply_launcher_session_backup(&backup).map_err(|error| error.to_string())?;
-        launch_valorant(riot_client_path.as_deref()).map_err(|error| error.to_string())?;
+        launch_valorant(riot_client_path.as_deref(), None).map_err(|error| error.to_string())?;
         Ok(previous_sync)
     })
     .await

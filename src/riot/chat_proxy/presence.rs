@@ -155,6 +155,7 @@ fn transform_block(text: &mut String, tag: &str, transform: impl FnOnce(String) 
     }
 }
 
+#[cfg(test)]
 fn element_text(haystack: &str, tag: &str) -> Option<String> {
     let start = find_tag_open(haystack, tag, 0)?;
     let open_end = tag_open_end(haystack.as_bytes(), start)?;
