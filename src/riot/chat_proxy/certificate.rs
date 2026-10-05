@@ -165,7 +165,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_usable_download_is_used_even_when_it_cant_be_cached() {
-        // A throwaway self-signed certificate with an empty password, like Deceive's.
+        // A throwaway self-signed certificate with an empty password, like Deceive's. Nothing trusts it; it isn't a secret.
         const TEST_PFX: &[u8] = include_bytes!("../../../tests/fixtures/chat-proxy-test.pfx");
         let dir = tempdir().expect("temp dir");
         let not_a_dir = dir.path().join("file");
