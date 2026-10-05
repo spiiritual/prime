@@ -63,13 +63,19 @@ pub(in crate::ui) fn load_accounts(repo: &AccountRepository) -> Result<LoadedAcc
 
 pub(in crate::ui) async fn launch_account(
     riot_client_path: Option<PathBuf>,
+    chat_proxy_port: Option<u16>,
     backup: Option<LauncherSessionBackup>,
     saved_sessions: Vec<(AccountId, LauncherSessionBackup)>,
 ) -> Result<LaunchAccountResult, String> {
     let backup = require_launcher_session(backup)?;
 
-    let previous_sync =
-        prepare_account_launch(riot_client_path, backup.clone(), saved_sessions).await?;
+    let previous_sync = prepare_account_launch(
+        riot_client_path,
+        chat_proxy_port,
+        backup.clone(),
+        saved_sessions,
+    )
+    .await?;
     wait_for_valorant_window(VALORANT_OPEN_TIMEOUT, VALORANT_OPEN_POLL_INTERVAL).await?;
     let sync = sync_launcher_session_after_launch(backup).await;
 
@@ -97,6 +103,7 @@ pub(in crate::ui) type PreviousAccountSync =
 
 async fn prepare_account_launch(
     riot_client_path: Option<PathBuf>,
+    chat_proxy_port: Option<u16>,
     backup: LauncherSessionBackup,
     saved_sessions: Vec<(AccountId, LauncherSessionBackup)>,
 ) -> Result<PreviousAccountSync, String> {
@@ -106,7 +113,8 @@ async fn prepare_account_launch(
         let previous_sync =
             sync_signed_in_launcher_session(&saved_sessions).map_err(|error| error.to_string());
         apply_launcher_session_backup(&backup).map_err(|error| error.to_string())?;
-        launch_valorant(riot_client_path.as_deref(), None).map_err(|error| error.to_string())?;
+        launch_valorant(riot_client_path.as_deref(), chat_proxy_port)
+            .map_err(|error| error.to_string())?;
         Ok(previous_sync)
     })
     .await
@@ -182,6 +190,14 @@ pub(in crate::ui) async fn valorant_is_running() -> bool {
         .ok()
         .and_then(Result::ok)
         .unwrap_or(false)
+}
+
+pub(in crate::ui) async fn start_chat_proxy(
+    status: crate::riot::chat_proxy::PresenceStatus,
+) -> Result<crate::riot::chat_proxy::ChatProxy, String> {
+    crate::riot::chat_proxy::ChatProxy::start(status)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 pub(in crate::ui) async fn check_riot_client_window_visible() -> Result<bool, String> {

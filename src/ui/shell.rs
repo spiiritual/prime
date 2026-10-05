@@ -15,9 +15,10 @@ use super::data::account_details::{AccountAvailability, Busy};
 use super::data::live_match::{MatchPhase, indicator_detail};
 use super::theme::{self, button, text};
 use super::{
-    AccountExportOutput, CapturedAccountDraft, ImageViewerImage, LoadoutTab, LoginCapture,
-    LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange, PresetNamePrompt,
-    PresetNameTarget, PrimeApp, SettingsChange, Tab, UnavailableLaunchWarning, screens,
+    AccountExportOutput, CapturedAccountDraft, ImageViewerImage, InvisibleLaunchFailure,
+    LoadoutTab, LoginCapture, LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message,
+    PendingSettingsChange, PresetNamePrompt, PresetNameTarget, PrimeApp, SettingsChange, Tab,
+    UnavailableLaunchWarning, screens,
 };
 use super::{Dialog, StatusKind, appear_progress, status_bar_visible, status_spinner_active};
 
@@ -87,6 +88,9 @@ impl PrimeApp {
                 }
                 Dialog::UnavailableLaunch => {
                     unavailable_launch_prompt_overlay(self.unavailable_launch_warning.as_ref()?)
+                }
+                Dialog::InvisibleLaunchFailed => {
+                    invisible_launch_failed_prompt_overlay(self.invisible_launch_failure.as_ref()?)
                 }
                 Dialog::AppUpdate => app_update_prompt_overlay(
                     self.app_update_status.prompt_update()?,
@@ -160,7 +164,10 @@ impl PrimeApp {
         }
     }
 
-    fn account_by_id(&self, account_id: crate::account::AccountId) -> Option<&AccountProfile> {
+    pub(super) fn account_by_id(
+        &self,
+        account_id: crate::account::AccountId,
+    ) -> Option<&AccountProfile> {
         self.state
             .accounts
             .iter()
@@ -1826,6 +1833,35 @@ fn unavailable_launch_prompt_overlay(warning: &UnavailableLaunchWarning) -> Elem
                 "Launch anyway",
                 theme::danger_button_style,
                 Some(Message::LaunchAnyway(warning.account_id)),
+            ),
+        ],
+    )
+}
+
+fn invisible_launch_failed_prompt_overlay(
+    failure: &InvisibleLaunchFailure,
+) -> Element<'_, Message> {
+    dialog(
+        480.0,
+        Some(("CAN\u{2019}T GO INVISIBLE".to_string(), theme::GOLD)),
+        format!("Launch {} online?", failure.display_name),
+        Some(
+            "Prime couldn\u{2019}t start the chat proxy that makes you invisible, so friends \
+             would see you online."
+                .to_string(),
+        ),
+        Some(column![dialog_note(
+            theme::Icon::TriangleAlert,
+            theme::GOLD,
+            failure.error.as_str(),
+        )]),
+        vec![
+            dialog_button("Cancel", Some(Message::CancelInvisibleLaunch)),
+            dialog_action(
+                theme::Icon::Play,
+                "Launch online",
+                theme::danger_button_style,
+                Some(Message::LaunchOnline(failure.account_id)),
             ),
         ],
     )

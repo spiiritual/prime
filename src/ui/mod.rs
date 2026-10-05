@@ -17,6 +17,7 @@ use iced::{Size, Subscription, Theme, window};
 
 use crate::account::AccountId;
 use crate::image_cache::{CacheUsage, ImageCache};
+use crate::riot::chat_proxy::ChatProxy;
 use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{AvailableUpdate, UpdateCheckOutcome};
 
@@ -423,6 +424,9 @@ struct PrimeApp {
     launch_progress_checking: bool,
     /// Riot Client's window is up and the launch waits for VALORANT's.
     launch_client_open: bool,
+    /// The chat proxy the last launch went through. Dropping it stops the proxy.
+    chat_proxy: Option<LaunchedChatProxy>,
+    invisible_launch_failure: Option<InvisibleLaunchFailure>,
     window_minimized: bool,
     status_changed_at: iced::time::Instant,
     /// When the toast last appeared. A toast already on screen changes text without rising again.
@@ -545,6 +549,23 @@ struct UnavailableLaunchWarning {
     account_id: AccountId,
     display_name: String,
     reason: String,
+}
+
+/// The chat proxy a launch went through, and for which account. Dropping it stops the proxy.
+#[derive(Clone, Debug)]
+// The fields are held, not read yet: dropping `proxy` is what stops it.
+#[allow(dead_code)]
+struct LaunchedChatProxy {
+    account_id: AccountId,
+    proxy: ChatProxy,
+}
+
+/// A launch stopped because the chat proxy couldn't start while the saved status is Invisible.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InvisibleLaunchFailure {
+    account_id: AccountId,
+    display_name: String,
+    error: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -733,6 +754,7 @@ enum Dialog {
     DeleteSettingsProfile,
     PresetName,
     UnavailableLaunch,
+    InvisibleLaunchFailed,
     AppUpdate,
     BundleDetails,
 }
@@ -1072,6 +1094,11 @@ enum Message {
     LaunchProgressTick,
     LaunchProgressChecked(Result<bool, String>),
     LaunchFinished(Result<LaunchAccountResult, String>),
+    /// The chat proxy for a launch of this account started, or why it couldn't.
+    ChatProxyStarted(AccountId, Result<ChatProxy, String>),
+    /// Launches without the chat proxy, from the "Can't go invisible" dialog.
+    LaunchOnline(AccountId),
+    CancelInvisibleLaunch,
     CheckForAppUpdate,
     AppUpdateChecked {
         user_requested: bool,

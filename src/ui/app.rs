@@ -9,6 +9,7 @@ use crate::account::{
 use crate::account_transfer::{export_account, import_account};
 use crate::image_cache::{CacheUsage, ImageCache};
 use crate::riot::auth::{RedirectTokens, parse_redirect_tokens};
+use crate::riot::chat_proxy::PresenceStatus;
 use crate::riot::launcher_session::{
     CapturedLauncherSession, adopt_launcher_session_backup, remove_launcher_session_backup,
 };
@@ -31,7 +32,7 @@ use super::data::image_assets::{
 use super::data::launch_flow::{
     PreviousAccountSync, check_riot_client_window_visible, finish_account_capture,
     finish_verified_launcher_session_login, launch_account, load_accounts, prepare_login_capture,
-    start_current_account_capture, valorant_is_running,
+    start_chat_proxy, start_current_account_capture, valorant_is_running,
 };
 use super::data::live_match::{LiveMatchError, fetch_live_match, pick_shown_weapon, shown_weapons};
 use super::data::loadout::fetch_loadout;
@@ -129,6 +130,8 @@ impl PrimeApp {
                 launching_account: None,
                 launch_progress_checking: false,
                 launch_client_open: false,
+                chat_proxy: None,
+                invisible_launch_failure: None,
                 window_minimized: false,
                 status_changed_at: iced::time::Instant::now(),
                 toast_appeared_at: iced::time::Instant::now(),
@@ -214,6 +217,10 @@ impl PrimeApp {
                 Dialog::UnavailableLaunch,
             ),
             (
+                self.invisible_launch_failure.is_some(),
+                Dialog::InvisibleLaunchFailed,
+            ),
+            (
                 self.app_update_status.prompt_update().is_some(),
                 Dialog::AppUpdate,
             ),
@@ -263,6 +270,8 @@ impl PrimeApp {
             Message::CancelPresetName
         } else if self.unavailable_launch_warning.is_some() {
             Message::CancelUnavailableLaunch
+        } else if self.invisible_launch_failure.is_some() {
+            Message::CancelInvisibleLaunch
         } else if self.app_update_status.prompt_update().is_some() {
             Message::DismissAppUpdate
         } else if self.open_bundle_details().is_some() {
@@ -2336,6 +2345,70 @@ impl PrimeApp {
 
                 self.start_account_launch(account)
             }
+            Message::ChatProxyStarted(account_id, result) => {
+                // Cancelled or replaced while the proxy started; dropping it stops it.
+                if self.launching_account != Some(account_id) {
+                    return Task::none();
+                }
+                let Some(account) = self.account_by_id(account_id).cloned() else {
+                    self.launching_account = None;
+                    self.set_status(Status::error("Account profile no longer exists"));
+                    return Task::none();
+                };
+
+                match result {
+                    Ok(proxy) => {
+                        let port = proxy.config_port();
+                        self.chat_proxy = Some(super::LaunchedChatProxy { account_id, proxy });
+                        self.run_account_launch(account, Some(port))
+                    }
+                    Err(error) if self.state.presence_status == PresenceStatus::Invisible => {
+                        self.launching_account = None;
+                        self.launch_progress_checking = false;
+                        self.clear_progress_status();
+                        self.close_popovers();
+                        self.invisible_launch_failure = Some(super::InvisibleLaunchFailure {
+                            account_id,
+                            display_name: account.display_name,
+                            error,
+                        });
+                        Task::none()
+                    }
+                    Err(error) => {
+                        // Online looks the same without the proxy; only changing it needs one.
+                        let launch = self.run_account_launch(account, None);
+                        self.set_status(Status::warning(format!(
+                            "Your status can't be changed this session. {error}"
+                        )));
+                        launch
+                    }
+                }
+            }
+            Message::LaunchOnline(account_id) => {
+                if self.launching_account.is_some() || self.launch_preflight_account.is_some() {
+                    return Task::none();
+                }
+                let Some(failure) = self.invisible_launch_failure.take() else {
+                    return Task::none();
+                };
+                if failure.account_id != account_id {
+                    self.invisible_launch_failure = Some(failure);
+                    return Task::none();
+                }
+                let Some(account) = self.account_by_id(account_id).cloned() else {
+                    self.set_status(Status::error("Account profile no longer exists"));
+                    return Task::none();
+                };
+
+                self.launching_account = Some(account_id);
+                self.launch_progress_checking = false;
+                self.launch_client_open = false;
+                self.run_account_launch(account, None)
+            }
+            Message::CancelInvisibleLaunch => {
+                self.invisible_launch_failure = None;
+                Task::none()
+            }
             Message::LaunchProgressTick => {
                 if self.launching_account.is_none() || self.launch_progress_checking {
                     return Task::none();
@@ -2398,6 +2471,7 @@ impl PrimeApp {
                 Err(error) => {
                     self.launching_account = None;
                     self.launch_progress_checking = false;
+                    self.chat_proxy = None;
                     self.set_status(Status::error(format!("Launch failed: {error}")));
                     Task::none()
                 }
@@ -3233,10 +3307,6 @@ impl PrimeApp {
 
     fn start_account_launch(&mut self, account: AccountProfile) -> Task<Message> {
         let id = account.id;
-        let riot_client_path = self.state.riot_client_path.clone();
-        let backup = account.launcher_session.clone();
-        let saved_sessions = self.saved_launcher_sessions();
-
         let selection_changed = self.state.selected_account != Some(id);
         self.state.select_account(id);
         // Dialogs were closed when the launch was asked for; any open now were opened since.
@@ -3245,6 +3315,8 @@ impl PrimeApp {
         self.launching_account = Some(id);
         self.launch_progress_checking = false;
         self.launch_client_open = false;
+        // The launch restarts Riot Client, so the last proxy has nothing left to carry.
+        self.chat_proxy = None;
 
         // Shop and Loadout show the selected account, so they reload when launching switched it.
         let reload = if selection_changed {
@@ -3260,11 +3332,28 @@ impl PrimeApp {
         Task::batch([
             self.save_task(),
             Task::perform(
-                async move { launch_account(riot_client_path, backup, saved_sessions).await },
-                Message::LaunchFinished,
+                start_chat_proxy(self.state.presence_status),
+                move |result| Message::ChatProxyStarted(id, result),
             ),
             reload,
         ])
+    }
+
+    /// Restores the account's login and launches VALORANT, through the chat proxy on
+    /// `config_port` when there is one.
+    fn run_account_launch(
+        &mut self,
+        account: AccountProfile,
+        config_port: Option<u16>,
+    ) -> Task<Message> {
+        let riot_client_path = self.state.riot_client_path.clone();
+        let backup = account.launcher_session.clone();
+        let saved_sessions = self.saved_launcher_sessions();
+
+        Task::perform(
+            async move { launch_account(riot_client_path, config_port, backup, saved_sessions).await },
+            Message::LaunchFinished,
+        )
     }
 
     fn selected_account_is_store_loading(&self) -> bool {

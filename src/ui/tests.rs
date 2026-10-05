@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use tempfile::tempdir;
 
-use super::UnavailableLaunchWarning;
 use super::app::{
     LaunchPreflightDecision, apply_account_detail_results, cancel_unavailable_launch_state,
     launch_preflight_decision,
@@ -37,6 +36,7 @@ use super::data::shop::{
     AccessoryKind, BundleItem, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
     StoreSummary, currency_balances_from_wallet, format_whole_number,
 };
+use super::{Dialog, InvisibleLaunchFailure, LaunchedChatProxy, UnavailableLaunchWarning};
 use super::{
     Message, PendingSettingsChange, PendingSettingsCheck, PresetNamePrompt, PresetNameTarget,
     PrimeApp, SettingsChange, Status, StatusKind, countdown_timer_interval,
@@ -50,6 +50,7 @@ use crate::account::{
 use crate::game_settings::{
     GameSettingsProfileMetadata, GameSettingsProfilePurpose, GameSettingsProfileSummary,
 };
+use crate::riot::chat_proxy::{ChatProxy, PresenceStatus};
 use crate::riot::content::{
     AccessoryCatalog, Buddy, BuddyLevel, BundleCatalog, ContractCatalog, ContractChapter,
     ContractContent, ContractLevel, ContractReward, Currency, CurrencyCatalog, SkinCatalog,
@@ -2385,6 +2386,145 @@ fn clicking_outside_a_popover_closes_it() {
 
     assert!(!app.account_switcher_open);
     assert_eq!(app.open_account_menu, None);
+}
+
+fn launchable_account(app: &PrimeApp, name: &str) -> AccountProfile {
+    let mut account = account_with_backup(&app.repo.launcher_backups_dir(), name, "settings");
+    account.puuid = Some(format!("{name}-puuid"));
+    account
+}
+
+fn proxy_failure_for(account: &AccountProfile) -> Message {
+    Message::ChatProxyStarted(
+        account.id,
+        Err("Couldn't get the chat certificate: offline".to_string()),
+    )
+}
+
+#[test]
+fn a_failed_chat_proxy_asks_before_launching_online_when_invisible() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = launchable_account(&app, "Main");
+    app.state.push_account(account.clone());
+    app.state.presence_status = PresenceStatus::Invisible;
+    app.launching_account = Some(account.id);
+
+    let task = app.update(proxy_failure_for(&account));
+
+    assert_eq!(task.units(), 0, "nothing launches");
+    assert_eq!(app.launching_account, None);
+    let failure = app.invisible_launch_failure.as_ref().expect("dialog");
+    assert_eq!(failure.account_id, account.id);
+    assert!(failure.error.contains("certificate"), "{}", failure.error);
+    assert_eq!(app.open_dialog(), Some(Dialog::InvisibleLaunchFailed));
+}
+
+#[test]
+fn a_failed_chat_proxy_still_launches_when_online() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = launchable_account(&app, "Main");
+    app.state.push_account(account.clone());
+    app.launching_account = Some(account.id);
+
+    let task = app.update(proxy_failure_for(&account));
+
+    assert!(task.units() > 0, "launches without the proxy");
+    assert_eq!(app.launching_account, Some(account.id));
+    assert!(app.invisible_launch_failure.is_none());
+    assert!(app.chat_proxy.is_none());
+    assert_eq!(app.status.kind, StatusKind::Warning);
+}
+
+#[test]
+fn a_started_chat_proxy_is_kept_for_the_launched_account() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = launchable_account(&app, "Main");
+    app.state.push_account(account.clone());
+    app.launching_account = Some(account.id);
+
+    let task = app.update(Message::ChatProxyStarted(
+        account.id,
+        Ok(ChatProxy::detached(PresenceStatus::Online, false)),
+    ));
+
+    assert!(task.units() > 0, "launches through the proxy");
+    assert_eq!(
+        app.chat_proxy.as_ref().map(|launched| launched.account_id),
+        Some(account.id)
+    );
+}
+
+#[test]
+fn a_chat_proxy_for_a_cancelled_launch_is_dropped() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = launchable_account(&app, "Main");
+    app.state.push_account(account.clone());
+
+    let task = app.update(Message::ChatProxyStarted(
+        account.id,
+        Ok(ChatProxy::detached(PresenceStatus::Online, false)),
+    ));
+
+    assert_eq!(task.units(), 0);
+    assert!(app.chat_proxy.is_none());
+}
+
+#[test]
+fn launch_online_launches_the_account_whose_proxy_failed() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = launchable_account(&app, "Main");
+    app.state.push_account(account.clone());
+    app.invisible_launch_failure = Some(InvisibleLaunchFailure {
+        account_id: account.id,
+        display_name: account.display_name.clone(),
+        error: "offline".to_string(),
+    });
+
+    let task = app.update(Message::LaunchOnline(account.id));
+
+    assert!(task.units() > 0);
+    assert_eq!(app.launching_account, Some(account.id));
+    assert!(app.invisible_launch_failure.is_none());
+}
+
+#[test]
+fn escape_cancels_the_invisible_launch_dialog() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = launchable_account(&app, "Main");
+    app.state.push_account(account.clone());
+    app.invisible_launch_failure = Some(InvisibleLaunchFailure {
+        account_id: account.id,
+        display_name: account.display_name.clone(),
+        error: "offline".to_string(),
+    });
+
+    let _ = app.update(Message::EscapePressed);
+
+    assert!(app.invisible_launch_failure.is_none());
+    assert_eq!(app.launching_account, None);
+}
+
+#[test]
+fn a_failed_launch_stops_its_chat_proxy() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = launchable_account(&app, "Main");
+    app.state.push_account(account.clone());
+    app.launching_account = Some(account.id);
+    app.chat_proxy = Some(LaunchedChatProxy {
+        account_id: account.id,
+        proxy: ChatProxy::detached(PresenceStatus::Online, false),
+    });
+
+    let _ = app.update(Message::LaunchFinished(Err("boom".to_string())));
+
+    assert!(app.chat_proxy.is_none());
 }
 
 #[test]
