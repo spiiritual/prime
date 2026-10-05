@@ -240,9 +240,232 @@ fn replace_xml_element_text(mut text: String, tag: &str, replacement: &str) -> S
     text
 }
 
+const PRESENCE_OPEN: &[u8] = b"<presence";
+
+/// The most one stanza may hold while it waits for its end. A real presence is a few KB; past
+/// this, the connection is dropped and Riot Client reconnects.
+pub(super) const MAX_PENDING: usize = 1 << 20;
+
+/// A run of the chat stream: bytes to forward as they are, or one complete presence to rewrite.
+#[derive(Debug, Eq, PartialEq)]
+pub(super) enum Piece {
+    Raw(Vec<u8>),
+    Presence(String),
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(super) enum SplitError {
+    TooLarge,
+    NotUtf8,
+}
+
+/// Cuts the bytes Riot Client sends into presences and everything else. Socket reads end anywhere,
+/// even inside a tag name or a multi-byte character, so an unfinished presence waits for the rest
+/// of it. Other bytes go out as soon as they can't be the start of a presence.
+#[derive(Debug, Default)]
+pub(super) struct StanzaSplitter {
+    pending: Vec<u8>,
+}
+
+impl StanzaSplitter {
+    pub(super) fn push(&mut self, bytes: &[u8]) -> Result<Vec<Piece>, SplitError> {
+        self.pending.extend_from_slice(bytes);
+        let mut pieces = Vec::new();
+
+        loop {
+            let Some(start) = find_presence_start(&self.pending) else {
+                let flush = self.pending.len() - partial_open_suffix(&self.pending);
+                if flush > 0 {
+                    pieces.push(Piece::Raw(self.pending.drain(..flush).collect()));
+                }
+                break;
+            };
+            if start > 0 {
+                pieces.push(Piece::Raw(self.pending.drain(..start).collect()));
+            }
+            let Some(end) = presence_end(&self.pending) else {
+                break;
+            };
+            let stanza: Vec<u8> = self.pending.drain(..end).collect();
+            pieces.push(Piece::Presence(
+                String::from_utf8(stanza).map_err(|_| SplitError::NotUtf8)?,
+            ));
+        }
+
+        if self.pending.len() > MAX_PENDING {
+            return Err(SplitError::TooLarge);
+        }
+        Ok(pieces)
+    }
+}
+
+/// Where the first `<presence` tag starts. One that ends the buffer counts, since the next read
+/// may still turn it into a longer tag name, which is then skipped.
+fn find_presence_start(bytes: &[u8]) -> Option<usize> {
+    let mut from = 0;
+    while let Some(found) = find(&bytes[from..], PRESENCE_OPEN) {
+        let start = from + found;
+        match bytes.get(start + PRESENCE_OPEN.len()) {
+            None => return Some(start),
+            Some(&next) if next == b'>' || next == b'/' || next.is_ascii_whitespace() => {
+                return Some(start);
+            }
+            Some(_) => from = start + 1,
+        }
+    }
+    None
+}
+
+/// The end, exclusive, of the presence that starts `bytes`, once it has all arrived.
+fn presence_end(bytes: &[u8]) -> Option<usize> {
+    let open_end = tag_open_end(bytes, 0)?;
+    if bytes[open_end - 1] == b'/' {
+        return Some(open_end + 1);
+    }
+    find(&bytes[open_end..], PRESENCE_CLOSE.as_bytes())
+        .map(|close| open_end + close + PRESENCE_CLOSE.len())
+}
+
+/// How many bytes at the end of `bytes` could be the start of `<presence`.
+fn partial_open_suffix(bytes: &[u8]) -> usize {
+    (1..PRESENCE_OPEN.len())
+        .rev()
+        .find(|&len| bytes.ends_with(&PRESENCE_OPEN[..len]))
+        .unwrap_or(0)
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn raw_bytes(pieces: &[Piece]) -> Vec<u8> {
+        pieces
+            .iter()
+            .flat_map(|piece| match piece {
+                Piece::Raw(bytes) => bytes.clone(),
+                Piece::Presence(_) => Vec::new(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn passes_other_traffic_through_unchanged() {
+        let mut splitter = StanzaSplitter::default();
+        let traffic = b"<iq type='get' id='1'><ping/></iq><message><body>hi</body></message>";
+
+        let pieces = splitter.push(traffic).expect("split");
+
+        assert_eq!(raw_bytes(&pieces), traffic);
+        assert!(pieces.iter().all(|piece| matches!(piece, Piece::Raw(_))));
+    }
+
+    #[test]
+    fn holds_a_presence_until_it_is_complete() {
+        let mut splitter = StanzaSplitter::default();
+
+        let first = splitter
+            .push(b"<iq/><presence><show>chat</show><games><valorant><p>e30")
+            .expect("split");
+        let second = splitter
+            .push(b"=</p></valorant></games></presence><iq/>")
+            .expect("split");
+
+        assert_eq!(first, vec![Piece::Raw(b"<iq/>".to_vec())]);
+        assert_eq!(
+            second,
+            vec![
+                Piece::Presence(
+                    "<presence><show>chat</show><games><valorant><p>e30=</p></valorant></games></presence>"
+                        .to_string()
+                ),
+                Piece::Raw(b"<iq/>".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn holds_a_tag_name_cut_off_at_the_end_of_a_read() {
+        let mut splitter = StanzaSplitter::default();
+
+        let first = splitter.push(b"<iq/><pres").expect("split");
+        let second = splitter
+            .push(b"ence><show>chat</show></presence>")
+            .expect("split");
+
+        assert_eq!(first, vec![Piece::Raw(b"<iq/>".to_vec())]);
+        assert_eq!(
+            second,
+            vec![Piece::Presence(
+                "<presence><show>chat</show></presence>".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn keeps_multibyte_characters_cut_by_a_read_intact() {
+        let mut splitter = StanzaSplitter::default();
+        let message = "<message><body>héllo 🙂</body></message>".as_bytes();
+        let cut = message
+            .iter()
+            .position(|&byte| byte == 0xC3)
+            .expect("é starts with 0xC3")
+            + 1;
+
+        let mut pieces = splitter.push(&message[..cut]).expect("split");
+        pieces.extend(splitter.push(&message[cut..]).expect("split"));
+
+        assert_eq!(raw_bytes(&pieces), message);
+    }
+
+    #[test]
+    fn a_self_closing_presence_is_complete() {
+        let mut splitter = StanzaSplitter::default();
+
+        let pieces = splitter
+            .push(b"<presence type='unavailable'/>")
+            .expect("split");
+
+        assert_eq!(
+            pieces,
+            vec![Piece::Presence(
+                "<presence type='unavailable'/>".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn longer_tag_names_are_not_presence() {
+        let mut splitter = StanzaSplitter::default();
+        let traffic = b"<presences>x</presences>";
+
+        assert_eq!(raw_bytes(&splitter.push(traffic).expect("split")), traffic);
+    }
+
+    #[test]
+    fn quoted_angle_brackets_do_not_end_the_tag() {
+        let mut splitter = StanzaSplitter::default();
+        let stanza = "<presence id='a>b'><show>chat</show></presence>";
+
+        assert_eq!(
+            splitter.push(stanza.as_bytes()).expect("split"),
+            vec![Piece::Presence(stanza.to_string())]
+        );
+    }
+
+    #[test]
+    fn an_oversized_presence_is_refused() {
+        let mut splitter = StanzaSplitter::default();
+        let mut huge = b"<presence>".to_vec();
+        huge.extend(std::iter::repeat_n(b'a', MAX_PENDING));
+
+        assert_eq!(splitter.push(&huge), Err(SplitError::TooLarge));
+    }
 
     fn presence_stanza() -> String {
         "<presence from='user@example/RC' id='b-1'><games>\
