@@ -79,6 +79,7 @@ impl PrimeApp {
                 riot_client_path_input: String::new(),
                 status: Status::progress("Loading accounts"),
                 account_switcher_open: false,
+                status_menu_open: false,
                 open_account_menu: None,
                 show_add_account_prompt: false,
                 show_import_account_prompt: false,
@@ -279,6 +280,7 @@ impl PrimeApp {
         } else if self.open_bundle_details().is_some() {
             Message::CloseBundleDetails
         } else if self.account_switcher_open
+            || self.status_menu_open
             || self.open_account_menu.is_some()
             || self.open_preset_menu.is_some()
             || self.open_weapon_picker.is_some()
@@ -297,6 +299,7 @@ impl PrimeApp {
 
     fn close_popovers(&mut self) {
         self.account_switcher_open = false;
+        self.status_menu_open = false;
         self.open_account_menu = None;
         self.open_preset_menu = None;
         self.open_weapon_picker = None;
@@ -2432,7 +2435,27 @@ impl PrimeApp {
                 } else {
                     self.local_game = Some(game);
                 }
+                if !self.status_control_visible() {
+                    self.status_menu_open = false;
+                }
                 Task::none()
+            }
+            Message::ToggleStatusMenu => {
+                let open = !self.status_menu_open && self.status_control_visible();
+                self.close_popovers();
+                self.status_menu_open = open;
+                Task::none()
+            }
+            Message::PresenceStatusPicked(status) => {
+                self.status_menu_open = false;
+                if self.state.presence_status == status {
+                    return Task::none();
+                }
+                self.state.presence_status = status;
+                if let Some(launched) = &self.chat_proxy {
+                    launched.proxy.set_status(status);
+                }
+                self.save_task()
             }
             Message::LaunchProgressTick => {
                 if self.launching_account.is_none() || self.launch_progress_checking {
@@ -2838,6 +2861,7 @@ impl PrimeApp {
 
     fn close_account_surfaces(&mut self) {
         self.account_switcher_open = false;
+        self.status_menu_open = false;
         self.close_account_action_surfaces();
     }
 
@@ -3632,8 +3656,6 @@ impl PrimeApp {
     /// Whether the status control shows: VALORANT runs on this PC, Riot Client here is signed in
     /// as the selected account, and its chat goes through the proxy Prime launched that account
     /// with. Otherwise a change would reach nobody, or the wrong account.
-    // Nothing draws the control yet.
-    #[allow(dead_code)]
     pub(super) fn status_control_visible(&self) -> bool {
         let (Some(account), Some(launched), Some(game)) = (
             self.state.selected_account(),

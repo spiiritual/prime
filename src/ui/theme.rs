@@ -312,6 +312,7 @@ pub(super) enum Icon {
     ShieldCheck,
     ShieldOff,
     SlidersHorizontal,
+    Smartphone,
     Upload,
 }
 
@@ -370,6 +371,7 @@ impl Icon {
             Icon::ShieldCheck => include_bytes!("../../assets/icons/shield-check.svg"),
             Icon::ShieldOff => include_bytes!("../../assets/icons/shield-off.svg"),
             Icon::SlidersHorizontal => include_bytes!("../../assets/icons/sliders-horizontal.svg"),
+            Icon::Smartphone => include_bytes!("../../assets/icons/smartphone.svg"),
             Icon::Upload => include_bytes!("../../assets/icons/upload.svg"),
         }
     }

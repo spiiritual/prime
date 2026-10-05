@@ -2683,6 +2683,76 @@ fn riot_client_starting_during_a_launch_keeps_the_proxy() {
 }
 
 #[test]
+fn the_status_menu_opens_only_with_the_control() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = app_in_game(dir.path());
+
+    let _ = app.update(Message::ToggleStatusMenu);
+    assert!(app.status_menu_open);
+    let _ = app.update(Message::ToggleStatusMenu);
+    assert!(!app.status_menu_open);
+
+    app.chat_proxy = None;
+    let _ = app.update(Message::ToggleStatusMenu);
+    assert!(!app.status_menu_open);
+}
+
+#[test]
+fn picking_a_status_saves_it_and_applies_it_now() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = app_in_game(dir.path());
+    app.status_menu_open = true;
+
+    let task = app.update(Message::PresenceStatusPicked(PresenceStatus::Invisible));
+
+    assert!(task.units() > 0, "saves accounts.json");
+    assert_eq!(app.state.presence_status, PresenceStatus::Invisible);
+    assert_eq!(
+        app.chat_proxy.as_ref().expect("proxy").proxy.status(),
+        PresenceStatus::Invisible
+    );
+    assert!(!app.status_menu_open);
+}
+
+#[test]
+fn picking_the_current_status_saves_nothing() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = app_in_game(dir.path());
+
+    let task = app.update(Message::PresenceStatusPicked(PresenceStatus::Online));
+
+    assert_eq!(task.units(), 0);
+}
+
+#[test]
+fn escape_and_outside_clicks_close_the_status_menu() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = app_in_game(dir.path());
+
+    app.status_menu_open = true;
+    let _ = app.update(Message::EscapePressed);
+    assert!(!app.status_menu_open);
+
+    app.status_menu_open = true;
+    let _ = app.update(Message::DismissPopovers);
+    assert!(!app.status_menu_open);
+}
+
+#[test]
+fn the_status_menu_closes_when_the_control_hides() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = app_in_game(dir.path());
+    app.status_menu_open = true;
+
+    let _ = app.update(Message::LocalGameChecked(LocalGame {
+        riot_client_running: true,
+        ..LocalGame::default()
+    }));
+
+    assert!(!app.status_menu_open);
+}
+
+#[test]
 fn launch_starts_when_no_game_is_running() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());

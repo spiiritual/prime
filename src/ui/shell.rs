@@ -6,10 +6,11 @@ use std::path::PathBuf;
 
 use crate::account::AccountProfile;
 use crate::game_settings::{GameSettingsProfileMetadata, GameSettingsProfilePurpose};
+use crate::riot::chat_proxy::PresenceStatus;
 
 use super::components::{
-    account_avatar, anchored_popover, balances_unavailable, compact_loading_indicator,
-    currency_balance_display, loading_indicator, wallet_skeleton,
+    account_avatar, anchored_popover, anchored_popover_above, balances_unavailable,
+    compact_loading_indicator, currency_balance_display, loading_indicator, wallet_skeleton,
 };
 use super::data::account_details::{AccountAvailability, Busy};
 use super::data::live_match::{MatchPhase, indicator_detail};
@@ -28,6 +29,12 @@ const ACCOUNT_SWITCHER_WIDTH: f32 = SIDEBAR_WIDTH - 32.0;
 const ACCOUNT_SWITCHER_MENU_TOP_OFFSET: f32 = 60.0;
 const ACCOUNT_SWITCHER_MENU_WIDTH: f32 = 280.0;
 const POPOVER_BORDER: Color = iced::color!(0x2E3542);
+const STATUS_MENU_WIDTH: f32 = 280.0;
+const STATUS_MENU_GAP: f32 = 4.0;
+const OPEN_CONTROL_BORDER: Color = iced::color!(0x3A4250);
+/// Between the Live Match indicator and the status control, tighter than the sidebar's 28 so
+/// they read as one group.
+const MATCH_STATUS_GAP: f32 = 8.0;
 const STATUS_TOAST_MAX_WIDTH: f32 = 640.0;
 const TOAST_TIMER_HEIGHT: f32 = 2.0;
 const UPDATE_CHANGELOG_MAX_HEIGHT: f32 = 260.0;
@@ -202,13 +209,19 @@ impl PrimeApp {
             .line_height(theme::MONO_LINE_HEIGHT)
             .color(theme::FAINT);
 
+        // Only when one of them shows: an empty group would still take the sidebar's spacing.
+        let match_and_status = match (self.live_match_button(), self.status_control()) {
+            (None, None) => None,
+            (live_match, status) => Some(column![live_match, status].spacing(MATCH_STATUS_GAP)),
+        };
+
         let sidebar = container(
             column![
                 brand,
                 self.account_switcher(),
                 nav,
                 space().height(Length::Fill),
-                self.live_match_button(),
+                match_and_status,
                 version
             ]
             .spacing(28),
@@ -312,6 +325,80 @@ impl PrimeApp {
             })
             .on_press(Message::TabSelected(Tab::LiveMatch))
             .into(),
+        )
+    }
+
+    /// What friends see, and the menu to change it, while the selected account plays here.
+    fn status_control(&self) -> Option<Element<'_, Message>> {
+        if !self.status_control_visible() {
+            return None;
+        }
+        let status = self.state.presence_status;
+        let is_open = self.status_menu_open;
+
+        let control = button(
+            row![
+                container(presence_mark(status)).center_x(14).center_y(14),
+                text(presence_label(status))
+                    .size(13)
+                    .font(theme::SEMIBOLD_FONT)
+                    .width(Length::Fill),
+                theme::icon(theme::Icon::ChevronsUpDown, 15.0, theme::MUTED),
+            ]
+            .spacing(10)
+            .align_y(alignment::Vertical::Center),
+        )
+        .padding([10, 12])
+        .width(Length::Fill)
+        .style(move |_, button_status| status_control_style(button_status, is_open))
+        .on_press(Message::ToggleStatusMenu);
+
+        Some(anchored_popover_above(
+            control,
+            self.status_menu(),
+            is_open,
+            STATUS_MENU_GAP,
+            // Negative, so the wider menu lines up with the control's left edge.
+            ACCOUNT_SWITCHER_WIDTH - STATUS_MENU_WIDTH,
+        ))
+    }
+
+    fn status_menu(&self) -> Element<'_, Message> {
+        let current = self.state.presence_status;
+        let mut menu = column![].spacing(1).width(Length::Fill);
+        for status in PresenceStatus::ALL {
+            menu = menu.push(status_menu_item(status, status == current));
+        }
+        menu = menu
+            .push(
+                container(
+                    container(space())
+                        .width(Length::Fill)
+                        .height(1)
+                        .style(|_| filled(theme::LINE)),
+                )
+                .padding(Padding {
+                    top: 8.0,
+                    ..Padding::ZERO
+                }),
+            )
+            .push(
+                container(
+                    text("Applies right away. Your next launch starts the same way.")
+                        .size(12)
+                        .color(theme::FAINT)
+                        .line_height(iced::widget::text::LineHeight::Relative(1.4)),
+                )
+                .padding([8, 10])
+                .width(Length::Fill),
+            );
+
+        // Opaque, so clicks on its gaps don't reach the page it overhangs.
+        opaque(
+            container(menu)
+                .padding(6)
+                .width(STATUS_MENU_WIDTH)
+                .style(popover_style),
         )
     }
 
@@ -938,6 +1025,105 @@ fn menu_item_style(
         background,
         text_color: theme::TEXT,
         border: iced::border::rounded(7),
+        ..Default::default()
+    }
+}
+
+fn presence_label(status: PresenceStatus) -> &'static str {
+    match status {
+        PresenceStatus::Online => "Online",
+        PresenceStatus::Mobile => "Mobile",
+        PresenceStatus::Invisible => "Invisible",
+    }
+}
+
+fn presence_description(status: PresenceStatus) -> &'static str {
+    match status {
+        PresenceStatus::Online => "Friends see you as usual.",
+        PresenceStatus::Mobile => "Friends see you on Riot Mobile, not in game.",
+        PresenceStatus::Invisible => "Friends see you offline. You can still message them.",
+    }
+}
+
+fn presence_mark(status: PresenceStatus) -> Element<'static, Message> {
+    match status {
+        PresenceStatus::Online => container(space())
+            .width(9)
+            .height(9)
+            .style(|_| filled(theme::OK).border(iced::border::rounded(4.5)))
+            .into(),
+        PresenceStatus::Mobile => theme::icon(theme::Icon::Smartphone, 14.0, theme::MUTED),
+        PresenceStatus::Invisible => container(space())
+            .width(10)
+            .height(10)
+            .style(|_| iced::widget::container::Style {
+                border: iced::Border {
+                    color: theme::MUTED,
+                    width: 3.0,
+                    radius: 5.0.into(),
+                },
+                ..Default::default()
+            })
+            .into(),
+    }
+}
+
+fn status_menu_item(status: PresenceStatus, is_selected: bool) -> Element<'static, Message> {
+    let title = text(presence_label(status)).size(13).font(if is_selected {
+        theme::SEMIBOLD_FONT
+    } else {
+        theme::BODY_FONT
+    });
+    let check: Element<'static, Message> = if is_selected {
+        theme::icon(theme::Icon::Check, 15.0, theme::TEXT)
+    } else {
+        space().width(15).into()
+    };
+
+    button(
+        row![
+            container(presence_mark(status)).center_x(15).center_y(18),
+            column![
+                title,
+                text(presence_description(status))
+                    .size(12)
+                    .color(theme::MUTED)
+            ]
+            .spacing(2)
+            .width(Length::Fill),
+            check,
+        ]
+        .spacing(10)
+        .align_y(alignment::Vertical::Top),
+    )
+    .padding([8, 10])
+    .width(Length::Fill)
+    .style(move |_, button_status| menu_item_style(button_status, is_selected))
+    .on_press(Message::PresenceStatusPicked(status))
+    .into()
+}
+
+fn status_control_style(
+    status: iced::widget::button::Status,
+    is_open: bool,
+) -> iced::widget::button::Style {
+    let raised = is_open
+        || matches!(
+            status,
+            iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
+        );
+    iced::widget::button::Style {
+        background: Some(if raised { theme::RAISED } else { theme::BG }.into()),
+        text_color: theme::TEXT,
+        border: iced::Border {
+            color: if raised {
+                OPEN_CONTROL_BORDER
+            } else {
+                theme::LINE
+            },
+            width: 1.0,
+            radius: 10.0.into(),
+        },
         ..Default::default()
     }
 }

@@ -359,6 +359,7 @@ struct PrimeApp {
     riot_client_path_input: String,
     status: Status,
     account_switcher_open: bool,
+    status_menu_open: bool,
     open_account_menu: Option<AccountId>,
     show_add_account_prompt: bool,
     show_import_account_prompt: bool,
@@ -1112,6 +1113,8 @@ enum Message {
     CancelInvisibleLaunch,
     LocalGameTick,
     LocalGameChecked(LocalGame),
+    ToggleStatusMenu,
+    PresenceStatusPicked(crate::riot::chat_proxy::PresenceStatus),
     CheckForAppUpdate,
     AppUpdateChecked {
         user_requested: bool,

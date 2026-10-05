@@ -34,6 +34,26 @@ pub(super) fn anchored_popover<'a>(
         is_open,
         top_offset,
         right_inset,
+        above: false,
+    })
+}
+
+/// Like `anchored_popover`, but the popover opens `gap` above its anchor, for controls near the
+/// bottom of the window.
+pub(super) fn anchored_popover_above<'a>(
+    base: impl Into<Element<'a, Message>>,
+    popover: impl Into<Element<'a, Message>>,
+    is_open: bool,
+    gap: f32,
+    right_inset: f32,
+) -> Element<'a, Message> {
+    Element::new(AnchoredPopover {
+        base: base.into(),
+        popover: popover.into(),
+        is_open,
+        top_offset: gap,
+        right_inset,
+        above: true,
     })
 }
 
@@ -43,6 +63,7 @@ struct AnchoredPopover<'a> {
     is_open: bool,
     top_offset: f32,
     right_inset: f32,
+    above: bool,
 }
 
 impl Widget<Message, Theme, Renderer> for AnchoredPopover<'_> {
@@ -171,6 +192,7 @@ impl Widget<Message, Theme, Renderer> for AnchoredPopover<'_> {
                 tree: children.next().unwrap(),
                 top_offset: self.top_offset,
                 right_inset: self.right_inset,
+                above: self.above,
             }))
         });
 
@@ -193,6 +215,7 @@ struct AnchoredOverlay<'a, 'b> {
     tree: &'b mut Tree,
     top_offset: f32,
     right_inset: f32,
+    above: bool,
 }
 
 impl overlay::Overlay<Message, Theme, Renderer> for AnchoredOverlay<'_, '_> {
@@ -209,13 +232,17 @@ impl overlay::Overlay<Message, Theme, Renderer> for AnchoredOverlay<'_, '_> {
         let x = (self.anchor.x + self.anchor.width - popover_size.width - self.right_inset)
             .clamp(viewport.x, max_x.max(viewport.x));
 
-        let desired_y = self.anchor.y + self.top_offset;
-        let max_y = viewport.y + viewport.height - popover_size.height;
-        let y = if desired_y > max_y {
-            (self.anchor.y + self.anchor.height - popover_size.height)
-                .clamp(viewport.y, max_y.max(viewport.y))
+        let y = if self.above {
+            (self.anchor.y - popover_size.height - self.top_offset).max(viewport.y)
         } else {
-            desired_y
+            let desired_y = self.anchor.y + self.top_offset;
+            let max_y = viewport.y + viewport.height - popover_size.height;
+            if desired_y > max_y {
+                (self.anchor.y + self.anchor.height - popover_size.height)
+                    .clamp(viewport.y, max_y.max(viewport.y))
+            } else {
+                desired_y
+            }
         };
 
         layout::Node::with_children(popover_size, vec![popover]).move_to(Point::new(x, y))
