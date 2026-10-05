@@ -1,27 +1,23 @@
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 
 use thiserror::Error;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
 mod config;
 mod presence;
+mod relay;
 
-use config::ChatEndpoint;
 pub use config::LOCALHOST_DOMAIN;
 pub use presence::PresenceStatus;
-use presence::rewrite_presence_content;
 
 pub const PROXY_CERT_URL: &str = "https://mln.cx/deceive/localhost.pfx";
 pub const CERT_MIN_VALID_DAYS: i64 = 20;
 
 const CERT_HTTP_TIMEOUT: StdDuration = StdDuration::from_secs(20);
-const CHAT_PUMP_BUFFER: usize = 16 * 1024;
 
 pub fn client_config_url_arg(port: u16) -> String {
     format!("--client-config-url=\"http://127.0.0.1:{port}\"")
@@ -114,150 +110,11 @@ fn proxy_http_client() -> Result<reqwest::Client, ChatProxyError> {
         .map_err(|error| ChatProxyError::Http(crate::http_error::format_reqwest_error(&error)))
 }
 
-#[derive(Clone, Debug)]
-pub struct ChatProxyControl {
-    status: Arc<Mutex<PresenceStatus>>,
-    enabled: Arc<Mutex<bool>>,
-}
-
-impl ChatProxyControl {
-    pub fn new(status: PresenceStatus) -> Self {
-        Self {
-            status: Arc::new(Mutex::new(status)),
-            enabled: Arc::new(Mutex::new(true)),
-        }
-    }
-
-    pub fn current(&self) -> (bool, PresenceStatus) {
-        let enabled = self.enabled.lock().ok().map(|flag| *flag).unwrap_or(true);
-        let status = self
-            .status
-            .lock()
-            .ok()
-            .map(|status| *status)
-            .unwrap_or_default();
-        (enabled, status)
-    }
-
-    pub fn set_status(&self, status: PresenceStatus) {
-        if let Ok(mut current) = self.status.lock() {
-            *current = status;
-        }
-    }
-
-    pub fn set_enabled(&self, enabled: bool) {
-        if let Ok(mut current) = self.enabled.lock() {
-            *current = enabled;
-        }
-    }
-}
-
 pub async fn bind_loopback_listener() -> Result<(TcpListener, u16), ChatProxyError> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
 
     Ok((listener, port))
-}
-
-async fn run_chat_proxy(
-    listener: TcpListener,
-    pfx_bytes: Vec<u8>,
-    endpoint: ChatEndpoint,
-    control: ChatProxyControl,
-) -> Result<(), ChatProxyError> {
-    let identity = native_tls::Identity::from_pkcs12(&pfx_bytes, "")
-        .map_err(|error| ChatProxyError::Tls(error.to_string()))?;
-    let acceptor = native_tls::TlsAcceptor::new(identity)
-        .map_err(|error| ChatProxyError::Tls(error.to_string()))?;
-    let acceptor = tokio_native_tls::TlsAcceptor::from(acceptor);
-    let connector =
-        native_tls::TlsConnector::new().map_err(|error| ChatProxyError::Tls(error.to_string()))?;
-    let connector = tokio_native_tls::TlsConnector::from(connector);
-
-    loop {
-        let (incoming, _) = listener.accept().await?;
-        let acceptor = acceptor.clone();
-        let connector = connector.clone();
-        let endpoint = endpoint.clone();
-        let control = control.clone();
-
-        tokio::spawn(async move {
-            proxy_chat_connection(incoming, &acceptor, &connector, &endpoint, &control).await;
-        });
-    }
-}
-
-async fn proxy_chat_connection(
-    incoming: TcpStream,
-    acceptor: &tokio_native_tls::TlsAcceptor,
-    connector: &tokio_native_tls::TlsConnector,
-    endpoint: &ChatEndpoint,
-    control: &ChatProxyControl,
-) {
-    let Ok(tls_incoming) = acceptor.accept(incoming).await else {
-        return;
-    };
-    let Ok(outgoing) = TcpStream::connect((endpoint.host.as_str(), endpoint.port)).await else {
-        return;
-    };
-    let Ok(tls_outgoing) = connector.connect(endpoint.host.as_str(), outgoing).await else {
-        return;
-    };
-
-    let (mut incoming_read, mut incoming_write) = tokio::io::split(tls_incoming);
-    let (mut outgoing_read, mut outgoing_write) = tokio::io::split(tls_outgoing);
-
-    let server_to_client =
-        tokio::spawn(async move { pump_raw(&mut outgoing_read, &mut incoming_write).await });
-    pump_client_to_server(&mut incoming_read, &mut outgoing_write, control).await;
-    server_to_client.abort();
-}
-
-async fn pump_raw<R, W>(reader: &mut R, writer: &mut W)
-where
-    R: AsyncReadExt + Unpin,
-    W: AsyncWriteExt + Unpin,
-{
-    let mut buffer = vec![0u8; CHAT_PUMP_BUFFER];
-
-    loop {
-        match reader.read(&mut buffer).await {
-            Ok(0) | Err(_) => break,
-            Ok(read) => {
-                if writer.write_all(&buffer[..read]).await.is_err() {
-                    break;
-                }
-            }
-        }
-    }
-}
-
-async fn pump_client_to_server<R, W>(reader: &mut R, writer: &mut W, control: &ChatProxyControl)
-where
-    R: AsyncReadExt + Unpin,
-    W: AsyncWriteExt + Unpin,
-{
-    let mut buffer = vec![0u8; CHAT_PUMP_BUFFER];
-
-    loop {
-        let read = match reader.read(&mut buffer).await {
-            Ok(0) | Err(_) => break,
-            Ok(read) => read,
-        };
-        let chunk = &buffer[..read];
-        let text = String::from_utf8_lossy(chunk);
-        let (enabled, status) = control.current();
-
-        if enabled && text.contains("<presence") {
-            let rewritten = rewrite_presence_content(&text, status);
-
-            if writer.write_all(rewritten.as_bytes()).await.is_err() {
-                break;
-            }
-        } else if writer.write_all(chunk).await.is_err() {
-            break;
-        }
-    }
 }
 
 #[derive(Debug, Error)]
@@ -306,17 +163,5 @@ mod tests {
             client_config_url_arg(1234),
             "--client-config-url=\"http://127.0.0.1:1234\"".to_string()
         );
-    }
-
-    #[test]
-    fn proxy_control_reads_live_status() {
-        let control = ChatProxyControl::new(PresenceStatus::Invisible);
-
-        assert_eq!(control.current(), (true, PresenceStatus::Invisible));
-
-        control.set_status(PresenceStatus::Mobile);
-        control.set_enabled(false);
-
-        assert_eq!(control.current(), (false, PresenceStatus::Mobile));
     }
 }

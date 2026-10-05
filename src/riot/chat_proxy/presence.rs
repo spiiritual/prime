@@ -91,36 +91,6 @@ pub(super) fn is_own_presence(stanza: &str) -> bool {
         .any(|attribute| attribute.starts_with("to="))
 }
 
-/// Interim: rewrites every complete presence in one socket read. Task 4 replaces the pump that
-/// uses it and deletes it.
-pub(super) fn rewrite_presence_content(content: &str, status: PresenceStatus) -> String {
-    let mut output = String::with_capacity(content.len());
-    let mut rest = content;
-
-    while let Some(start) = rest.find("<presence") {
-        output.push_str(&rest[..start]);
-        let stanza = &rest[start..];
-        let end = tag_open_end(stanza.as_bytes(), 0).and_then(|open_end| {
-            if stanza.as_bytes()[open_end - 1] == b'/' {
-                Some(open_end + 1)
-            } else {
-                stanza
-                    .find(PRESENCE_CLOSE)
-                    .map(|close| close + PRESENCE_CLOSE.len())
-            }
-        });
-        let Some(end) = end else {
-            output.push_str(stanza);
-            return output;
-        };
-        output.push_str(&rewrite_presence(&stanza[..end], status));
-        rest = &stanza[end..];
-    }
-
-    output.push_str(rest);
-    output
-}
-
 /// The index of the `>` that ends the tag opened at `start`, skipping any inside quoted attribute
 /// values.
 pub(super) fn tag_open_end(bytes: &[u8], start: usize) -> Option<usize> {
@@ -542,16 +512,6 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<PresenceStatus>("\"mobile\"").expect("deserialize"),
             PresenceStatus::Mobile
-        );
-    }
-
-    #[test]
-    fn non_presence_traffic_passes_through() {
-        let stanza = "<message from='a@b'><body>hi</body></message>";
-
-        assert_eq!(
-            rewrite_presence_content(stanza, PresenceStatus::Invisible),
-            stanza
         );
     }
 
