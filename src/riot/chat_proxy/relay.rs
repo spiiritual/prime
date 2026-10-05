@@ -121,12 +121,13 @@ async fn forward_client<R, W>(
                 for piece in pieces {
                     let bytes = match piece {
                         Piece::Raw(bytes) => bytes,
+                        // A party or lobby room presence goes through unchanged.
+                        Piece::Presence(stanza) if !is_own_presence(&stanza) => {
+                            stanza.into_bytes()
+                        }
                         Piece::Presence(stanza) => {
-                            let current = *status.borrow();
-                            let rewritten = rewrite_presence(&stanza, current);
-                            if is_own_presence(&stanza) {
-                                own_presence = Some(stanza);
-                            }
+                            let rewritten = rewrite_presence(&stanza, *status.borrow());
+                            own_presence = Some(stanza);
                             rewritten.into_bytes()
                         }
                     };
@@ -143,6 +144,10 @@ async fn forward_client<R, W>(
                     return;
                 }
                 let current = *status.borrow_and_update();
+                // ponytail: a re-sent presence can land in the middle of a non-presence stanza
+                // if the status changes between two reads of a split `<message>`/`<iq>`. Riot
+                // then closes the connection and Riot Client reconnects with the current status.
+                // Upgrade path: element-depth tracking in `StanzaSplitter`.
                 if let Some(stanza) = &own_presence {
                     let rewritten = rewrite_presence(stanza, current);
                     if writer.write_all(rewritten.as_bytes()).await.is_err()
@@ -203,6 +208,25 @@ mod tests {
 
         drop(riot_client);
         forward.await.expect("forward ends");
+    }
+
+    #[tokio::test]
+    async fn room_presences_pass_through_while_own_presence_is_rewritten() {
+        const ROOM: &[u8] = b"<presence to='room@x'><show>chat</show>\
+            <games><valorant><st>chat</st><p>e30=</p></valorant></games></presence>";
+        let (mut riot_client, from_client) = duplex(64 * 1024);
+        let (to_server, mut chat_server) = duplex(64 * 1024);
+        let (_status, status_rx) = watch::channel(PresenceStatus::Invisible);
+        tokio::spawn(forward_client(from_client, to_server, status_rx));
+
+        riot_client.write_all(ROOM).await.expect("write");
+        let room = read_until(&mut chat_server, b"</presence>").await;
+        assert_eq!(room.as_bytes(), ROOM);
+
+        riot_client.write_all(PRESENCE).await.expect("write");
+        let own = read_until(&mut chat_server, b"</presence>").await;
+        assert!(own.contains("<show>offline</show>"), "{own}");
+        assert!(!own.contains("valorant"), "{own}");
     }
 
     #[tokio::test]

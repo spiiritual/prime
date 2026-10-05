@@ -54,12 +54,26 @@ impl SharedEndpoint {
     }
 }
 
+/// Requests carry Riot Client's tokens, so redirects are followed only to Riot's own hosts, and
+/// at most 10, like reqwest's default.
 pub(super) fn http_client() -> Result<reqwest::Client, String> {
+    let redirects = reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() < 10 && attempt.url().host_str().is_some_and(is_riot_host) {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    });
     reqwest::Client::builder()
         .timeout(HTTP_TIMEOUT)
         .user_agent(concat!("prime/", env!("CARGO_PKG_VERSION")))
+        .redirect(redirects)
         .build()
         .map_err(|error| crate::http_error::format_reqwest_error(&error))
+}
+
+fn is_riot_host(host: &str) -> bool {
+    host == "riotgames.com" || host.ends_with(".riotgames.com")
 }
 
 pub(super) async fn serve(
@@ -233,6 +247,7 @@ fn rewrite_client_config(
     let affinity_host = affinity
         .filter(|_| affinities_enabled)
         .and_then(|region| object.get("chat.affinities")?.get(region)?.as_str())
+        .filter(|host| !host.trim().is_empty())
         .map(str::to_string);
 
     if object.contains_key("chat.host") {
@@ -354,6 +369,33 @@ mod tests {
             Some(endpoint("chat-eu1.example.net"))
         );
         assert!(!rewritten.from_affinity);
+    }
+
+    #[test]
+    fn an_empty_affinity_host_falls_back_to_the_default() {
+        let config = serde_json::json!({
+            "chat.host": "chat-eu1.example.net",
+            "chat.port": 5223,
+            "chat.affinities": { "na": "" }
+        })
+        .to_string();
+
+        let rewritten = rewrite_client_config(&config, CHAT_PORT, Some("na"));
+
+        assert_eq!(
+            rewritten.chat_endpoint,
+            Some(endpoint("chat-eu1.example.net"))
+        );
+        assert!(!rewritten.from_affinity);
+    }
+
+    #[test]
+    fn only_riot_hosts_get_redirects() {
+        assert!(is_riot_host("riotgames.com"));
+        assert!(is_riot_host("clientconfig.rpg.riotgames.com"));
+        assert!(!is_riot_host("evil-riotgames.com"));
+        assert!(!is_riot_host("riotgames.com.evil.net"));
+        assert!(!is_riot_host("example.com"));
     }
 
     #[test]

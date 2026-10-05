@@ -20,7 +20,7 @@ const REFRESH_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 #[derive(Debug, Error)]
 pub enum ChatProxyError {
     #[error(
-        "{} doesn't point at this PC, so Riot Client's chat can't go through Prime",
+        "Riot Client's chat can't go through Prime: {} doesn't point at this PC",
         LOCALHOST_DOMAIN
     )]
     NotLoopback,
@@ -83,10 +83,11 @@ async fn load_identity_from(
     match download.await {
         Ok(bytes) => match identity(&bytes) {
             Some(fresh) => {
-                if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-                crate::image_cache::write_cache_file(path, &bytes)?;
+                // A failed save is ignored; the next launch downloads it again.
+                let _ = path
+                    .parent()
+                    .map_or(Ok(()), fs::create_dir_all)
+                    .and_then(|()| crate::image_cache::write_cache_file(path, &bytes));
                 Ok(fresh)
             }
             None => cached.ok_or_else(|| {
@@ -160,6 +161,20 @@ mod tests {
             .expect("no certificate");
 
         assert!(error.to_string().contains("offline"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_usable_download_is_used_even_when_it_cant_be_cached() {
+        // A throwaway self-signed certificate with an empty password, like Deceive's.
+        const TEST_PFX: &[u8] = include_bytes!("../../../tests/fixtures/chat-proxy-test.pfx");
+        let dir = tempdir().expect("temp dir");
+        let not_a_dir = dir.path().join("file");
+        fs::write(&not_a_dir, b"").expect("write");
+        let path = not_a_dir.join("cert.pfx");
+
+        let loaded = load_identity_from(&path, async { Ok(TEST_PFX.to_vec()) }).await;
+
+        assert!(loaded.is_ok(), "{:?}", loaded.err());
     }
 
     #[tokio::test]

@@ -395,6 +395,18 @@ mod tests {
     }
 
     #[test]
+    fn keeps_a_multibyte_character_cut_inside_a_presence_intact() {
+        let mut splitter = StanzaSplitter::default();
+        let stanza = "<presence><status>héllo 🙂</status></presence>";
+        let cut = stanza.find('é').expect("é") + 1;
+
+        let mut pieces = splitter.push(&stanza.as_bytes()[..cut]).expect("split");
+        pieces.extend(splitter.push(&stanza.as_bytes()[cut..]).expect("split"));
+
+        assert_eq!(pieces, vec![Piece::Presence(stanza.to_string())]);
+    }
+
+    #[test]
     fn a_self_closing_presence_is_complete() {
         let mut splitter = StanzaSplitter::default();
 
