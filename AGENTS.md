@@ -52,8 +52,8 @@ on each poll, and without the Riot Client they show as unavailable, with the rea
 
 Invisible status: every launch goes through a chat proxy (`src/riot/chat_proxy/`), the way Deceive
 does. While VALORANT runs on this PC, Riot Client here is signed in as the selected account and its
-chat goes through that proxy, a sidebar control above the version label shows the status friends
-see: Online, Mobile or Invisible. A change applies at once and is saved (`presence_status` in
+chat goes through that proxy, Prime shows a sidebar control above the version label with the status
+friends see: Online, Mobile or Invisible. A change applies at once and is saved (`presence_status` in
 `accounts.json`, written only when not Online), so the next launch starts with it. If the proxy
 can't start and the saved status is Invisible, the launch asks before going online; with Online it
 launches anyway and warns that the status can't be changed this session. Prime checks the game every

@@ -2481,6 +2481,8 @@ fn a_started_chat_proxy_is_kept_for_the_launched_account() {
     let account = launchable_account(&app, "Main");
     app.state.push_account(account.clone());
     app.launching_account = Some(account.id);
+    // The old Riot Client window, seen while the proxy started.
+    app.launch_client_open = true;
 
     let task = app.update(Message::ChatProxyStarted(
         account.id,
@@ -2488,6 +2490,7 @@ fn a_started_chat_proxy_is_kept_for_the_launched_account() {
     ));
 
     assert!(task.units() > 0, "launches through the proxy");
+    assert!(!app.launch_client_open);
     assert_eq!(
         app.chat_proxy.as_ref().map(|launched| launched.account_id),
         Some(account.id)

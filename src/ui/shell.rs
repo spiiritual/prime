@@ -396,7 +396,7 @@ impl PrimeApp {
                     text("Applies right away. Your next launch starts the same way.")
                         .size(12)
                         .color(theme::FAINT)
-                        .line_height(iced::widget::text::LineHeight::Relative(1.4)),
+                        .line_height(iced::widget::text::LineHeight::Absolute(17.0.into())),
                 )
                 .padding([8, 10])
                 .width(Length::Fill),

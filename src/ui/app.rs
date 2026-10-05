@@ -2409,7 +2409,6 @@ impl PrimeApp {
 
                 self.launching_account = Some(account_id);
                 self.launch_progress_checking = false;
-                self.launch_client_open = false;
                 // The launch restarts Riot Client, so the last proxy has nothing left to carry.
                 self.chat_proxy = None;
                 self.run_account_launch(account, None)
@@ -3397,6 +3396,8 @@ impl PrimeApp {
         config_port: Option<u16>,
     ) -> Task<Message> {
         let riot_client_path = self.state.riot_client_path.clone();
+        // Only a Riot Client window seen from here on is the one this launch opens.
+        self.launch_client_open = false;
         let backup = account.launcher_session.clone();
         let saved_sessions = self.saved_launcher_sessions();
 
