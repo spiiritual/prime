@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version part to bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: Exact version instead of a bump (optional)
+        required: false
+      notes:
+        description: Release notes (optional; generated from the git log when empty)
+        required: false
+
+concurrency: release
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: Swatinem/rust-cache@v2
+
+      # vpk matches the velopack crate in Cargo.lock, as Velopack recommends.
+      - name: Install vpk
+        run: |
+          $lock = Get-Content Cargo.lock -Raw
+          $version = [regex]::Match($lock, 'name = "velopack"\r?\nversion = "([^"]+)"').Groups[1].Value
+          dotnet tool install -g vpk --version $version
+          "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
+
+      # The previous release lets vpk build a delta package and keep the full feed.
+      - name: Download previous release
+        run: vpk download github --repoUrl "https://github.com/${{ github.repository }}" --outputDir target/velopack-releases --token $env:GH_TOKEN
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          $releaseArgs = @{ Bump = $env:BUMP; Publish = $true }
+          if ($env:VERSION) { $releaseArgs.Version = $env:VERSION }
+          if ($env:NOTES) { $releaseArgs.ReleaseNotes = $env:NOTES } else { $releaseArgs.UseGeneratedNotes = $true }
+          ./scripts/release.ps1 @releaseArgs

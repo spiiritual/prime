@@ -9,8 +9,14 @@ package and the app are both named `prime`.
 cargo run                                  # run the app
 cargo test                                 # run the tests
 cargo clippy --all-targets                 # lint; keep it clean
-.\scripts\release.ps1 -UseGeneratedNotes -Publish   # bump, test, package with Velopack, tag, publish
+gh workflow run release.yml -f bump=patch   # release from GitHub Actions (see below)
+.\scripts\release.ps1 -UseGeneratedNotes -Publish   # the same release from this PC
 ```
+
+GitHub Actions: `ci.yml` runs clippy (warnings denied) and the tests on pushes to master and on PRs.
+`release.yml` (run by hand; inputs `bump`, `version`, `notes`) downloads the latest release so Velopack
+can build a delta, then runs `scripts/release.ps1 -Publish`, which pushes the release commit and tag to
+master. Pull afterwards. Dependabot opens one grouped Cargo PR weekly and Actions bumps monthly.
 
 ## What the app does
 
