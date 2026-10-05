@@ -35,6 +35,8 @@ const OPEN_CONTROL_BORDER: Color = iced::color!(0x3A4250);
 /// Between the Live Match indicator and the status control, tighter than the sidebar's 28 so
 /// they read as one group.
 const MATCH_STATUS_GAP: f32 = 8.0;
+/// Between the status control and the version label, tighter than the sidebar's 28.
+const STATUS_VERSION_GAP: f32 = 14.0;
 const STATUS_TOAST_MAX_WIDTH: f32 = 640.0;
 const TOAST_TIMER_HEIGHT: f32 = 2.0;
 const UPDATE_CHANGELOG_MAX_HEIGHT: f32 = 260.0;
@@ -209,10 +211,16 @@ impl PrimeApp {
             .line_height(theme::MONO_LINE_HEIGHT)
             .color(theme::FAINT);
 
-        // Only when one of them shows: an empty group would still take the sidebar's spacing.
-        let match_and_status = match (self.live_match_button(), self.status_control()) {
-            (None, None) => None,
-            (live_match, status) => Some(column![live_match, status].spacing(MATCH_STATUS_GAP)),
+        let footer: Element<'_, Message> = match self.status_control() {
+            Some(status) => column![
+                column![self.live_match_button(), status].spacing(MATCH_STATUS_GAP),
+                version
+            ]
+            .spacing(STATUS_VERSION_GAP)
+            .into(),
+            None => column![self.live_match_button(), version]
+                .spacing(28)
+                .into(),
         };
 
         let sidebar = container(
@@ -221,8 +229,7 @@ impl PrimeApp {
                 self.account_switcher(),
                 nav,
                 space().height(Length::Fill),
-                match_and_status,
-                version
+                footer
             ]
             .spacing(28),
         )
@@ -346,6 +353,8 @@ impl PrimeApp {
                 theme::icon(theme::Icon::ChevronsUpDown, 15.0, theme::MUTED),
             ]
             .spacing(10)
+            // The design's row; the 13px label alone is a little shorter.
+            .height(16)
             .align_y(alignment::Vertical::Center),
         )
         .padding([10, 12])
@@ -1074,11 +1083,8 @@ fn status_menu_item(status: PresenceStatus, is_selected: bool) -> Element<'stati
     } else {
         theme::BODY_FONT
     });
-    let check: Element<'static, Message> = if is_selected {
-        theme::icon(theme::Icon::Check, 15.0, theme::TEXT)
-    } else {
-        space().width(15).into()
-    };
+    // Only the selected item has one; the others' text runs to the item's edge.
+    let check = is_selected.then(|| theme::icon(theme::Icon::Check, 15.0, theme::TEXT));
 
     button(
         row![
