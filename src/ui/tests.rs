@@ -2438,6 +2438,42 @@ fn a_failed_chat_proxy_still_launches_when_online() {
 }
 
 #[test]
+fn launching_online_without_a_proxy_drops_the_previous_one() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = launchable_account(&app, "Main");
+    app.state.push_account(account.clone());
+    app.launching_account = Some(account.id);
+    app.chat_proxy = Some(LaunchedChatProxy {
+        account_id: account.id,
+        proxy: ChatProxy::detached(PresenceStatus::Online, true),
+    });
+
+    let _ = app.update(proxy_failure_for(&account));
+
+    assert!(app.chat_proxy.is_none());
+}
+
+#[test]
+fn cancelling_after_an_invisible_failure_keeps_the_running_proxy() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = launchable_account(&app, "Main");
+    app.state.push_account(account.clone());
+    app.state.presence_status = PresenceStatus::Invisible;
+    app.launching_account = Some(account.id);
+    app.chat_proxy = Some(LaunchedChatProxy {
+        account_id: account.id,
+        proxy: ChatProxy::detached(PresenceStatus::Online, true),
+    });
+
+    let _ = app.update(proxy_failure_for(&account));
+    let _ = app.update(Message::CancelInvisibleLaunch);
+
+    assert!(app.chat_proxy.is_some(), "Riot Client is still on it");
+}
+
+#[test]
 fn a_started_chat_proxy_is_kept_for_the_launched_account() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());

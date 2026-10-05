@@ -2376,6 +2376,8 @@ impl PrimeApp {
                     }
                     Err(error) => {
                         // Online looks the same without the proxy; only changing it needs one.
+                        // The launch restarts Riot Client, so the last proxy has nothing left to carry.
+                        self.chat_proxy = None;
                         let launch = self.run_account_launch(account, None);
                         self.set_status(Status::warning(format!(
                             "Your status can't be changed this session. {error}"
@@ -2403,6 +2405,8 @@ impl PrimeApp {
                 self.launching_account = Some(account_id);
                 self.launch_progress_checking = false;
                 self.launch_client_open = false;
+                // The launch restarts Riot Client, so the last proxy has nothing left to carry.
+                self.chat_proxy = None;
                 self.run_account_launch(account, None)
             }
             Message::CancelInvisibleLaunch => {
@@ -3315,8 +3319,6 @@ impl PrimeApp {
         self.launching_account = Some(id);
         self.launch_progress_checking = false;
         self.launch_client_open = false;
-        // The launch restarts Riot Client, so the last proxy has nothing left to carry.
-        self.chat_proxy = None;
 
         // Shop and Loadout show the selected account, so they reload when launching switched it.
         let reload = if selection_changed {
