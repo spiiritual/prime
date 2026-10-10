@@ -5,6 +5,7 @@
 
 use std::cell::RefCell;
 use std::ptr::{null, null_mut};
+use std::sync::Mutex;
 
 use iced::futures::{SinkExt, Stream};
 use tokio::sync::mpsc::UnboundedSender;
@@ -15,13 +16,18 @@ use windows_sys::Win32::UI::Input::{
     RID_INPUT, RIDEV_INPUTSINK, RIDEV_REMOVE, RIM_TYPEMOUSE, RegisterRawInputDevices,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    ClipCursor, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetCursorPos,
-    GetMessageW, HWND_MESSAGE, MSG, PostMessageW, PostQuitMessage, RegisterClassW, WM_CLOSE,
+    ClipCursor, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClipCursor,
+    GetCursorPos, GetMessageW, HWND_MESSAGE, MSG, PostMessageW, PostQuitMessage, RegisterClassW, WM_CLOSE,
     WM_DESTROY, WM_INPUT, WNDCLASSW,
 };
 
 const GENERIC_DESKTOP: u16 = 0x01;
 const MOUSE: u16 = 0x02;
+
+/// The pixel the cursor is held on while a run plays. winit clears any clip it didn't set itself
+/// (when iced hides the cursor, and when the cursor enters or leaves the window), so the reader
+/// puts it back on each movement.
+static HELD: Mutex<Option<RECT>> = Mutex::new(None);
 
 thread_local! {
     static SENDER: RefCell<Option<UnboundedSender<(i32, i32)>>> = const { RefCell::new(None) };
@@ -73,7 +79,29 @@ pub fn hold_cursor() {
                 right: point.x + 1,
                 bottom: point.y + 1,
             };
+            let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+            *held = Some(rect);
             ClipCursor(&rect);
+        }
+    }
+}
+
+/// Puts the hold back if something cleared it. Only clips on a change, since each clip sends
+/// the window a WM_MOUSEMOVE.
+fn keep_cursor_held() {
+    // The lock stays held while clipping so a release can't slip in between.
+    let guard = HELD.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(held) = *guard else {
+        return;
+    };
+    let mut active = RECT::default();
+    // SAFETY: both calls only read or write the local values passed to them.
+    unsafe {
+        if GetClipCursor(&mut active) != 0
+            && (active.left, active.top, active.right, active.bottom)
+                != (held.left, held.top, held.right, held.bottom)
+        {
+            ClipCursor(&held);
         }
     }
 }
@@ -83,10 +111,13 @@ pub fn release_cursor() {
     if cfg!(test) {
         return;
     }
+    let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+    *held = None;
     // SAFETY: a null rectangle frees the cursor.
     unsafe {
         ClipCursor(null());
     }
+    drop(held);
 }
 
 /// The reader thread's window, kept as an address because `HWND` isn't `Send`.
@@ -179,6 +210,7 @@ unsafe extern "system" fn window_proc(
         WM_INPUT => {
             // SAFETY: Windows passes the raw input handle in `lparam` for WM_INPUT.
             if let Some(movement) = unsafe { read_movement(lparam) } {
+                keep_cursor_held();
                 SENDER.with_borrow(|sender| {
                     if let Some(sender) = sender {
                         let _ = sender.send(movement);
