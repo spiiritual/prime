@@ -140,6 +140,8 @@ pub(in crate::ui) struct BattlePassChapterDisplay {
     pub(in crate::ui) last_tier: i64,
     /// Each tier's premium reward in order, then the free rewards.
     pub(in crate::ui) rewards: Vec<BattlePassRewardDisplay>,
+    /// Its art is downloading, having been opened after the page loaded.
+    pub(in crate::ui) art_loading: bool,
 }
 
 impl BattlePassChapterDisplay {
@@ -164,19 +166,21 @@ impl BattlePassChapterDisplay {
 
 impl BattlePassProgressDisplay {
     /// The rewards whose art is downloaded with the page: the open chapter's and the weapon skins
-    /// still ahead. Other chapters' art loads when they're opened.
+    /// ahead that show. Other chapters' art loads when they're opened.
     pub(in crate::ui) fn shown_rewards_mut(
         &mut self,
     ) -> impl Iterator<Item = &mut BattlePassRewardDisplay> {
         let selected = self.selected_chapter;
-        let level_reached = self.level_reached;
+        let skins: Vec<String> = self.skins_ahead().map(|skin| skin.uuid.clone()).collect();
         self.chapters
             .iter_mut()
             .enumerate()
             .flat_map(move |(index, chapter)| {
-                chapter.rewards.iter_mut().filter(move |reward| {
-                    index == selected || reward.is_skin_ahead_of(level_reached)
-                })
+                let skins = skins.clone();
+                chapter
+                    .rewards
+                    .iter_mut()
+                    .filter(move |reward| index == selected || skins.contains(&reward.uuid))
             })
     }
 
@@ -184,12 +188,13 @@ impl BattlePassProgressDisplay {
         self.chapters.get(self.selected_chapter)
     }
 
-    /// Weapon skins in tiers not reached yet, in tier order.
+    /// The next few weapon skins in tiers not reached yet, in tier order.
     pub(in crate::ui) fn skins_ahead(&self) -> impl Iterator<Item = &BattlePassRewardDisplay> {
         self.chapters
             .iter()
             .flat_map(|chapter| &chapter.rewards)
             .filter(|reward| reward.is_skin_ahead_of(self.level_reached))
+            .take(SKINS_AHEAD)
     }
 
     /// The tier being worked towards, while the pass isn't complete.
@@ -293,15 +298,20 @@ impl BattlePassProgressDisplay {
     /// "Tier 36", or "Epilogue 2" for the epilogue's second tier, with the amount when more than
     /// one: "Tier 12 · x2".
     pub(in crate::ui) fn reward_tier_label(&self, reward: &BattlePassRewardDisplay) -> String {
-        let mut label = if reward.is_epilogue {
-            format!("Epilogue {}", self.epilogue_tier(reward.tier))
-        } else {
-            format!("Tier {}", reward.tier.max(0))
-        };
+        let mut label = self.reward_tier(reward);
         if let Some(amount) = reward.amount_label() {
             label = format!("{label} · {amount}");
         }
         label
+    }
+
+    /// "Tier 36", or "Epilogue 2" for the epilogue's second tier.
+    pub(in crate::ui) fn reward_tier(&self, reward: &BattlePassRewardDisplay) -> String {
+        if reward.is_epilogue {
+            format!("Epilogue {}", self.epilogue_tier(reward.tier))
+        } else {
+            format!("Tier {}", reward.tier.max(0))
+        }
     }
 
     /// "Tiers 36–40", or "Epilogue 1–5".
@@ -383,6 +393,8 @@ impl BattlePassRewardDisplay {
 }
 
 const WEAPON_SKIN: &str = "Weapon skin";
+/// How many of the weapon skins ahead the page shows.
+pub(in crate::ui) const SKINS_AHEAD: usize = 3;
 
 pub(in crate::ui) fn battle_pass_progress_from_responses(
     contracts: &ContractsResponse,
@@ -524,6 +536,7 @@ fn battle_pass_chapters(
                 first_tier: level.tier,
                 last_tier: level.tier,
                 rewards: Vec::new(),
+                art_loading: false,
             });
         }
         let Some(chapter) = chapters.last_mut() else {

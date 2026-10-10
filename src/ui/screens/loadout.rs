@@ -8,7 +8,7 @@ use crate::ui::components::{
 };
 use crate::ui::data::loadout::{
     BattlePassChapterDisplay, BattlePassProgressDisplay, BattlePassRewardDisplay,
-    LoadoutGunDisplay, LoadoutSummary,
+    LoadoutGunDisplay, LoadoutSummary, SKINS_AHEAD,
 };
 use crate::ui::data::shop::{RarityTier, format_time_left};
 use crate::ui::theme::{self, Icon, button, text};
@@ -53,7 +53,8 @@ const EARNED_BADGE: Color = iced::color!(0x1B372A);
 const FREE_TAG_BACKGROUND: Color = iced::color!(0x4CC974, 0x1F as f32 / 255.0);
 const FREE_TAG_BORDER: Color = iced::color!(0x4CC974, 0x55 as f32 / 255.0);
 const LOCKED_TAG_BACKGROUND: Color = iced::color!(0x0B0D11, 0xCC as f32 / 255.0);
-const SKINS_AHEAD: usize = 3;
+/// A title's letters times its text size that fit a card's art, 7 cards to a row.
+const TITLE_ART_SCALE: f32 = 130.0;
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     if shows_state(app) {
@@ -346,7 +347,7 @@ fn battle_pass_page(
     let mut page = column![pass_bar(battle_pass, now), chapter]
         .spacing(22)
         .height(Length::Fill);
-    let skins: Vec<_> = battle_pass.skins_ahead().take(SKINS_AHEAD).collect();
+    let skins: Vec<_> = battle_pass.skins_ahead().collect();
     if !skins.is_empty() {
         page = page.push(skins_ahead(battle_pass, skins));
     }
@@ -565,7 +566,7 @@ fn chapter_section<'a>(
             Some(first) => format!(
                 "{tiers} · free {} at {}",
                 if free.len() == 1 { "reward" } else { "rewards" },
-                battle_pass.reward_tier_label(first).to_lowercase()
+                battle_pass.reward_tier(first).to_lowercase()
             ),
             None => tiers,
         }
@@ -621,7 +622,7 @@ fn chapter_section<'a>(
     let mut cards = Row::with_children(
         premium
             .into_iter()
-            .map(|reward| reward_card(battle_pass, reward)),
+            .map(|reward| reward_card(battle_pass, reward, chapter.art_loading)),
     )
     .spacing(10)
     .height(Length::Fill);
@@ -634,7 +635,7 @@ fn chapter_section<'a>(
         );
         cards = cards.extend(
             free.into_iter()
-                .map(|reward| reward_card(battle_pass, reward)),
+                .map(|reward| reward_card(battle_pass, reward, chapter.art_loading)),
         );
     }
 
@@ -647,16 +648,25 @@ fn chapter_section<'a>(
 fn reward_card<'a>(
     battle_pass: &'a BattlePassProgressDisplay,
     reward: &'a BattlePassRewardDisplay,
+    art_loading: bool,
 ) -> Element<'a, Message> {
     let earned = battle_pass.is_earned(reward);
     let locked = battle_pass.is_locked(reward);
     let current = !reward.free && battle_pass.next_tier() == Some(reward.tier);
 
-    // Titles have no picture, so their text stands in for one.
+    // Titles have no picture, so their text stands in for one, small enough that its longest
+    // word fits a card. ponytail: sized by letter count, not measured; WordOrGlyph catches the rest.
     let picture = if reward.cached_icon.is_none() && reward.kind == "Title" {
+        let longest = reward
+            .name
+            .split_whitespace()
+            .map(|word| word.chars().count())
+            .max()
+            .unwrap_or(1);
         container(
             text(reward.name.to_uppercase())
-                .size(22)
+                .size((TITLE_ART_SCALE / longest as f32).clamp(12.0, 22.0))
+                .wrapping(Wrapping::WordOrGlyph)
                 .font(theme::DISPLAY_FONT)
                 .line_height(1.1)
                 .color(theme::GOLD)
@@ -664,6 +674,8 @@ fn reward_card<'a>(
         )
         .center(Length::Fill)
         .into()
+    } else if art_loading && reward.cached_icon.is_none() && reward.display_icon.is_some() {
+        skeleton(Length::Fill, Length::Fill, 6.0, 0.85)
     } else {
         faded_asset_image(
             reward.cached_icon.as_ref(),
@@ -719,11 +731,13 @@ fn reward_card<'a>(
         art = art.push(container(badge).padding(8));
     }
 
+    let name = text(&reward.name)
+        .size(12)
+        .font(theme::SEMIBOLD_FONT)
+        .color(if locked { theme::MUTED } else { theme::TEXT });
     let mut info = column![
-        text(&reward.name)
-            .size(12)
-            .font(theme::SEMIBOLD_FONT)
-            .color(if locked { theme::MUTED } else { theme::TEXT }),
+        // The current card's progress takes the room a second line of name would.
+        if current { one_line(name) } else { name.into() },
         mono(battle_pass.reward_tier_label(reward), 10).color(theme::FAINT),
     ]
     .spacing(3);
@@ -731,7 +745,7 @@ fn reward_card<'a>(
         info = info.push(
             column![
                 tier_bar(battle_pass.next_tier_fraction()),
-                mono(battle_pass.next_tier_label(), 10).font(theme::MONO_SEMIBOLD_FONT),
+                one_line(mono(battle_pass.next_tier_label(), 10).font(theme::MONO_SEMIBOLD_FONT)),
             ]
             .spacing(5)
             .padding(Padding::default().top(7)),
@@ -740,8 +754,9 @@ fn reward_card<'a>(
 
     container(column![
         art,
+        // 9px sides leave room for "38,749 / 38,750 XP" on a card 7 to a row.
         container(info)
-            .padding([9, 11])
+            .padding(9)
             .width(Length::Fill)
             .height(REWARD_INFO_HEIGHT)
             .clip(true),

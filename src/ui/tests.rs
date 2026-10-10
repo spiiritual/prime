@@ -4500,7 +4500,8 @@ fn battle_pass_display() -> BattlePassProgressDisplay {
     }
 }
 
-/// Ten chapters of 5 tiers, each tier with a spray, and a weapon skin at tier 23 and tier 48.
+/// Ten chapters of 5 tiers, each tier with a spray but tiers 23, 33, 43 and 48, which have weapon
+/// skins. Tier 12 is reached.
 fn battle_pass_with_chapters() -> BattlePassProgressDisplay {
     let reward = |tier: i64| BattlePassRewardDisplay {
         tier,
@@ -4508,7 +4509,7 @@ fn battle_pass_with_chapters() -> BattlePassProgressDisplay {
         free: false,
         uuid: format!("reward-{tier}"),
         name: format!("Reward {tier}"),
-        kind: if tier == 23 || tier == 48 {
+        kind: if [23, 33, 43, 48].contains(&tier) {
             "Weapon skin"
         } else {
             "Spray"
@@ -4528,6 +4529,7 @@ fn battle_pass_with_chapters() -> BattlePassProgressDisplay {
                 first_tier: index * 5 + 1,
                 last_tier: index * 5 + 5,
                 rewards: (index * 5 + 1..=index * 5 + 5).map(reward).collect(),
+                art_loading: false,
             })
             .collect(),
         selected_chapter: 2,
@@ -4544,8 +4546,8 @@ fn only_the_battle_pass_rewards_on_screen_get_their_art_downloaded() {
         .map(|reward| reward.tier)
         .collect();
 
-    // The open chapter, then the weapon skins not reached yet.
-    assert_eq!(shown, [11, 12, 13, 14, 15, 23, 48]);
+    // The open chapter, then the next 3 weapon skins not reached yet, which show below it.
+    assert_eq!(shown, [11, 12, 13, 14, 15, 23, 33, 43]);
 }
 
 #[test]
@@ -4566,7 +4568,13 @@ fn opening_a_battle_pass_chapter_downloads_its_art_once() {
 
     let task = app.update(Message::BattlePassChapterSelected(5));
     assert_eq!(battle_pass(&app).selected_chapter, 5);
+    assert!(battle_pass(&app).chapters[5].art_loading);
     assert!(task.units() > 0);
+
+    // Opening it again while its art downloads doesn't download it twice.
+    let _ = app.update(Message::BattlePassChapterSelected(2));
+    let task = app.update(Message::BattlePassChapterSelected(5));
+    assert_eq!(task.units(), 0);
 
     // A chapter past the end changes nothing.
     let task = app.update(Message::BattlePassChapterSelected(10));
@@ -4587,8 +4595,10 @@ fn opening_a_battle_pass_chapter_downloads_its_art_once() {
     );
 
     let _ = app.update(Message::BattlePassChapterArtLoaded(5, loaded));
+    let chapter = &battle_pass(&app).chapters[5];
+    assert!(!chapter.art_loading);
     assert!(
-        battle_pass(&app).chapters[5]
+        chapter
             .rewards
             .iter()
             .all(|reward| reward.cached_icon.is_some())

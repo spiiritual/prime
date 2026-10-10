@@ -2135,16 +2135,19 @@ impl PrimeApp {
                     return Task::none();
                 };
                 battle_pass.selected_chapter = index;
-                let rewards = &battle_pass.chapters[index].rewards;
-                if rewards
-                    .iter()
-                    .all(|reward| reward.cached_icon.is_some() || reward.display_icon.is_none())
+                let chapter = &mut battle_pass.chapters[index];
+                if chapter.art_loading
+                    || chapter
+                        .rewards
+                        .iter()
+                        .all(|reward| reward.cached_icon.is_some() || reward.display_icon.is_none())
                 {
                     return Task::none();
                 }
+                chapter.art_loading = true;
                 Task::perform(
                     super::data::image_assets::cache_battle_pass_reward_icons(
-                        rewards.clone(),
+                        chapter.rewards.clone(),
                         self.image_cache.clone(),
                     ),
                     move |rewards| Message::BattlePassChapterArtLoaded(index, rewards),
@@ -2165,6 +2168,7 @@ impl PrimeApp {
                         .all(|(shown, loaded)| shown.uuid == loaded.uuid)
                 {
                     chapter.rewards = rewards;
+                    chapter.art_loading = false;
                 }
                 Task::none()
             }
