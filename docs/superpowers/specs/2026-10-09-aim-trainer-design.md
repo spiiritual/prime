@@ -50,8 +50,9 @@ with the monitor:
   ends at 0.
 - A dot spawns at a random spot inside the arena's view. It starts 0.3° wide and grows to 3.6° in
   about 2.2 s, then bursts.
-- The spawn interval starts at 600 ms and shortens as the score rises, to 200 ms at 65 (WAIUA's
-  steps: score < 5, < 20, < 35, < 50, < 65).
+- The spawn interval starts at 600 ms and shortens as the score rises: 500 ms from 5, 400 from 20,
+  300 from 35, 200 from 50 (WAIUA's steps).
+- A frame gap longer than 100 ms counts as 100 ms, so a stall can't burst every dot at once.
 - A click hits the newest dot under the crosshair. A hit scores 1, removes the dot and records its
   reaction time (click time minus spawn time).
 - The constants live together at the top of the game module so they can be tuned.
@@ -87,9 +88,12 @@ command. So:
 - `f = (monitor_width_px / 2) / tan(51.5°)` is VALORANT's focal length in physical pixels. A point
   at angle `a` sits `f × tan(a)` from the centre, on each axis.
 - The arena's view is the angles that fit inside it: `atan((arena_px / 2) / f)` each way, using the
-  arena's physical size (logical size × `window::scale_factor`). The crosshair is clamped to it and
-  dots spawn inside it with a margin.
-- The monitor width comes from `window::monitor_size` when the tab opens; it is in physical pixels.
+  arena's size. The crosshair is clamped to it and dots spawn inside it with a margin.
+- The monitor width comes from `window::monitor_size` each time the tab opens. iced reports it in
+  logical pixels, the same units as the arena, so the display scale cancels out. If it can't be
+  read, 1920 is used.
+- A dot is drawn as a circle whose radius is the mean of its projected horizontal and vertical
+  extents, so dots near the edge grow the way they would in game.
 - Resizing the window during a run changes the view; dots outside it are dropped without costing
   health.
 
@@ -104,7 +108,9 @@ command. So:
 - Game over: results modal with a "New best" badge and the previous best when beaten, the
   sensitivity and DPI the run used, Done (back to Ready) and Play again.
 - Esc during a run ends it and shows its results. A run that ends early still counts toward the best.
-- Leaving the tab or minimizing ends the run the same way.
+- Leaving the tab ends the run the same way. Minimizing is a focus loss, so it pauses. Closing
+  the window pauses first, which releases the cursor.
+- Ready shows an empty arena; Game over shows the run's last dots faded behind the results.
 
 ## Sensitivity and DPI
 
