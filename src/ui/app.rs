@@ -249,7 +249,7 @@ impl PrimeApp {
     /// What Escape does: cancel the dialog on top, in the order the view stacks them, or else close
     /// an open popover.
     fn escape_message(&self) -> Option<Message> {
-        if self.aim.phase.is_running() {
+        if matches!(self.aim.phase, AimPhase::Playing(_)) {
             return Some(Message::Aim(AimMessage::Stop));
         }
         let message = if super::image_viewer_enabled() && self.image_viewer.is_some() {
@@ -298,6 +298,9 @@ impl PrimeApp {
             Message::CancelSettingsChange
         } else if self.status.kind == StatusKind::Error && super::status_bar_visible(self) {
             Message::DismissStatus
+        } else if self.aim.phase.is_running() {
+            // Paused: dialogs close first, then the next Esc ends the run.
+            Message::Aim(AimMessage::Stop)
         } else {
             return None;
         };
@@ -315,7 +318,7 @@ impl PrimeApp {
 
     /// Shows a status message. Setting the same text again restarts its display time, so a
     /// repeated action still gets visible feedback.
-    fn set_status(&mut self, status: Status) {
+    pub(super) fn set_status(&mut self, status: Status) {
         self.now = iced::time::Instant::now();
         if !super::status_bar_visible(self) {
             self.toast_appeared_at = self.now;
@@ -1265,11 +1268,8 @@ impl PrimeApp {
             Message::CloseRequested(id) => {
                 // A run holds the cursor on one pixel; pausing gives it back first.
                 if matches!(self.aim.phase, AimPhase::Playing(_)) {
-                    let release = self.pause_aim_run();
-                    return Task::batch([
-                        release,
-                        self.handle_message(Message::CloseRequested(id)),
-                    ]);
+                    let _ = self.pause_aim_run();
+                    return self.handle_message(Message::CloseRequested(id));
                 }
                 if !self.state.minimize_on_close {
                     if self.chat_carried() {

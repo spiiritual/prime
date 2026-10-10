@@ -27,12 +27,21 @@ thread_local! {
     static SENDER: RefCell<Option<UnboundedSender<(i32, i32)>>> = const { RefCell::new(None) };
 }
 
+/// What the reader reports.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RawMouse {
+    Moved(i32, i32),
+    /// The reader couldn't start; sent once, then the stream ends.
+    Unavailable,
+}
+
 /// Relative mouse counts while subscribed. Ending the subscription closes the reader's window,
 /// which gives the raw mouse input back.
-pub fn movements() -> impl Stream<Item = (i32, i32)> {
+pub fn movements() -> impl Stream<Item = RawMouse> {
     iced::stream::channel(64, async |mut output| {
         let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
         let Some(_reader) = Reader::start(sender) else {
+            let _ = output.send(RawMouse::Unavailable).await;
             return;
         };
         // A 1000 Hz mouse sends a message every millisecond; one per wake-up is plenty.
@@ -41,7 +50,7 @@ pub fn movements() -> impl Stream<Item = (i32, i32)> {
                 dx += x;
                 dy += y;
             }
-            if output.send((dx, dy)).await.is_err() {
+            if output.send(RawMouse::Moved(dx, dy)).await.is_err() {
                 break;
             }
         }
@@ -50,6 +59,10 @@ pub fn movements() -> impl Stream<Item = (i32, i32)> {
 
 /// Holds the cursor on its current pixel, inside Prime, so a fast flick can't click elsewhere.
 pub fn hold_cursor() {
+    // Tests must never clip the real cursor.
+    if cfg!(test) {
+        return;
+    }
     let mut point = POINT::default();
     // SAFETY: both calls only read or write the local values passed to them.
     unsafe {
@@ -66,6 +79,10 @@ pub fn hold_cursor() {
 }
 
 pub fn release_cursor() {
+    // Tests must never touch the real cursor.
+    if cfg!(test) {
+        return;
+    }
     // SAFETY: a null rectangle frees the cursor.
     unsafe {
         ClipCursor(null());
@@ -137,6 +154,8 @@ fn read_on_this_thread(
             hwndTarget: window,
         };
         if RegisterRawInputDevices(&device, 1, size_of::<RAWINPUTDEVICE>() as u32) == 0 {
+            // Destroying the window runs WM_DESTROY's RIDEV_REMOVE, which only drops winit's
+            // registration this call just replaced, so nothing else loses mouse input.
             DestroyWindow(window);
             let _ = ready.send(None);
             return;
@@ -189,6 +208,11 @@ unsafe extern "system" fn window_proc(
 }
 
 /// Relative movement from one WM_INPUT; absolute devices (tablets, remote desktop) are ignored.
+///
+/// # Safety
+///
+/// `lparam` must be the `lParam` of a WM_INPUT message being handled, so it is a valid raw input
+/// handle.
 unsafe fn read_movement(lparam: LPARAM) -> Option<(i32, i32)> {
     let mut input = RAWINPUT::default();
     let mut size = size_of::<RAWINPUT>() as u32;

@@ -7240,8 +7240,7 @@ fn aim_run_starts_once_and_esc_ends_it_with_results() {
         "clicks before Start do nothing"
     );
 
-    let task = app.update(aim(AimMessage::Start));
-    assert!(task.units() > 0, "holds the cursor");
+    let _ = app.update(aim(AimMessage::Start));
     assert!(matches!(app.aim.phase, AimPhase::Playing(_)));
     aim_frames(&mut app, 0);
     aim_hit_newest(&mut app);
@@ -7252,8 +7251,7 @@ fn aim_run_starts_once_and_esc_ends_it_with_results() {
     };
     assert_eq!(game.score(), 1, "a second Start doesn't restart the run");
 
-    let task = app.update(Message::EscapePressed);
-    assert!(task.units() > 0, "releases the cursor");
+    let _ = app.update(Message::EscapePressed);
     let AimPhase::Over { run, .. } = &app.aim.phase else {
         panic!("Esc shows the results");
     };
@@ -7284,9 +7282,8 @@ fn aim_best_run_is_replaced_only_by_a_higher_score() {
     aim_hit_newest(&mut app);
     aim_frames(&mut app, 600);
     aim_hit_newest(&mut app);
-    let task = app.update(aim(AimMessage::Stop));
+    let _ = app.update(aim(AimMessage::Stop));
 
-    assert!(task.units() > 0);
     let AimPhase::Over {
         new_best,
         previous_best,
@@ -7317,8 +7314,7 @@ fn aim_run_pauses_on_focus_loss_and_resumes() {
     aim_frames(&mut app, 0);
     aim_hit_newest(&mut app);
 
-    let task = app.update(aim(AimMessage::FocusLost));
-    assert!(task.units() > 0, "releases the cursor");
+    let _ = app.update(aim(AimMessage::FocusLost));
     assert!(matches!(app.aim.phase, AimPhase::Paused(_)));
     let _ = app.update(aim(AimMessage::SensitivityChanged("2".into())));
     assert_eq!(
@@ -7374,9 +7370,35 @@ fn aim_run_ends_when_a_login_capture_jumps_to_accounts() {
     let _ = app.update(aim(AimMessage::Start));
 
     // The capture-complete messages need a live login capture, so call the shared jump directly.
-    let task = app.show_accounts_tab_top();
+    let _ = app.show_accounts_tab_top();
 
     assert_eq!(app.active_tab, Tab::Accounts);
     assert!(matches!(app.aim.phase, AimPhase::Over { .. }));
-    assert!(task.units() > 0, "releases the cursor");
+}
+
+#[test]
+fn aim_run_ends_with_an_error_when_raw_input_is_unavailable() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+    let _ = app.update(aim(AimMessage::Start));
+    let _ = app.update(aim(AimMessage::RawInputUnavailable));
+    assert!(matches!(app.aim.phase, AimPhase::Over { .. }));
+    assert_eq!(app.status.kind, StatusKind::Error);
+    assert!(app.status.text.contains("Raw mouse input"));
+}
+
+#[test]
+fn aim_esc_closes_a_dialog_before_stopping_a_paused_run() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+    let _ = app.update(aim(AimMessage::Start));
+    let _ = app.update(aim(AimMessage::FocusLost));
+    app.confirm_quit = Some(QuitAction::Exit);
+
+    let _ = app.update(Message::EscapePressed);
+    assert!(app.confirm_quit.is_none(), "the dialog closes first");
+    assert!(matches!(app.aim.phase, AimPhase::Paused(_)));
+
+    let _ = app.update(Message::EscapePressed);
+    assert!(matches!(app.aim.phase, AimPhase::Over { .. }));
 }

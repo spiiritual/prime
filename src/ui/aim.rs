@@ -5,9 +5,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use iced::{Size, Subscription, Task, mouse, window};
 
+use super::Status;
 use super::{Message, PrimeApp, Tab};
 use crate::aim_trainer::{self, AimRun, Game, View};
-use crate::raw_mouse;
+use crate::raw_mouse::{self, RawMouse};
 
 #[derive(Clone, Debug)]
 pub(super) enum AimMessage {
@@ -25,6 +26,8 @@ pub(super) enum AimMessage {
     Clicked,
     Frame(iced::time::Instant),
     FocusLost,
+    /// The raw input reader couldn't start.
+    RawInputUnavailable,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -170,6 +173,13 @@ impl PrimeApp {
                 }
             }
             AimMessage::FocusLost => self.pause_aim_run(),
+            AimMessage::RawInputUnavailable => {
+                let task = self.end_aim_run();
+                self.set_status(Status::error(
+                    "Raw mouse input isn't available, so the Aim Trainer can't read your mouse.",
+                ));
+                task
+            }
         }
     }
 
@@ -185,13 +195,7 @@ impl PrimeApp {
                 .unwrap_or_default();
             self.aim.dpi_input = self.state.aim_trainer.dpi().to_string();
         }
-        window::latest().then(|id| {
-            id.map_or_else(Task::none, |id| {
-                window::monitor_size(id).map(|size| {
-                    Message::Aim(AimMessage::MonitorMeasured(size.map(|size| size.width)))
-                })
-            })
-        })
+        measure_monitor()
     }
 
     fn refresh_aim_view(&mut self) {
@@ -215,7 +219,9 @@ impl PrimeApp {
             _ => AimPhase::Playing(Box::new(Game::new(sensitivity, view, seed()))),
         };
         self.aim.last_frame = None;
-        Task::future(async { raw_mouse::hold_cursor() }).discard()
+        // Held here, not in a task, so it is always ordered before a release.
+        raw_mouse::hold_cursor();
+        measure_monitor()
     }
 
     /// Esc, game over or leaving the tab: show the results and keep a new best.
@@ -248,7 +254,8 @@ impl PrimeApp {
             previous_best,
             new_best,
         };
-        Task::batch([release_cursor_task(), save])
+        raw_mouse::release_cursor();
+        save
     }
 
     /// Focus loss or closing the window: stop the clock and give the cursor back.
@@ -260,7 +267,8 @@ impl PrimeApp {
             self.aim.phase = AimPhase::Paused(game);
         }
         self.aim.last_frame = None;
-        release_cursor_task()
+        raw_mouse::release_cursor();
+        Task::none()
     }
 }
 
@@ -269,8 +277,12 @@ pub(super) fn subscription(app: &PrimeApp) -> Option<Subscription<Message>> {
     let playing = matches!(app.aim.phase, AimPhase::Playing(_));
     (app.active_tab == Tab::AimTrainer && playing).then(|| {
         Subscription::batch([
-            Subscription::run(raw_mouse::movements)
-                .map(|(dx, dy)| Message::Aim(AimMessage::MouseMoved(dx, dy))),
+            Subscription::run(raw_mouse::movements).map(|raw| {
+                Message::Aim(match raw {
+                    RawMouse::Moved(dx, dy) => AimMessage::MouseMoved(dx, dy),
+                    RawMouse::Unavailable => AimMessage::RawInputUnavailable,
+                })
+            }),
             window::frames().map(|now| Message::Aim(AimMessage::Frame(now))),
             iced::event::listen_with(run_event),
         ])
@@ -291,8 +303,14 @@ fn run_event(
     }
 }
 
-fn release_cursor_task() -> Task<Message> {
-    Task::future(async { raw_mouse::release_cursor() }).discard()
+/// The monitor can change under the window, so it is measured on opening the tab and each start.
+fn measure_monitor() -> Task<Message> {
+    window::latest().then(|id| {
+        id.map_or_else(Task::none, |id| {
+            window::monitor_size(id)
+                .map(|size| Message::Aim(AimMessage::MonitorMeasured(size.map(|size| size.width))))
+        })
+    })
 }
 
 fn seed() -> u64 {

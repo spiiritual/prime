@@ -238,9 +238,12 @@ impl Game {
         }
         let now = self.now_ms;
         let (yaw, pitch) = self.aim;
+        // Hit-tested in pixels, on exactly what is drawn.
+        let (aim_x, aim_y) = self.view.to_px(yaw, pitch);
         let hit = self.dots.iter().rposition(|dot| {
-            let radius = dot_diameter(now - dot.spawned_at_ms) / 2.0;
-            (dot.yaw - yaw).hypot(dot.pitch - pitch) <= radius
+            let diameter = dot_diameter(now - dot.spawned_at_ms);
+            let (x, y) = self.view.to_px(dot.yaw, dot.pitch);
+            (x - aim_x).hypot(y - aim_y) <= self.view.radius_px(dot.yaw, dot.pitch, diameter)
         });
         match hit {
             Some(index) => {
@@ -445,6 +448,42 @@ mod tests {
     }
 
     #[test]
+    fn a_click_inside_the_drawn_dot_hits_even_off_centre() {
+        let mut game = game();
+        let (yaw, pitch) = (30.0, 0.0);
+        game.dots.push(Dot {
+            yaw,
+            pitch,
+            spawned_at_ms: 0,
+        });
+        game.now_ms = 300;
+        let diameter = dot_diameter(300);
+        let view = game.view;
+        // Straight down the dot's drawn radius, beyond its angular radius.
+        let drawn = view.radius_px(yaw, pitch, diameter);
+        let target_y = view.to_px(yaw, pitch).1 + drawn * 0.95;
+        let aim_pitch = ((target_y - view.height_px / 2.0) / view.focal_px)
+            .atan()
+            .to_degrees();
+        assert!(
+            aim_pitch - pitch > diameter / 2.0,
+            "outside the angular radius"
+        );
+        game.aim = (yaw, aim_pitch);
+        game.click();
+        assert_eq!(game.score(), 1);
+    }
+
+    #[test]
+    fn the_mouse_turns_right_and_up() {
+        let mut game = game();
+        game.move_aim(10, 0);
+        assert!(game.aim().0 > 0.0);
+        game.move_aim(0, -10);
+        assert!(game.aim().1 < 0.0);
+    }
+
+    #[test]
     fn spawn_interval_steps_down_with_score() {
         let steps: Vec<u64> = [0, 4, 5, 19, 20, 34, 35, 49, 50, 200]
             .into_iter()
@@ -463,7 +502,10 @@ mod tests {
         step(&mut game, 100);
         assert_eq!(game.dots().count(), 2);
         let (hx, hy) = game.view().half_angles();
-        assert!(game.dots().all(|(dot, _)| dot.yaw.abs() <= hx && dot.pitch.abs() <= hy));
+        assert!(
+            game.dots()
+                .all(|(dot, _)| dot.yaw.abs() <= hx && dot.pitch.abs() <= hy)
+        );
     }
 
     #[test]

@@ -28,7 +28,10 @@ fn hud(app: &PrimeApp) -> Element<'_, Message> {
 
     let health_bar = column![
         row![
-            text("Health").size(11).font(theme::SEMIBOLD_FONT).color(theme::MUTED),
+            text("Health")
+                .size(11)
+                .font(theme::SEMIBOLD_FONT)
+                .color(theme::MUTED),
             space().width(Length::Fill),
             text(format!("{health}%"))
                 .size(11)
@@ -52,7 +55,11 @@ fn hud(app: &PrimeApp) -> Element<'_, Message> {
     row![
         stat("Score", score.to_string(), theme::TEXT),
         stat("Accuracy", percent(accuracy), theme::TEXT),
-        stat("Best", best.map_or("—".into(), |best| best.to_string()), theme::MUTED),
+        stat(
+            "Best",
+            best.map_or("—".into(), |best| best.to_string()),
+            theme::MUTED
+        ),
         space().width(Length::Fill),
         health_bar,
     ]
@@ -63,7 +70,10 @@ fn hud(app: &PrimeApp) -> Element<'_, Message> {
 
 fn stat<'a>(label: &'a str, value: String, color: Color) -> Element<'a, Message> {
     column![
-        text(label).size(11).font(theme::SEMIBOLD_FONT).color(theme::MUTED),
+        text(label)
+            .size(11)
+            .font(theme::SEMIBOLD_FONT)
+            .color(theme::MUTED),
         text(value)
             .size(22)
             .font(theme::DISPLAY_FONT)
@@ -124,7 +134,13 @@ fn modal(card: Element<'_, Message>) -> Element<'_, Message> {
     container(card)
         .center(Length::Fill)
         .style(|_| container::Style {
-            background: Some(Color { a: 0.6, ..theme::BG }.into()),
+            background: Some(
+                Color {
+                    a: 0.6,
+                    ..theme::BG
+                }
+                .into(),
+            ),
             ..container::Style::default()
         })
         .into()
@@ -157,8 +173,8 @@ fn setup_card(app: &PrimeApp, paused: bool) -> Element<'_, Message> {
     let mut dpi_input = theme::text_input("800", &tab.dpi_input).font(theme::MONO_FONT);
     // A run keeps the sensitivity it started with, so the fields are read-only while paused.
     if !paused {
-        sensitivity_input = sensitivity_input
-            .on_input(|value| Message::Aim(AimMessage::SensitivityChanged(value)));
+        sensitivity_input =
+            sensitivity_input.on_input(|value| Message::Aim(AimMessage::SensitivityChanged(value)));
         dpi_input = dpi_input.on_input(|value| Message::Aim(AimMessage::DpiChanged(value)));
     }
 
@@ -182,13 +198,19 @@ fn setup_card(app: &PrimeApp, paused: bool) -> Element<'_, Message> {
                 .size(20)
                 .font(theme::DISPLAY_FONT)
                 .line_height(theme::DISPLAY_LINE_HEIGHT),
-            text("Pop the dots before they grow. Your crosshair moves at your VALORANT sensitivity.")
-                .size(13)
-                .color(theme::MUTED),
+            text(
+                "Pop the dots before they grow. Your crosshair moves at your VALORANT sensitivity."
+            )
+            .size(13)
+            .color(theme::MUTED),
         ]
         .spacing(4),
         row![
-            field("VALORANT sensitivity", sensitivity_input.into(), Length::Fill),
+            field(
+                "VALORANT sensitivity",
+                sensitivity_input.into(),
+                Length::Fill
+            ),
             field("Mouse DPI", dpi_input.into(), Length::Fixed(130.0)),
         ]
         .spacing(12),
@@ -206,7 +228,9 @@ fn setup_card(app: &PrimeApp, paused: bool) -> Element<'_, Message> {
             container(
                 row![
                     theme::icon(Icon::Trophy, 15.0, theme::GOLD),
-                    text(format!("Best {}", best.score)).size(13).font(theme::SEMIBOLD_FONT),
+                    text(format!("Best {}", best.score))
+                        .size(13)
+                        .font(theme::SEMIBOLD_FONT),
                     text(best_detail(best)).size(12).color(theme::MUTED),
                 ]
                 .spacing(10)
@@ -239,7 +263,11 @@ fn setup_card(app: &PrimeApp, paused: bool) -> Element<'_, Message> {
         .align_y(alignment::Vertical::Center),
     );
 
-    container(card).width(460).padding(24).style(card_style).into()
+    container(card)
+        .width(460)
+        .padding(24)
+        .style(card_style)
+        .into()
 }
 
 fn results_card<'a>(
@@ -260,13 +288,24 @@ fn results_card<'a>(
             container(
                 row![
                     theme::icon(Icon::Trophy, 13.0, theme::GOLD),
-                    text("New best").size(12).font(theme::SEMIBOLD_FONT).color(theme::GOLD),
+                    text("New best")
+                        .size(12)
+                        .font(theme::SEMIBOLD_FONT)
+                        .color(theme::GOLD),
                 ]
                 .spacing(6)
                 .align_y(alignment::Vertical::Center),
             )
             .padding([4, 9])
-            .style(|_| filled(Color { a: 0.12, ..theme::GOLD }, 6.0)),
+            .style(|_| {
+                filled(
+                    Color {
+                        a: 0.12,
+                        ..theme::GOLD
+                    },
+                    6.0,
+                )
+            }),
         );
     }
 
@@ -332,7 +371,10 @@ fn results_card<'a>(
 
 fn field<'a>(label: &'a str, input: Element<'a, Message>, width: Length) -> Element<'a, Message> {
     column![
-        text(label).size(12).font(theme::SEMIBOLD_FONT).color(theme::MUTED),
+        text(label)
+            .size(12)
+            .font(theme::SEMIBOLD_FONT)
+            .color(theme::MUTED),
         input
     ]
     .spacing(6)
@@ -343,7 +385,10 @@ fn field<'a>(label: &'a str, input: Element<'a, Message>, width: Length) -> Elem
 fn tile<'a>(label: &'a str, value: String) -> Element<'a, Message> {
     container(
         column![
-            text(label).size(11).font(theme::SEMIBOLD_FONT).color(theme::MUTED),
+            text(label)
+                .size(11)
+                .font(theme::SEMIBOLD_FONT)
+                .color(theme::MUTED),
             text(value)
                 .size(14)
                 .font(theme::MONO_SEMIBOLD_FONT)
@@ -369,7 +414,9 @@ fn filled(color: Color, radius: f32) -> container::Style {
 }
 
 fn percent(accuracy: Option<f64>) -> String {
-    accuracy.map_or("—".to_string(), |accuracy| format!("{:.0}%", accuracy * 100.0))
+    accuracy.map_or("—".to_string(), |accuracy| {
+        format!("{:.0}%", accuracy * 100.0)
+    })
 }
 
 fn reaction(ms: Option<u32>) -> String {
@@ -434,7 +481,10 @@ impl canvas::Program<Message> for Arena<'_> {
         let color = if playing {
             theme::ACCENT
         } else {
-            Color { a: 0.25, ..theme::ACCENT }
+            Color {
+                a: 0.25,
+                ..theme::ACCENT
+            }
         };
         for (dot, diameter) in game.dots() {
             let (x, y) = view.to_px(dot.yaw, dot.pitch);
