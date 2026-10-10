@@ -7366,3 +7366,17 @@ fn aim_arena_of_zero_size_is_ignored() {
     let _ = app.update(aim(AimMessage::ArenaResized(iced::Size::ZERO)));
     assert_eq!(app.aim.phase.game().expect("game").view(), before);
 }
+
+#[test]
+fn aim_run_ends_when_a_login_capture_jumps_to_accounts() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+    let _ = app.update(aim(AimMessage::Start));
+
+    // The capture-complete messages need a live login capture, so call the shared jump directly.
+    let task = app.show_accounts_tab_top();
+
+    assert_eq!(app.active_tab, Tab::Accounts);
+    assert!(matches!(app.aim.phase, AimPhase::Over { .. }));
+    assert!(task.units() > 0, "releases the cursor");
+}

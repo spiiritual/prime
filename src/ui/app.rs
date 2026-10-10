@@ -3954,12 +3954,17 @@ impl PrimeApp {
     }
 
     /// Shows the top of the Accounts tab, where a captured account waits for confirmation.
-    fn show_accounts_tab_top(&mut self) -> Task<Message> {
+    pub(super) fn show_accounts_tab_top(&mut self) -> Task<Message> {
         let top = operation::AbsoluteOffset { x: 0.0, y: 0.0 };
+        // Leaving the Aim Trainer by any route gives the cursor back.
+        let ended_run = self.end_aim_run();
         self.active_tab = Tab::Accounts;
         self.active_accounts_tab = AccountsTab::Accounts;
         self.tab_scroll_offsets.set(Tab::Accounts, top);
-        operation::scroll_to(MAIN_PANEL_SCROLLABLE_ID, top)
+        Task::batch([
+            ended_run,
+            operation::scroll_to(MAIN_PANEL_SCROLLABLE_ID, top),
+        ])
     }
 
     fn store_captured_launcher_session(
