@@ -275,17 +275,28 @@ pub(in crate::ui) async fn cache_bundle_icon(bundle: &mut BundleDisplay, image_c
     .await;
 }
 
+/// Battle pass reward cards are up to about 330px tall, so a player card's tall art (640px) is
+/// kept whole for 200% display scaling.
+const BATTLE_PASS_ART_MAX_SIDE: u32 = 640;
+
 pub(in crate::ui) async fn cache_battle_pass_reward_icon(
     reward: &mut BattlePassRewardDisplay,
     image_cache: &ImageCache,
 ) {
-    reward.cached_icon = cached_small_art(
-        image_cache,
-        "battle-pass",
-        &reward.uuid,
-        reward.display_icon.as_ref(),
-    )
-    .await;
+    let Some(url) = reward.display_icon.as_ref() else {
+        reward.cached_icon = None;
+        return;
+    };
+    // A new folder, since "battle-pass" holds player cards' square icons at 256px.
+    reward.cached_icon = image_cache
+        .cache_url(
+            "battle-pass-art",
+            &reward.uuid,
+            url,
+            Some(BATTLE_PASS_ART_MAX_SIDE),
+        )
+        .await
+        .ok();
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

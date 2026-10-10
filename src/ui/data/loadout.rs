@@ -636,7 +636,8 @@ fn resolve_battle_pass_reward(
             ResolvedBattlePassReward {
                 name: accessory.display_name,
                 kind: "Player card".to_string(),
-                display_icon: accessory.display_icon,
+                // The card's tall art, which suits a reward card better than its square icon.
+                display_icon: accessory.viewer_icon.clone(),
                 viewer_icon: accessory.viewer_icon,
             }
         }

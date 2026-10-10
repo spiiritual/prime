@@ -55,8 +55,8 @@ use crate::game_settings::{
 use crate::riot::chat_proxy::{ChatProxy, PresenceStatus};
 use crate::riot::content::{
     AccessoryCatalog, Buddy, BuddyLevel, BundleCatalog, ContractCatalog, ContractChapter,
-    ContractContent, ContractLevel, ContractReward, Currency, CurrencyCatalog, SkinCatalog,
-    ValorantContract, WeaponCatalog,
+    ContractContent, ContractLevel, ContractReward, Currency, CurrencyCatalog, PlayerCard,
+    SkinCatalog, ValorantContract, WeaponCatalog,
 };
 use crate::riot::launcher_session::{CapturedLauncherSession, LauncherSessionError};
 use crate::riot::models::{
@@ -1870,14 +1870,24 @@ fn battle_pass_currency_rewards_show_amount_in_name() {
             premium_reward_schedule_uuid: Some("premium-schedule".to_string()),
             chapters: vec![ContractChapter {
                 is_epilogue: false,
-                levels: vec![ContractLevel {
-                    reward: Some(ContractReward {
-                        kind: "Currency".to_string(),
-                        uuid: radianite_uuid.to_string(),
-                        amount: 1,
-                    }),
-                    xp: Some(2_000),
-                }],
+                levels: vec![
+                    ContractLevel {
+                        reward: Some(ContractReward {
+                            kind: "Currency".to_string(),
+                            uuid: radianite_uuid.to_string(),
+                            amount: 1,
+                        }),
+                        xp: Some(2_000),
+                    },
+                    ContractLevel {
+                        reward: Some(ContractReward {
+                            kind: "PlayerCard".to_string(),
+                            uuid: "card".to_string(),
+                            amount: 1,
+                        }),
+                        xp: Some(3_000),
+                    },
+                ],
                 free_rewards: None,
             }],
         }),
@@ -1901,15 +1911,33 @@ fn battle_pass_currency_rewards_show_amount_in_name() {
         display_icon: None,
     }]);
 
+    let accessories = AccessoryCatalog::from_parts(
+        vec![],
+        vec![],
+        vec![PlayerCard {
+            uuid: "card".to_string(),
+            display_name: "Gourmand Card".to_string(),
+            display_icon: Some("card-icon".to_string()),
+            small_art: Some("card-small".to_string()),
+            large_art: Some("card-large".to_string()),
+        }],
+        vec![],
+    );
+
     let progress = battle_pass_progress_from_responses(
         &contracts,
         &catalog,
         Some(&content),
         &SkinCatalog::default(),
-        &AccessoryCatalog::default(),
+        &accessories,
         &currencies,
     )
     .expect("battle pass progress");
+
+    // Player cards use their tall art, which fills a reward card.
+    let card = &progress.chapters[0].rewards[1];
+    assert_eq!(card.name, "Gourmand Card");
+    assert_eq!(card.display_icon.as_deref(), Some("card-large"));
 
     let reward = &progress.chapters[0].rewards[0];
     assert_eq!(reward.name, "10 Radianite");
