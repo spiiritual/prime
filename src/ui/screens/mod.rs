@@ -1,4 +1,5 @@
 mod accounts;
+mod aim_trainer;
 mod game_settings;
 mod live_match;
 mod loadout;
@@ -27,6 +28,7 @@ pub(super) fn tab(app: &PrimeApp, tab: Tab) -> Element<'_, Message> {
         Tab::Accounts => accounts::tab(app),
         Tab::Shop => shop::tab(app),
         Tab::Loadout => loadout::tab(app),
+        Tab::AimTrainer => aim_trainer::tab(app),
         Tab::Settings => settings::tab(app),
         Tab::LiveMatch => live_match::tab(app),
     }
@@ -38,6 +40,7 @@ pub(super) fn fills_page(app: &PrimeApp, tab: Tab) -> bool {
         Tab::Shop => shop::fills_page(app),
         Tab::Loadout => loadout::fills_page(app),
         Tab::Accounts => accounts::fills_page(app),
+        Tab::AimTrainer => true,
         Tab::Settings => false,
         Tab::LiveMatch => live_match::fills_page(app),
     }

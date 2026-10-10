@@ -16,6 +16,7 @@ use crate::secret_clipboard::copy_secret_text;
 use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{UpdateCheckOutcome, check_for_update, download_and_prepare_update};
 
+use super::aim::{AimMessage, AimPhase, AimTrainerTab};
 use super::data::account_details::{
     AccountActivityCheck, AccountAvailability, AccountRankResult, ActivityDetail,
     RefreshedApiContext, check_settings_activity, fetch_account_availabilities,
@@ -70,6 +71,7 @@ impl PrimeApp {
                 active_accounts_tab: AccountsTab::Accounts,
                 active_loadout_tab: LoadoutTab::Skins,
                 tab_scroll_offsets: TabScrollOffsets::default(),
+                aim: AimTrainerTab::default(),
                 new_display_name: String::new(),
                 redirect_input: String::new(),
                 settings_section: SettingsSection::RiotClient,
@@ -247,6 +249,9 @@ impl PrimeApp {
     /// What Escape does: cancel the dialog on top, in the order the view stacks them, or else close
     /// an open popover.
     fn escape_message(&self) -> Option<Message> {
+        if self.aim.phase.is_running() {
+            return Some(Message::Aim(AimMessage::Stop));
+        }
         let message = if super::image_viewer_enabled() && self.image_viewer.is_some() {
             Message::CloseImageViewer
         } else if self.confirm_quit.is_some() {
@@ -386,6 +391,11 @@ impl PrimeApp {
                 Task::none()
             }
             Message::TabSelected(tab) => {
+                let ended_run = if tab == Tab::AimTrainer {
+                    Task::none()
+                } else {
+                    self.end_aim_run()
+                };
                 self.active_tab = tab;
                 // Countdowns don't tick on other tabs, so bring them up to date.
                 self.now = iced::time::Instant::now();
@@ -395,10 +405,12 @@ impl PrimeApp {
                 self.close_account_surfaces();
                 self.unavailable_launch_warning = None;
                 Task::batch([
+                    ended_run,
                     self.load_active_tab(),
                     self.restore_active_tab_scroll_task(),
                 ])
             }
+            Message::Aim(message) => self.update_aim(message),
             Message::AccountsTabSelected(tab) => {
                 self.active_accounts_tab = tab;
                 self.close_account_surfaces();
@@ -1251,6 +1263,14 @@ impl PrimeApp {
                 }
             }
             Message::CloseRequested(id) => {
+                // A run holds the cursor on one pixel; pausing gives it back first.
+                if matches!(self.aim.phase, AimPhase::Playing(_)) {
+                    let release = self.pause_aim_run();
+                    return Task::batch([
+                        release,
+                        self.handle_message(Message::CloseRequested(id)),
+                    ]);
+                }
                 if !self.state.minimize_on_close {
                     if self.chat_carried() {
                         self.confirm_quit = Some(QuitAction::Exit);
@@ -2994,6 +3014,7 @@ impl PrimeApp {
                 self.loadout_summary = None;
                 self.fetch_loadout_task()
             }
+            Tab::AimTrainer => self.open_aim_trainer(),
             _ => Task::none(),
         }
     }
@@ -3409,7 +3430,7 @@ impl PrimeApp {
             self.clear_selected_account_views();
             match self.active_tab {
                 Tab::Shop | Tab::Loadout | Tab::LiveMatch => self.load_active_tab(),
-                Tab::Accounts | Tab::Settings => Task::none(),
+                Tab::Accounts | Tab::Settings | Tab::AimTrainer => Task::none(),
             }
         } else {
             Task::none()
@@ -3465,7 +3486,7 @@ impl PrimeApp {
         Ok(self.state.clone())
     }
 
-    fn save_task(&self) -> Task<Message> {
+    pub(super) fn save_task(&self) -> Task<Message> {
         let repo = self.repo.clone();
         let snapshot = match self.state_to_save() {
             Ok(state) => repo.snapshot(&state),

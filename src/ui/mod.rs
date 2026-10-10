@@ -1,3 +1,4 @@
+mod aim;
 mod app;
 mod components;
 mod data;
@@ -20,6 +21,7 @@ use crate::image_cache::{CacheUsage, ImageCache};
 use crate::riot::chat_proxy::{ChatProxy, PresenceStatus};
 use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{AvailableUpdate, UpdateCheckOutcome};
+use aim::{AimMessage, AimTrainerTab};
 
 use crate::game_settings::GameSettingsProfileMetadata;
 use data::account_details::{
@@ -163,6 +165,10 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
     if app.chat_proxy.is_some() && !app.window_minimized {
         subscriptions
             .push(iced::time::every(LOCAL_GAME_CHECK_INTERVAL).map(|_| Message::LocalGameTick));
+    }
+
+    if let Some(aim) = aim::subscription(app) {
+        subscriptions.push(aim);
     }
 
     Subscription::batch(subscriptions)
@@ -350,6 +356,8 @@ struct PrimeApp {
     active_accounts_tab: AccountsTab,
     active_loadout_tab: LoadoutTab,
     tab_scroll_offsets: TabScrollOffsets,
+    /// The Aim Trainer tab's fields and run.
+    aim: AimTrainerTab,
     new_display_name: String,
     redirect_input: String,
     /// The Settings section last picked from its menu.
@@ -824,6 +832,7 @@ enum Tab {
     Accounts,
     Shop,
     Loadout,
+    AimTrainer,
     Settings,
     /// Opened from the sidebar's live match indicator; it has no nav item.
     LiveMatch,
@@ -835,6 +844,7 @@ impl std::fmt::Display for Tab {
             Tab::Accounts => f.write_str("Accounts"),
             Tab::Shop => f.write_str("Shop"),
             Tab::Loadout => f.write_str("Loadout"),
+            Tab::AimTrainer => f.write_str("Aim Trainer"),
             Tab::Settings => f.write_str("Settings"),
             Tab::LiveMatch => f.write_str("Live Match"),
         }
@@ -846,6 +856,7 @@ struct TabScrollOffsets {
     accounts: AbsoluteOffset,
     shop: AbsoluteOffset,
     loadout: AbsoluteOffset,
+    aim_trainer: AbsoluteOffset,
     settings: AbsoluteOffset,
     live_match: AbsoluteOffset,
 }
@@ -856,6 +867,7 @@ impl TabScrollOffsets {
             Tab::Accounts => self.accounts,
             Tab::Shop => self.shop,
             Tab::Loadout => self.loadout,
+            Tab::AimTrainer => self.aim_trainer,
             Tab::Settings => self.settings,
             Tab::LiveMatch => self.live_match,
         }
@@ -866,6 +878,7 @@ impl TabScrollOffsets {
             Tab::Accounts => self.accounts = offset,
             Tab::Shop => self.shop = offset,
             Tab::Loadout => self.loadout = offset,
+            Tab::AimTrainer => self.aim_trainer = offset,
             Tab::Settings => self.settings = offset,
             Tab::LiveMatch => self.live_match = offset,
         }
@@ -943,6 +956,7 @@ enum Message {
     Loaded(Result<LoadedAccounts, String>),
     Saved(Result<(), String>),
     TabSelected(Tab),
+    Aim(AimMessage),
     AccountsTabSelected(AccountsTab),
     LoadoutTabSelected(LoadoutTab),
     MainPanelScrolled {

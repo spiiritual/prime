@@ -587,6 +587,7 @@ impl PrimeApp {
             Tab::Shop => 26.0,
             Tab::Loadout if self.active_loadout_tab == LoadoutTab::BattlePass => 26.0,
             Tab::Loadout => 20.0,
+            Tab::AimTrainer => 20.0,
             Tab::Settings => 32.0,
         }
     }
@@ -714,6 +715,7 @@ impl PrimeApp {
             Tab::Accounts => theme::Icon::Users,
             Tab::Shop => theme::Icon::ShoppingBag,
             Tab::Loadout => theme::Icon::Swords,
+            Tab::AimTrainer => theme::Icon::Crosshair,
             Tab::Settings => theme::Icon::Settings,
             // Live Match has no nav item; the sidebar's live match indicator opens it.
             Tab::LiveMatch => theme::Icon::ChevronRight,
