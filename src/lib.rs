@@ -1,10 +1,12 @@
 pub mod account;
 pub mod account_transfer;
+pub mod aim_trainer;
 pub mod file_dialog;
 pub mod game_settings;
 mod http_error;
 pub mod image_cache;
 pub mod launch;
+pub mod raw_mouse;
 pub mod riot;
 pub mod secret_clipboard;
 pub mod single_instance;

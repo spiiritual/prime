@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::account::{AccountId, AccountProfile};
+use crate::aim_trainer::AimTrainerState;
 use crate::riot::chat_proxy::PresenceStatus;
 
 const STORAGE_VERSION: u32 = 1;
@@ -33,6 +34,9 @@ pub struct StoredState {
     /// starts with. Online, the default, isn't written.
     #[serde(default, skip_serializing_if = "PresenceStatus::is_online")]
     pub presence_status: PresenceStatus,
+    /// The Aim Trainer's sensitivity, DPI and best run. Left out until one is set.
+    #[serde(default, skip_serializing_if = "AimTrainerState::is_default")]
+    pub aim_trainer: AimTrainerState,
 }
 
 fn minimize_on_close_default() -> bool {
@@ -49,6 +53,7 @@ impl Default for StoredState {
             minimize_on_close: minimize_on_close_default(),
             live_match_weapons: None,
             presence_status: PresenceStatus::default(),
+            aim_trainer: AimTrainerState::default(),
         }
     }
 }
@@ -439,6 +444,32 @@ mod tests {
             repo.load().expect("load").presence_status,
             crate::riot::chat_proxy::PresenceStatus::Invisible
         );
+    }
+
+    #[test]
+    fn aim_trainer_state_is_only_saved_once_set() {
+        let dir = tempdir().expect("temp dir");
+        let repo = AccountRepository::new(dir.path().join("accounts.json"));
+        let mut state = StoredState::default();
+
+        repo.save(&state).expect("save");
+        let saved = fs::read_to_string(repo.path()).expect("read");
+        assert!(!saved.contains("aim_trainer"), "{saved}");
+
+        state.aim_trainer.sensitivity = Some(0.34);
+        state.aim_trainer.dpi = Some(1600);
+        state.aim_trainer.best = Some(crate::aim_trainer::AimRun {
+            score: 64,
+            misses: 6,
+            bursts: 4,
+            avg_reaction_ms: Some(412),
+            duration_ms: 72_000,
+            sensitivity: 0.34,
+            dpi: 1600,
+            finished_at_unix: 1_791_331_200,
+        });
+        repo.save(&state).expect("save");
+        assert_eq!(repo.load().expect("load").aim_trainer, state.aim_trainer);
     }
 
     #[test]

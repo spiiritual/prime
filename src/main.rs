@@ -20,5 +20,8 @@ fn main() -> iced::Result {
     if !prime::single_instance::claim() {
         return Ok(());
     }
-    prime::ui::run()
+    let result = prime::ui::run();
+    // Windows may keep a cursor clip after exit, so every clean exit frees it.
+    prime::raw_mouse::release_cursor();
+    result
 }

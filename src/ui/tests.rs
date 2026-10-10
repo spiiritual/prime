@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use tempfile::tempdir;
 
+use super::aim::{AimMessage, AimPhase};
 use super::app::{
     LaunchPreflightDecision, apply_account_detail_results, cancel_unavailable_launch_state,
     launch_preflight_decision,
@@ -38,7 +39,9 @@ use super::data::shop::{
     AccessoryKind, BundleItem, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
     StoreSummary, currency_balances_from_wallet, format_whole_number,
 };
-use super::{Dialog, LaunchedChatProxy, QuitAction, StatusLaunchFailure, UnavailableLaunchWarning};
+use super::{
+    Dialog, LaunchedChatProxy, QuitAction, StatusLaunchFailure, Tab, UnavailableLaunchWarning,
+};
 use super::{
     Message, PendingSettingsChange, PendingSettingsCheck, PresetNamePrompt, PresetNameTarget,
     PrimeApp, SettingsChange, Status, StatusKind, countdown_timer_interval,
@@ -7276,4 +7279,267 @@ fn the_spinner_ticks_only_while_one_is_on_screen() {
     // A progress toast that has timed out is no longer on screen.
     app.now = app.status_changed_at + Duration::from_secs(60);
     assert!(!super::loading_indicator_active(&app));
+}
+
+fn aim(message: AimMessage) -> Message {
+    Message::Aim(message)
+}
+
+/// The Aim Trainer tab, laid out on a 1920px monitor, with 0.34 typed in.
+fn aim_app(dir: &Path) -> PrimeApp {
+    let mut app = test_app(dir);
+    let _ = app.update(Message::TabSelected(Tab::AimTrainer));
+    let _ = app.update(aim(AimMessage::MonitorMeasured(Some(1920.0))));
+    let _ = app.update(aim(AimMessage::ArenaResized(iced::Size::new(976.0, 664.0))));
+    let _ = app.update(aim(AimMessage::SensitivityChanged("0.34".into())));
+    app
+}
+
+/// Sends frames `ms` apart in 100 ms steps, the way `window::frames` would.
+fn aim_frames(app: &mut PrimeApp, ms: u64) {
+    let mut at = app.aim.last_frame.unwrap_or_else(iced::time::Instant::now);
+    let _ = app.update(aim(AimMessage::Frame(at)));
+    for _ in 0..ms / 100 {
+        at += Duration::from_millis(100);
+        let _ = app.update(aim(AimMessage::Frame(at)));
+    }
+}
+
+/// Moves the crosshair onto the newest dot in whole counts and clicks it.
+fn aim_hit_newest(app: &mut PrimeApp) {
+    let AimPhase::Playing(game) = &app.aim.phase else {
+        panic!("not playing");
+    };
+    let (dot, _) = game.dots().last().expect("a dot");
+    let (yaw, pitch) = game.aim();
+    let per_count = crate::aim_trainer::DEGREES_PER_COUNT * game.sensitivity();
+    let dx = ((dot.yaw - yaw) / per_count).round() as i32;
+    let dy = ((dot.pitch - pitch) / per_count).round() as i32;
+    let _ = app.update(aim(AimMessage::MouseMoved(dx, dy)));
+    let _ = app.update(aim(AimMessage::Clicked));
+}
+
+#[test]
+fn aim_trainer_opens_with_the_saved_sensitivity_and_dpi() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.state.aim_trainer.sensitivity = Some(0.4);
+    app.state.aim_trainer.dpi = Some(1600);
+
+    let _ = app.update(Message::TabSelected(Tab::AimTrainer));
+
+    assert_eq!(app.aim.sensitivity_input, "0.4");
+    assert_eq!(app.aim.dpi_input, "1600");
+}
+
+#[test]
+fn aim_sensitivity_is_saved_only_when_valid() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+    assert_eq!(app.state.aim_trainer.sensitivity, Some(0.34));
+
+    let task = app.update(aim(AimMessage::SensitivityChanged("0,35".into())));
+    assert!(task.units() > 0, "saves accounts.json");
+    assert_eq!(app.state.aim_trainer.sensitivity, Some(0.35));
+
+    for bad in ["abc", "0", "-1", ""] {
+        let task = app.update(aim(AimMessage::SensitivityChanged(bad.into())));
+        assert_eq!(task.units(), 0, "{bad} isn't saved");
+        assert_eq!(
+            app.aim.sensitivity_input, bad,
+            "the field keeps what was typed"
+        );
+        assert_eq!(app.state.aim_trainer.sensitivity, Some(0.35));
+        assert!(!app.aim.can_start(), "{bad} can't start a run");
+        let _ = app.update(aim(AimMessage::Start));
+        assert!(matches!(app.aim.phase, AimPhase::Ready));
+    }
+}
+
+#[test]
+fn aim_dpi_of_800_is_not_saved() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+
+    let _ = app.update(aim(AimMessage::DpiChanged("1600".into())));
+    assert_eq!(app.state.aim_trainer.dpi, Some(1600));
+    let _ = app.update(aim(AimMessage::DpiChanged("800".into())));
+    assert_eq!(app.state.aim_trainer.dpi, None);
+    let _ = app.update(aim(AimMessage::DpiChanged("0".into())));
+    assert_eq!(app.state.aim_trainer.dpi, None);
+    assert_eq!(app.aim.dpi_input, "0");
+}
+
+#[test]
+fn aim_run_starts_once_and_esc_ends_it_with_results() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+
+    let _ = app.update(aim(AimMessage::Clicked));
+    assert!(
+        matches!(app.aim.phase, AimPhase::Ready),
+        "clicks before Start do nothing"
+    );
+
+    let _ = app.update(aim(AimMessage::Start));
+    assert!(matches!(app.aim.phase, AimPhase::Playing(_)));
+    aim_frames(&mut app, 0);
+    aim_hit_newest(&mut app);
+
+    let _ = app.update(aim(AimMessage::Start));
+    let AimPhase::Playing(game) = &app.aim.phase else {
+        panic!("still playing");
+    };
+    assert_eq!(game.score(), 1, "a second Start doesn't restart the run");
+
+    let _ = app.update(Message::EscapePressed);
+    let AimPhase::Over { run, .. } = &app.aim.phase else {
+        panic!("Esc shows the results");
+    };
+    assert_eq!(run.score, 1);
+
+    let _ = app.update(aim(AimMessage::Done));
+    assert!(matches!(app.aim.phase, AimPhase::Ready));
+}
+
+#[test]
+fn aim_best_run_is_replaced_only_by_a_higher_score() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+    let best = |score| crate::aim_trainer::AimRun {
+        score,
+        misses: 0,
+        bursts: 0,
+        avg_reaction_ms: None,
+        duration_ms: 0,
+        sensitivity: 0.34,
+        dpi: 800,
+        finished_at_unix: 0,
+    };
+    app.state.aim_trainer.best = Some(best(1));
+
+    let _ = app.update(aim(AimMessage::Start));
+    aim_frames(&mut app, 0);
+    aim_hit_newest(&mut app);
+    aim_frames(&mut app, 600);
+    aim_hit_newest(&mut app);
+    let _ = app.update(aim(AimMessage::Stop));
+
+    let AimPhase::Over {
+        new_best,
+        previous_best,
+        ..
+    } = &app.aim.phase
+    else {
+        panic!("over");
+    };
+    assert!(*new_best);
+    assert_eq!(previous_best.map(|run| run.score), Some(1));
+    assert_eq!(app.state.aim_trainer.best.map(|run| run.score), Some(2));
+
+    app.state.aim_trainer.best = Some(best(5));
+    let _ = app.update(aim(AimMessage::Start));
+    let _ = app.update(aim(AimMessage::Stop));
+    let AimPhase::Over { new_best, .. } = &app.aim.phase else {
+        panic!("over");
+    };
+    assert!(!*new_best);
+    assert_eq!(app.state.aim_trainer.best.map(|run| run.score), Some(5));
+}
+
+#[test]
+fn aim_run_pauses_on_focus_loss_and_resumes() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+    let _ = app.update(aim(AimMessage::Start));
+    aim_frames(&mut app, 0);
+    aim_hit_newest(&mut app);
+
+    let _ = app.update(aim(AimMessage::FocusLost));
+    assert!(matches!(app.aim.phase, AimPhase::Paused(_)));
+    let _ = app.update(aim(AimMessage::SensitivityChanged("2".into())));
+    assert_eq!(
+        app.state.aim_trainer.sensitivity,
+        Some(0.34),
+        "read-only while paused"
+    );
+
+    let _ = app.update(aim(AimMessage::Start));
+    let AimPhase::Playing(game) = &app.aim.phase else {
+        panic!("resumed");
+    };
+    assert_eq!(game.score(), 1, "resuming keeps the run");
+}
+
+#[test]
+fn aim_run_ends_when_leaving_the_tab_and_pauses_when_closing() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+    let _ = app.update(aim(AimMessage::Start));
+    let _ = app.update(Message::TabSelected(Tab::Settings));
+    assert!(matches!(app.aim.phase, AimPhase::Over { .. }));
+
+    let _ = app.update(Message::TabSelected(Tab::AimTrainer));
+    let _ = app.update(aim(AimMessage::Start));
+    let _ = app.update(Message::CloseRequested(iced::window::Id::unique()));
+    assert!(
+        matches!(app.aim.phase, AimPhase::Paused(_)),
+        "closing releases the cursor first"
+    );
+}
+
+#[test]
+fn aim_arena_of_zero_size_is_ignored() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let _ = app.update(Message::TabSelected(Tab::AimTrainer));
+    let _ = app.update(aim(AimMessage::SensitivityChanged("0.34".into())));
+    let _ = app.update(aim(AimMessage::ArenaResized(iced::Size::ZERO)));
+    assert!(!app.aim.can_start(), "no arena to play in yet");
+
+    let mut app = aim_app(dir.path());
+    let _ = app.update(aim(AimMessage::Start));
+    let before = app.aim.phase.game().expect("game").view();
+    let _ = app.update(aim(AimMessage::ArenaResized(iced::Size::ZERO)));
+    assert_eq!(app.aim.phase.game().expect("game").view(), before);
+}
+
+#[test]
+fn aim_run_ends_when_a_login_capture_jumps_to_accounts() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+    let _ = app.update(aim(AimMessage::Start));
+
+    // The capture-complete messages need a live login capture, so call the shared jump directly.
+    let _ = app.show_accounts_tab_top();
+
+    assert_eq!(app.active_tab, Tab::Accounts);
+    assert!(matches!(app.aim.phase, AimPhase::Over { .. }));
+}
+
+#[test]
+fn aim_run_ends_with_an_error_when_raw_input_is_unavailable() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+    let _ = app.update(aim(AimMessage::Start));
+    let _ = app.update(aim(AimMessage::RawInputUnavailable));
+    assert!(matches!(app.aim.phase, AimPhase::Over { .. }));
+    assert_eq!(app.status.kind, StatusKind::Error);
+    assert!(app.status.text.contains("Raw mouse input"));
+}
+
+#[test]
+fn aim_esc_closes_a_dialog_before_stopping_a_paused_run() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+    let _ = app.update(aim(AimMessage::Start));
+    let _ = app.update(aim(AimMessage::FocusLost));
+    app.confirm_quit = Some(QuitAction::Exit);
+
+    let _ = app.update(Message::EscapePressed);
+    assert!(app.confirm_quit.is_none(), "the dialog closes first");
+    assert!(matches!(app.aim.phase, AimPhase::Paused(_)));
+
+    let _ = app.update(Message::EscapePressed);
+    assert!(matches!(app.aim.phase, AimPhase::Over { .. }));
 }

@@ -202,6 +202,7 @@ impl PrimeApp {
             self.tab_button(Tab::Accounts),
             self.tab_button(Tab::Shop),
             self.tab_button(Tab::Loadout),
+            self.tab_button(Tab::AimTrainer),
             self.tab_button(Tab::Settings),
         ]
         .spacing(2);
@@ -587,6 +588,7 @@ impl PrimeApp {
             Tab::LiveMatch => 24.0,
             Tab::Shop => 26.0,
             Tab::Loadout => 20.0,
+            Tab::AimTrainer => 20.0,
             Tab::Settings => 32.0,
         }
     }
@@ -714,6 +716,7 @@ impl PrimeApp {
             Tab::Accounts => theme::Icon::Users,
             Tab::Shop => theme::Icon::ShoppingBag,
             Tab::Loadout => theme::Icon::Swords,
+            Tab::AimTrainer => theme::Icon::Crosshair,
             Tab::Settings => theme::Icon::Settings,
             // Live Match has no nav item; the sidebar's live match indicator opens it.
             Tab::LiveMatch => theme::Icon::ChevronRight,
