@@ -30,7 +30,7 @@ the three new frames show it; the `C / Sidebar` component gets it when this ship
   pointer speed and "Enhance pointer precision" are set to.
 - Dots sit where they would on screen in VALORANT at 103° horizontal FOV on this monitor, so a flick
   to a dot takes the same hand movement as in game.
-- Sensitivity fills in from the selected account's saved VALORANT settings, and can be typed over.
+- Sensitivity is a plain field the player types; the last value is saved.
 - One best run for the whole app.
 - No new crates.
 
@@ -95,8 +95,7 @@ command. So:
 
 ## States
 
-- Ready: setup modal. Sensitivity field with a "From settings" chip while it shows the account's
-  saved value, Mouse DPI, eDPI / cm per 360° / FOV tiles, the best run, "Raw input · Esc to stop"
+- Ready: setup modal. Sensitivity and Mouse DPI fields, eDPI / cm per 360° / FOV tiles, the best run, "Raw input · Esc to stop"
   and Start. Start is disabled while the sensitivity isn't a positive number.
 - Playing: HUD, arena, dots, crosshair, "Esc to stop". The game advances on `window::frames()`.
 - Paused: losing window focus (`window::Event::Unfocused`) pauses the clock, releases the cursor
@@ -109,14 +108,12 @@ command. So:
 
 ## Sensitivity and DPI
 
-- Opening the tab reads the selected account's VALORANT settings the way settings profiles do
-  (`resolve_settings_context`, `fetch_settings_document`, then `summary().sensitivity`). This needs
-  the account's captured session; if it fails, the field is empty with the reason under it, and
-  typing a value works.
-- Typing a sensitivity drops the "From settings" chip. The typed value lasts until the account
-  changes or Prime closes; it isn't saved.
-- Mouse DPI only feeds cm/360 and the results line. It defaults to 800 and is saved app-wide.
-- cm/360 = `360 / (0.07 × sens) / dpi × 2.54`; eDPI = `sens × dpi`.
+- Both are plain text fields. Each valid edit is saved, so the fields open with the last values.
+  Nothing is read from the account or from Riot.
+- Sensitivity starts empty (placeholder "e.g. 0.35"); Start stays disabled until it is a positive
+  number. DPI defaults to 800.
+- cm/360 = `360 / (0.07 × sens) / dpi × 2.54`; eDPI = `sens × dpi`. DPI only feeds these and the
+  results line.
 
 ## Storage
 
@@ -127,6 +124,7 @@ command. So:
 pub aim_trainer: AimTrainerState,
 
 pub struct AimTrainerState {
+    pub sensitivity: Option<f64>, // None until the player types one
     pub dpi: Option<u32>,         // None = 800
     pub best: Option<AimRun>,
 }
@@ -163,8 +161,8 @@ Accuracy is worked out from score and misses, not stored.
   and costs 15, a miss costs 5, hits score and record reaction time, the spawn interval steps,
   the run ends at 0 health, results and accuracy.
 - `storage.rs`: a default `AimTrainerState` isn't written; DPI and a best run round-trip.
-- `src/ui/tests.rs`: opening the tab requests the account's settings; a fetched sensitivity fills
-  the field with the chip; typing removes the chip; Start is disabled for an invalid sensitivity;
+- `src/ui/tests.rs`: opening the tab sends no requests; typing a sensitivity or DPI saves it and
+  the fields open with it; Start is disabled for an empty or invalid sensitivity;
   Esc ends a run and shows results; a higher score replaces the best and saves, a lower one doesn't;
   losing focus pauses; leaving the tab ends the run.
 - `raw_mouse.rs` has no unit tests (it is Windows message plumbing); it's checked by hand: with
