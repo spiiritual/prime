@@ -179,6 +179,21 @@ pub(in crate::ui) async fn cache_loadout_images(
     download_icons(downloads).await;
 }
 
+/// A battle pass chapter's reward art, fetched when the chapter opens.
+pub(in crate::ui) async fn cache_battle_pass_reward_icons(
+    mut rewards: Vec<BattlePassRewardDisplay>,
+    image_cache: ImageCache,
+) -> Vec<BattlePassRewardDisplay> {
+    let downloads = rewards
+        .iter_mut()
+        .map(|reward| -> IconDownload<'_> {
+            Box::pin(cache_battle_pass_reward_icon(reward, &image_cache))
+        })
+        .collect();
+    download_icons(downloads).await;
+    rewards
+}
+
 type IconDownload<'a> = std::pin::Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 
 async fn download_icons(downloads: Vec<IconDownload<'_>>) {

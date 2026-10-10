@@ -40,8 +40,9 @@ Accounts tab:
 Shop tab: featured bundles (each with its own countdown), daily offers, Night Market and accessories, with
 art, rarity colours and discounts. The wallet balance shows in the header.
 
-Loadout tab: equipped gun skins in the in-game collection order, and a Battle Pass sub-tab with tier
-progress and rewards.
+Loadout tab: equipped gun skins in the in-game collection order, and a Battle Pass sub-tab sized to
+the window: the tier reached, the pass's completion and a rail of chapters on top, the open chapter's
+rewards (the current one first; others' art loads when opened), and the next weapon skins ahead.
 
 Live Match: while the selected account is in agent select or a match, a sidebar indicator shows the
 map and score and opens the Live Match page (it has no nav item and no Launch button). The page

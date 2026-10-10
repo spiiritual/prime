@@ -2125,6 +2125,49 @@ impl PrimeApp {
                 self.bundle_details = None;
                 Task::none()
             }
+            Message::BattlePassChapterSelected(index) => {
+                let Some(battle_pass) = self
+                    .loadout_summary
+                    .as_mut()
+                    .and_then(|summary| summary.battle_pass.as_mut())
+                    .filter(|battle_pass| index < battle_pass.chapters.len())
+                else {
+                    return Task::none();
+                };
+                battle_pass.selected_chapter = index;
+                let rewards = &battle_pass.chapters[index].rewards;
+                if rewards
+                    .iter()
+                    .all(|reward| reward.cached_icon.is_some() || reward.display_icon.is_none())
+                {
+                    return Task::none();
+                }
+                Task::perform(
+                    super::data::image_assets::cache_battle_pass_reward_icons(
+                        rewards.clone(),
+                        self.image_cache.clone(),
+                    ),
+                    move |rewards| Message::BattlePassChapterArtLoaded(index, rewards),
+                )
+            }
+            Message::BattlePassChapterArtLoaded(index, rewards) => {
+                // Only onto the same chapter of the same pass, in case it reloaded meanwhile.
+                if let Some(chapter) = self
+                    .loadout_summary
+                    .as_mut()
+                    .and_then(|summary| summary.battle_pass.as_mut())
+                    .and_then(|battle_pass| battle_pass.chapters.get_mut(index))
+                    && chapter.rewards.len() == rewards.len()
+                    && chapter
+                        .rewards
+                        .iter()
+                        .zip(&rewards)
+                        .all(|(shown, loaded)| shown.uuid == loaded.uuid)
+                {
+                    chapter.rewards = rewards;
+                }
+                Task::none()
+            }
             Message::RiotClientPathChanged(value) => {
                 self.riot_client_path_input = value;
                 Task::none()

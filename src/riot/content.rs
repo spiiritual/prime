@@ -329,7 +329,6 @@ pub struct ResolvedContractReward {
     pub kind: String,
     pub uuid: String,
     pub amount: i64,
-    pub highlighted: bool,
 }
 
 impl From<ContractReward> for ResolvedContractReward {
@@ -338,7 +337,6 @@ impl From<ContractReward> for ResolvedContractReward {
             kind: reward.kind,
             uuid: reward.uuid,
             amount: reward.amount,
-            highlighted: reward.highlighted,
         }
     }
 }
@@ -978,8 +976,6 @@ pub struct ContractReward {
     pub uuid: String,
     #[serde(default)]
     pub amount: i64,
-    #[serde(default, rename = "isHighlighted")]
-    pub highlighted: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]

@@ -32,7 +32,7 @@ pub(super) fn tab(app: &PrimeApp, tab: Tab) -> Element<'_, Message> {
     }
 }
 
-/// Whether the tab shows a state that fills the page, centred, instead of scrolling content.
+/// Whether the tab fills the page, without scrolling: a centred state, or a page sized to the window.
 pub(super) fn fills_page(app: &PrimeApp, tab: Tab) -> bool {
     match tab {
         Tab::Shop => shop::fills_page(app),

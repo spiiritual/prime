@@ -356,7 +356,7 @@ impl overlay::Overlay<Message, Theme, Renderer> for AnchoredOverlay<'_, '_> {
 
 pub(super) fn asset_image<'a>(
     path: Option<&'a PathBuf>,
-    height: f32,
+    height: impl Into<Length>,
     title: impl Into<String>,
     high_res: Option<ImageViewerSource>,
 ) -> Element<'a, Message> {
@@ -366,12 +366,13 @@ pub(super) fn asset_image<'a>(
 /// `asset_image` drawn at `opacity`, such as a default skin set back from the rest.
 pub(super) fn faded_asset_image<'a>(
     path: Option<&'a PathBuf>,
-    height: f32,
+    height: impl Into<Length>,
     title: impl Into<String>,
     high_res: Option<ImageViewerSource>,
     opacity: f32,
 ) -> Element<'a, Message> {
     let title = title.into();
+    let height = height.into();
 
     match path {
         Some(path) => preview_image_button(
@@ -414,7 +415,7 @@ pub(super) fn asset_background_image<'a>(
     }
 }
 
-fn no_image_placeholder<'a>(height: f32) -> Element<'a, Message> {
+fn no_image_placeholder<'a>(height: impl Into<Length>) -> Element<'a, Message> {
     container(text("No image").size(13))
         .width(Length::Fill)
         .height(height)
@@ -427,7 +428,7 @@ fn no_image_placeholder<'a>(height: f32) -> Element<'a, Message> {
 fn preview_image_button<'a>(
     image: impl Into<Element<'a, Message>>,
     path: &Path,
-    height: f32,
+    height: impl Into<Length> + Copy,
     title: String,
     high_res: Option<ImageViewerSource>,
 ) -> Element<'a, Message> {
@@ -628,7 +629,7 @@ pub(super) fn card_style(radius: f32) -> container::Style {
 /// A placeholder block while content loads.
 pub(super) fn skeleton<'a>(
     width: impl Into<Length>,
-    height: f32,
+    height: impl Into<Length>,
     radius: f32,
     opacity: f32,
 ) -> Element<'a, Message> {

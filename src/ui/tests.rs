@@ -26,8 +26,9 @@ use super::data::live_match::{
     LiveMatch, LiveMatchError, LiveMatchResult, MatchPhase, shown_weapons,
 };
 use super::data::loadout::{
-    BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutResult, LoadoutSummary,
-    battle_pass_progress_from_responses, combine_loadout_sections, weapon_category, weapon_order,
+    BattlePassChapterDisplay, BattlePassProgressDisplay, BattlePassRewardDisplay, LoadoutResult,
+    LoadoutSummary, battle_pass_progress_from_responses, combine_loadout_sections, weapon_category,
+    weapon_order,
 };
 use super::data::non_empty_path;
 use super::data::session::{
@@ -1566,7 +1567,7 @@ fn battle_pass_progress_uses_story_contract_and_active_act() {
     .expect("battle pass progress");
 
     assert_eq!(progress.title(), "Act 3 Battle Pass");
-    assert_eq!(progress.tier_label(), "Tier 2 of 4");
+    assert_eq!(progress.tier_display(), ("TIER", 2, Some(4)));
     assert_eq!(progress.next_tier_label(), "2,500 / 3,000 XP");
     assert!((progress.progress_fraction() - 0.5).abs() < f32::EPSILON);
     assert!(progress.remaining_seconds.is_some());
@@ -1628,7 +1629,12 @@ fn epilogue_tiers_are_counted_apart_from_the_main_pass() {
     )
     .expect("battle pass progress");
 
-    assert_eq!(progress.tier_label(), "Tier 4 of 4 + Epilogue 1 of 2");
+    assert_eq!(progress.tier_display(), ("EPILOGUE", 1, Some(2)));
+    let epilogue = &progress.chapters[1];
+    assert_eq!(epilogue.name(), "Epilogue 1");
+    assert_eq!(epilogue.short_name(), "EP 1");
+    assert_eq!(progress.chapter_tiers_label(epilogue), "Epilogue 1–2");
+    assert_eq!(progress.selected_chapter, 1);
     assert!((progress.progress_fraction() - 1.0).abs() < f32::EPSILON);
     assert_eq!(progress.next_tier_label(), "1,000 / 5,000 XP");
 }
@@ -1705,7 +1711,7 @@ fn an_older_battle_pass_does_not_borrow_the_current_acts_name_or_countdown() {
 }
 
 #[test]
-fn battle_pass_progress_separates_free_unearned_and_locked_paid_rewards() {
+fn battle_pass_rewards_group_by_chapter_and_premium_ones_need_the_premium_pass() {
     let contracts: ContractsResponse = serde_json::from_value(serde_json::json!({
         "Version": 1,
         "Subject": "puuid",
@@ -1742,7 +1748,6 @@ fn battle_pass_progress_separates_free_unearned_and_locked_paid_rewards() {
                                 kind: "EquippableSkinLevel".to_string(),
                                 uuid: "paid-tier-one".to_string(),
                                 amount: 1,
-                                highlighted: false,
                             }),
                             xp: Some(0),
                         },
@@ -1751,7 +1756,6 @@ fn battle_pass_progress_separates_free_unearned_and_locked_paid_rewards() {
                                 kind: "EquippableSkinLevel".to_string(),
                                 uuid: "paid-tier-two".to_string(),
                                 amount: 1,
-                                highlighted: true,
                             }),
                             xp: Some(2_000),
                         },
@@ -1760,7 +1764,6 @@ fn battle_pass_progress_separates_free_unearned_and_locked_paid_rewards() {
                         kind: "Title".to_string(),
                         uuid: "free-title".to_string(),
                         amount: 1,
-                        highlighted: false,
                     }]),
                 },
                 ContractChapter {
@@ -1773,7 +1776,6 @@ fn battle_pass_progress_separates_free_unearned_and_locked_paid_rewards() {
                         kind: "Title".to_string(),
                         uuid: "future-free-title".to_string(),
                         amount: 1,
-                        highlighted: false,
                     }]),
                 },
             ],
@@ -1803,11 +1805,36 @@ fn battle_pass_progress_separates_free_unearned_and_locked_paid_rewards() {
     )
     .expect("battle pass progress");
 
-    assert_eq!(progress.earned_rewards.len(), 1);
-    assert_eq!(progress.earned_rewards[0].name, "free-title");
-    assert_eq!(progress.unearned_rewards.len(), 1);
-    assert_eq!(progress.unearned_rewards[0].name, "future-free-title");
-    assert_eq!(progress.locked_paid_rewards.len(), 2);
+    let names = |chapter: &BattlePassChapterDisplay| -> Vec<String> {
+        chapter
+            .rewards
+            .iter()
+            .map(|reward| reward.name.clone())
+            .collect()
+    };
+    assert_eq!(progress.chapters.len(), 2);
+    // Each tier's premium reward, then the chapter's free ones.
+    assert_eq!(
+        names(&progress.chapters[0]),
+        ["paid-tier-one", "paid-tier-two", "free-title"]
+    );
+    assert_eq!(names(&progress.chapters[1]), ["future-free-title"]);
+    assert_eq!(
+        progress.chapter_tiers_label(&progress.chapters[0]),
+        "Tiers 1–2"
+    );
+
+    let earned: Vec<_> = progress.chapters[0]
+        .rewards
+        .iter()
+        .map(|reward| progress.is_earned(reward))
+        .collect();
+    assert_eq!(earned, [false, false, true]);
+    assert!(progress.is_locked(&progress.chapters[0].rewards[0]));
+    assert!(!progress.is_earned(&progress.chapters[1].rewards[0]));
+    // Tier 3 is next, so its chapter opens first.
+    assert_eq!(progress.next_tier(), Some(3));
+    assert_eq!(progress.selected_chapter, 1);
     assert_eq!(progress.pass_label(), "Free");
 }
 
@@ -1848,7 +1875,6 @@ fn battle_pass_currency_rewards_show_amount_in_name() {
                         kind: "Currency".to_string(),
                         uuid: radianite_uuid.to_string(),
                         amount: 1,
-                        highlighted: false,
                     }),
                     xp: Some(2_000),
                 }],
@@ -1885,9 +1911,11 @@ fn battle_pass_currency_rewards_show_amount_in_name() {
     )
     .expect("battle pass progress");
 
-    assert_eq!(progress.earned_rewards.len(), 1);
-    assert_eq!(progress.earned_rewards[0].name, "10 Radianite");
-    assert_eq!(progress.earned_rewards[0].amount_label(), None);
+    let reward = &progress.chapters[0].rewards[0];
+    assert_eq!(reward.name, "10 Radianite");
+    assert!(progress.is_earned(reward));
+    assert_eq!(reward.amount_label(), None);
+    assert_eq!(progress.reward_tier_label(reward), "Tier 1");
 }
 
 #[test]
@@ -4465,47 +4493,115 @@ fn battle_pass_display() -> BattlePassProgressDisplay {
         total_progression_required: None,
         completed: false,
         remaining_seconds: None,
-        earned_rewards: Vec::new(),
-        unearned_rewards: Vec::new(),
-        locked_paid_rewards: Vec::new(),
+        chapters: Vec::new(),
+        selected_chapter: 0,
         paid_pass_owned: false,
         loaded_at: iced::time::Instant::now(),
     }
 }
 
-#[test]
-fn only_the_battle_pass_rewards_on_screen_get_their_art_downloaded() {
+/// Ten chapters of 5 tiers, each tier with a spray, and a weapon skin at tier 23 and tier 48.
+fn battle_pass_with_chapters() -> BattlePassProgressDisplay {
     let reward = |tier: i64| BattlePassRewardDisplay {
         tier,
         is_epilogue: false,
+        free: false,
         uuid: format!("reward-{tier}"),
         name: format!("Reward {tier}"),
-        kind: "Spray".to_string(),
+        kind: if tier == 23 || tier == 48 {
+            "Weapon skin"
+        } else {
+            "Spray"
+        }
+        .to_string(),
         amount: 1,
-        highlighted: false,
         display_icon: Some(format!("https://example.test/{tier}.png")),
         viewer_icon: None,
         cached_icon: None,
     };
-    let mut battle_pass = BattlePassProgressDisplay {
-        earned_rewards: (1..=30).map(reward).collect(),
-        unearned_rewards: (31..=50).map(reward).collect(),
-        locked_paid_rewards: (51..=60).map(reward).collect(),
+    BattlePassProgressDisplay {
+        level_reached: 12,
+        chapters: (0..10)
+            .map(|index| BattlePassChapterDisplay {
+                number: index + 1,
+                is_epilogue: false,
+                first_tier: index * 5 + 1,
+                last_tier: index * 5 + 5,
+                rewards: (index * 5 + 1..=index * 5 + 5).map(reward).collect(),
+            })
+            .collect(),
+        selected_chapter: 2,
         ..battle_pass_display()
-    };
+    }
+}
+
+#[test]
+fn only_the_battle_pass_rewards_on_screen_get_their_art_downloaded() {
+    let mut battle_pass = battle_pass_with_chapters();
 
     let shown: Vec<i64> = battle_pass
         .shown_rewards_mut()
         .map(|reward| reward.tier)
         .collect();
 
-    // The latest 6 earned, then the first 6 up next and the first 6 locked.
-    let expected: Vec<i64> = (25..=36).chain(51..=56).collect();
-    assert_eq!(shown, expected);
+    // The open chapter, then the weapon skins not reached yet.
+    assert_eq!(shown, [11, 12, 13, 14, 15, 23, 48]);
 }
 
 #[test]
-fn only_the_loadout_sub_tab_that_failed_or_is_empty_fills_the_page() {
+fn opening_a_battle_pass_chapter_downloads_its_art_once() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.image_cache = crate::image_cache::ImageCache::new(dir.path().join("images"));
+    app.loadout_summary = Some(LoadoutSummary {
+        battle_pass: Some(battle_pass_with_chapters()),
+        ..loaded_loadout()
+    });
+    let battle_pass = |app: &PrimeApp| {
+        app.loadout_summary
+            .as_ref()
+            .and_then(|summary| summary.battle_pass.clone())
+            .expect("battle pass")
+    };
+
+    let task = app.update(Message::BattlePassChapterSelected(5));
+    assert_eq!(battle_pass(&app).selected_chapter, 5);
+    assert!(task.units() > 0);
+
+    // A chapter past the end changes nothing.
+    let task = app.update(Message::BattlePassChapterSelected(10));
+    assert_eq!(battle_pass(&app).selected_chapter, 5);
+    assert_eq!(task.units(), 0);
+
+    let mut loaded = battle_pass(&app).chapters[5].rewards.clone();
+    for reward in &mut loaded {
+        reward.cached_icon = Some(PathBuf::from(format!("{}.png", reward.uuid)));
+    }
+    // Art for a different chapter's rewards isn't applied.
+    let _ = app.update(Message::BattlePassChapterArtLoaded(4, loaded.clone()));
+    assert!(
+        battle_pass(&app).chapters[4]
+            .rewards
+            .iter()
+            .all(|reward| reward.cached_icon.is_none())
+    );
+
+    let _ = app.update(Message::BattlePassChapterArtLoaded(5, loaded));
+    assert!(
+        battle_pass(&app).chapters[5]
+            .rewards
+            .iter()
+            .all(|reward| reward.cached_icon.is_some())
+    );
+
+    // Back to a chapter whose art is already here: no download.
+    let _ = app.update(Message::BattlePassChapterSelected(2));
+    let task = app.update(Message::BattlePassChapterSelected(5));
+    assert_eq!(task.units(), 0);
+}
+
+#[test]
+fn the_battle_pass_and_a_failed_loadout_sub_tab_fill_the_page() {
     let dir = tempdir().expect("temp dir");
     let (mut app, _, _) = two_account_app(dir.path());
     // No battle pass progress this act: the loadout loaded and the battle pass is simply absent.
@@ -4524,6 +4620,9 @@ fn only_the_loadout_sub_tab_that_failed_or_is_empty_fills_the_page() {
     let _ = app.update(Message::RetryLoadout);
 
     assert!(!super::screens::fills_page(&app, super::Tab::Loadout));
+    // The battle pass is sized to the window even while it loads.
+    app.active_loadout_tab = super::LoadoutTab::BattlePass;
+    assert!(super::screens::fills_page(&app, super::Tab::Loadout));
 }
 
 #[test]

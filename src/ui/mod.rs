@@ -1095,6 +1095,10 @@ enum Message {
     /// A bundle's item art finished caching, by the bundle's store ID.
     BundleItemArtLoaded(String, Vec<data::shop::BundleItemDisplay>),
     CloseBundleDetails,
+    /// Opens a battle pass chapter, by its index.
+    BattlePassChapterSelected(usize),
+    /// A battle pass chapter's reward art finished caching, by the chapter's index.
+    BattlePassChapterArtLoaded(usize, Vec<data::loadout::BattlePassRewardDisplay>),
     RiotClientPathChanged(String),
     BrowseRiotClientPath,
     RiotClientPathPicked(Option<PathBuf>),
