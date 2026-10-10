@@ -776,14 +776,15 @@ impl AccessoryCatalog {
             );
         }
 
+        // A title's display name ends in " Title" ("Salty Title"); its text is just "Salty".
         for title in player_titles {
-            let fallback = title.title_text.as_deref().unwrap_or(&title.uuid);
-            let display_name = title.display_name.as_deref().unwrap_or_default();
+            let fallback = title.display_name.as_deref().unwrap_or(&title.uuid);
+            let title_text = title.title_text.as_deref().unwrap_or_default();
             by_uuid.insert(
                 normalize_uuid(&title.uuid),
                 ResolvedAccessory {
                     uuid: title.uuid.clone(),
-                    display_name: display_name_with_fallback(display_name, fallback),
+                    display_name: display_name_with_fallback(title_text, fallback),
                     display_icon: None,
                     viewer_icon: None,
                 },
@@ -1601,7 +1602,7 @@ mod tests {
             }],
             vec![PlayerTitle {
                 uuid: "title-uuid".to_string(),
-                display_name: Some("Penguin".to_string()),
+                display_name: Some("Penguin Title".to_string()),
                 title_text: Some("Penguin".to_string()),
             }],
         );
