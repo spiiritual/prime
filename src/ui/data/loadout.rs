@@ -636,8 +636,14 @@ fn resolve_battle_pass_reward(
             ResolvedBattlePassReward {
                 name: accessory.display_name,
                 kind: "Player card".to_string(),
-                // The card's tall art, which suits a reward card better than its square icon.
-                display_icon: accessory.viewer_icon.clone(),
+                // The card's wide banner, which fills a reward tile, at the fixed URL the Accounts
+                // banner uses too. A card missing from the catalog has no art.
+                display_icon: accessory.display_icon.is_some().then(|| {
+                    format!(
+                        "https://media.valorant-api.com/playercards/{}/wideart.png",
+                        accessory.uuid
+                    )
+                }),
                 viewer_icon: accessory.viewer_icon,
             }
         }

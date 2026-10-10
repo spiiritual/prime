@@ -1,6 +1,6 @@
 use iced::widget::text::Wrapping;
 use iced::widget::{Column, Row, column, container, row, space, stack};
-use iced::{Color, Element, Length, Padding, alignment};
+use iced::{Color, Element, Length, alignment};
 
 use crate::ui::components::{
     card_style, empty_state, faded_asset_image, high_res_image_source, mono, outlined, radial_glow,
@@ -43,7 +43,9 @@ const CURRENT_PIP_ALPHA: f32 = 0x55 as f32 / 255.0;
 const EPILOGUE_PIP: Color = iced::color!(0x1E232C);
 const SELECTED_CHAPTER_ALPHA: f32 = 0x14 as f32 / 255.0;
 const SELECTED_CHAPTER_BORDER_ALPHA: f32 = 0x66 as f32 / 255.0;
-const REWARD_INFO_HEIGHT: f32 = 81.0;
+const REWARD_INFO_HEIGHT: f32 = 44.0;
+/// The current tile's XP bar, which fits "38,749 / 38,750 XP" below it.
+const TIER_PROGRESS_WIDTH: f32 = 140.0;
 const REWARD_ART_BACKGROUND: Color = iced::color!(0x0F1217);
 /// Premium rewards without the premium pass.
 const LOCKED_ART_OPACITY: f32 = 0.35;
@@ -53,8 +55,6 @@ const EARNED_BADGE: Color = iced::color!(0x1B372A);
 const FREE_TAG_BACKGROUND: Color = iced::color!(0x4CC974, 0x1F as f32 / 255.0);
 const FREE_TAG_BORDER: Color = iced::color!(0x4CC974, 0x55 as f32 / 255.0);
 const LOCKED_TAG_BACKGROUND: Color = iced::color!(0x0B0D11, 0xCC as f32 / 255.0);
-/// A title's letters times its text size that fit a card's art, 7 cards to a row.
-const TITLE_ART_SCALE: f32 = 130.0;
 
 pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     if shows_state(app) {
@@ -542,8 +542,8 @@ fn pass_gradient() -> iced::gradient::Linear {
         .add_stop(1.0, PASS_BAR_END)
 }
 
-/// The chapter's name and tiers, buttons to the chapters either side, and its rewards: each
-/// premium tier's, then the free ones past a divider.
+/// The chapter's name and tiers, buttons to the chapters either side, and its rewards in a grid
+/// of wide tiles: each premium tier's, then the free ones.
 fn chapter_section<'a>(
     battle_pass: &'a BattlePassProgressDisplay,
     chapter: &'a BattlePassChapterDisplay,
@@ -618,34 +618,31 @@ fn chapter_section<'a>(
     ]
     .align_y(alignment::Vertical::Center);
 
-    let (free, premium): (Vec<_>, Vec<_>) = chapter.rewards.iter().partition(|reward| reward.free);
-    let mut cards = Row::with_children(
-        premium
-            .into_iter()
-            .map(|reward| reward_card(battle_pass, reward, chapter.art_loading)),
-    )
+    // Two to a row, or three when a chapter has more rewards than 3 rows hold.
+    let columns = if chapter.rewards.len() > 6 { 3 } else { 2 };
+    let tiles = Column::with_children(chapter.rewards.chunks(columns).map(|rewards| {
+        Row::with_children(
+            rewards
+                .iter()
+                .map(|reward| reward_tile(battle_pass, reward, chapter.art_loading))
+                // Empty slots keep a short row's tiles the same width as a full row's.
+                .chain((rewards.len()..columns).map(|_| space().width(Length::Fill).into())),
+        )
+        .spacing(10)
+        .height(Length::Fill)
+        .into()
+    }))
     .spacing(10)
     .height(Length::Fill);
-    if !free.is_empty() {
-        cards = cards.push(
-            container(space())
-                .width(1)
-                .height(Length::Fill)
-                .style(|_| container::Style::default().background(theme::LINE)),
-        );
-        cards = cards.extend(
-            free.into_iter()
-                .map(|reward| reward_card(battle_pass, reward, chapter.art_loading)),
-        );
-    }
 
-    column![head, cards].spacing(12).height(Length::Fill).into()
+    column![head, tiles].spacing(12).height(Length::Fill).into()
 }
 
-/// A reward's art filling the card, with its name and tier below. Earned rewards carry a check,
-/// free ones a FREE tag, and premium ones without the pass a PREMIUM tag over dimmed art. The tier
-/// being worked on is outlined and shows the XP towards it.
-fn reward_card<'a>(
+/// A reward's art filling a wide tile, which suits weapon skins and player card banners, with its
+/// name and tier below. Earned rewards carry a check, free ones a FREE tag, and premium ones
+/// without the pass a PREMIUM tag over dimmed art. The tier being worked on is outlined and shows
+/// the XP towards it.
+fn reward_tile<'a>(
     battle_pass: &'a BattlePassProgressDisplay,
     reward: &'a BattlePassRewardDisplay,
     art_loading: bool,
@@ -654,19 +651,11 @@ fn reward_card<'a>(
     let locked = battle_pass.is_locked(reward);
     let current = !reward.free && battle_pass.next_tier() == Some(reward.tier);
 
-    // Titles have no picture, so their text stands in for one, small enough that its longest
-    // word fits a card. ponytail: sized by letter count, not measured; WordOrGlyph catches the rest.
+    // Titles have no picture, so their text stands in for one.
     let picture = if reward.cached_icon.is_none() && reward.kind == "Title" {
-        let longest = reward
-            .name
-            .split_whitespace()
-            .map(|word| word.chars().count())
-            .max()
-            .unwrap_or(1);
         container(
             text(reward.name.to_uppercase())
-                .size((TITLE_ART_SCALE / longest as f32).clamp(12.0, 22.0))
-                .wrapping(Wrapping::WordOrGlyph)
+                .size(22)
                 .font(theme::DISPLAY_FONT)
                 .line_height(1.1)
                 .color(theme::GOLD)
@@ -718,7 +707,7 @@ fn reward_card<'a>(
 
     let mut art = stack![
         container(picture)
-            .padding(14)
+            .padding(12)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(|_| {
@@ -731,54 +720,55 @@ fn reward_card<'a>(
         art = art.push(container(badge).padding(8));
     }
 
-    let name = text(&reward.name)
-        .size(12)
-        .font(theme::SEMIBOLD_FONT)
-        .color(if locked { theme::MUTED } else { theme::TEXT });
-    let mut info = column![
-        // The current card's progress takes the room a second line of name would.
-        if current { one_line(name) } else { name.into() },
-        mono(battle_pass.reward_tier_label(reward), 10).color(theme::FAINT),
+    let mut info = row![
+        column![
+            one_line(
+                text(&reward.name)
+                    .size(12)
+                    .font(theme::SEMIBOLD_FONT)
+                    .color(if locked { theme::MUTED } else { theme::TEXT })
+            ),
+            mono(battle_pass.reward_tier_label(reward), 10).color(theme::FAINT),
+        ]
+        .spacing(2)
+        .width(Length::Fill),
     ]
-    .spacing(3);
+    .spacing(12)
+    .padding([0, 12])
+    .height(REWARD_INFO_HEIGHT)
+    .align_y(alignment::Vertical::Center);
     if current {
         info = info.push(
             column![
                 tier_bar(battle_pass.next_tier_fraction()),
-                one_line(mono(battle_pass.next_tier_label(), 10).font(theme::MONO_SEMIBOLD_FONT)),
+                mono(battle_pass.next_tier_label(), 10)
+                    .font(theme::MONO_SEMIBOLD_FONT)
+                    .wrapping(Wrapping::None),
             ]
             .spacing(5)
-            .padding(Padding::default().top(7)),
+            .width(TIER_PROGRESS_WIDTH),
         );
     }
 
-    container(column![
-        art,
-        // 9px sides leave room for "38,749 / 38,750 XP" on a card 7 to a row.
-        container(info)
-            .padding(9)
-            .width(Length::Fill)
-            .height(REWARD_INFO_HEIGHT)
-            .clip(true),
-    ])
-    // The art is opaque, so it sits inside the border rather than over it.
-    .padding(1)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .clip(true)
-    .style(move |_| {
-        let style = card_style(10.0);
-        if current {
-            style.border(iced::Border {
-                color: theme::ACCENT,
-                width: 1.0,
-                radius: 10.0.into(),
-            })
-        } else {
-            style
-        }
-    })
-    .into()
+    container(column![art, info])
+        // The art is opaque, so it sits inside the border rather than over it.
+        .padding(1)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .clip(true)
+        .style(move |_| {
+            let style = card_style(10.0);
+            if current {
+                style.border(iced::Border {
+                    color: theme::ACCENT,
+                    width: 1.0,
+                    radius: 10.0.into(),
+                })
+            } else {
+                style
+            }
+        })
+        .into()
 }
 
 /// A small label in a box over a card's art.
@@ -933,12 +923,14 @@ fn skins_loading<'a>() -> Element<'a, Message> {
 
 /// The battle pass's shape in placeholders while it loads.
 fn battle_pass_loading<'a>() -> Element<'a, Message> {
-    let cards =
-        Row::with_children((0..5).map(|_| skeleton(Length::Fill, Length::Fill, 10.0, 0.85)))
-            .push(skeleton(1, Length::Fill, 0.0, 1.0))
-            .push(skeleton(Length::Fill, Length::Fill, 10.0, 0.85))
+    let tiles = Column::with_children((0..3).map(|_| {
+        Row::with_children((0..2).map(|_| skeleton(Length::Fill, Length::Fill, 10.0, 0.85)))
             .spacing(10)
-            .height(Length::Fill);
+            .height(Length::Fill)
+            .into()
+    }))
+    .spacing(10)
+    .height(Length::Fill);
 
     column![
         skeleton(Length::Fill, PASS_BAR_HEIGHT, 12.0, 1.0),
@@ -951,7 +943,7 @@ fn battle_pass_loading<'a>() -> Element<'a, Message> {
             ]
             .spacing(6)
             .align_y(alignment::Vertical::Center),
-            cards,
+            tiles,
         ]
         .spacing(12)
         .height(Length::Fill),

@@ -1934,10 +1934,14 @@ fn battle_pass_currency_rewards_show_amount_in_name() {
     )
     .expect("battle pass progress");
 
-    // Player cards use their tall art, which fills a reward card.
+    // Player cards use their wide banner, which fills a reward tile; the viewer opens the tall art.
     let card = &progress.chapters[0].rewards[1];
     assert_eq!(card.name, "Gourmand Card");
-    assert_eq!(card.display_icon.as_deref(), Some("card-large"));
+    assert_eq!(
+        card.display_icon.as_deref(),
+        Some("https://media.valorant-api.com/playercards/card/wideart.png")
+    );
+    assert_eq!(card.viewer_icon.as_deref(), Some("card-large"));
 
     let reward = &progress.chapters[0].rewards[0];
     assert_eq!(reward.name, "10 Radianite");
