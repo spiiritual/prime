@@ -202,6 +202,7 @@ impl PrimeApp {
             self.tab_button(Tab::Accounts),
             self.tab_button(Tab::Shop),
             self.tab_button(Tab::Loadout),
+            self.tab_button(Tab::AimTrainer),
             self.tab_button(Tab::Settings),
         ]
         .spacing(2);

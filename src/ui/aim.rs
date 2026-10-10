@@ -1,9 +1,6 @@
 //! The Aim Trainer tab's state and how `PrimeApp` handles its messages. The game is
 //! `crate::aim_trainer`; raw mouse input and the cursor clip are `crate::raw_mouse`.
 
-// The view (Task 5) is what constructs and reads the rest; drop this when it lands.
-#![allow(dead_code)]
-
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use iced::{Size, Subscription, Task, mouse, window};

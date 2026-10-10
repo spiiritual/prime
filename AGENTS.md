@@ -43,6 +43,14 @@ art, rarity colours and discounts. The wallet balance shows in the header.
 Loadout tab: equipped gun skins in the in-game collection order, and a Battle Pass sub-tab with tier
 progress and rewards.
 
+Aim Trainer tab: WAIUA-style red dots that grow until they burst (health 100, a burst costs 15, a
+miss 5). The crosshair turns `0.07° × sens` per raw mouse count, read with Windows Raw Input
+(`src/raw_mouse.rs`) because iced drops winit's raw device events, so Windows pointer speed and
+acceleration don't matter. Dots sit where they would at VALORANT's 103° FOV on this monitor. During
+a run the cursor is hidden and held on one pixel; Esc, leaving the tab or game over end the run,
+focus loss pauses it. Sensitivity, DPI and one best run for the whole app are saved in
+`accounts.json` (`aim_trainer`).
+
 Live Match: while the selected account is in agent select or a match, a sidebar indicator shows the
 map and score and opens the Live Match page (it has no nav item and no Launch button). The page
 shows the map, mode, round, server and both teams with names, agents, levels, ranks and the skins
@@ -99,7 +107,8 @@ Dependencies run one way: `src/riot` → `src/ui/data` → `src/ui/app.rs` → v
 - Views: `src/ui/screens/*` (one per tab), `src/ui/shell.rs` (header, status bar, dialogs) and
   `src/ui/components.rs` (shared widgets).
 - Outside the UI: `account.rs`, `storage.rs`, `launch.rs` (Riot Client processes), `account_transfer.rs`,
-  `game_settings.rs`, `image_cache.rs`, `updater.rs` and `secret_clipboard.rs`.
+  `game_settings.rs`, `image_cache.rs`, `updater.rs`, `secret_clipboard.rs`, `aim_trainer.rs` and
+  `raw_mouse.rs`.
 
 Local data: `%APPDATA%\spiiritual\prime\config\` holds `accounts.json`, `launcher-backups\` and
 `settings-profiles\`. Downloaded images go in `%LOCALAPPDATA%\spiiritual\prime\cache\images\`.
