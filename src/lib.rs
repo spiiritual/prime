@@ -1,5 +1,6 @@
 pub mod account;
 pub mod account_transfer;
+pub mod aim_trainer;
 pub mod file_dialog;
 pub mod game_settings;
 mod http_error;
