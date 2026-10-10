@@ -275,7 +275,7 @@ fn hero<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a, Messa
                         .width(Length::Fill)
                         .height(Length::Fill)
                         .content_fit(ContentFit::Cover)
-                        .opacity(0.9)
+                        .opacity(0.9_f32)
                         .border_radius(13),
                     container(space())
                         .width(Length::Fill)
