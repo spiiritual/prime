@@ -38,8 +38,18 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         section(
             SettingsSection::RiotClient,
             "Prime restores each account's remembered login into Riot Client's Data folder, \
-             then launches VALORANT through RiotClientServices.exe.",
-            riot_client_path_controls(app),
+             then launches VALORANT through RiotClientServices.exe. Routing its chat through \
+             Prime lets you appear online, on mobile or invisible; a change applies from the \
+             next launch.",
+            column![
+                riot_client_path_controls(app),
+                checkbox(app.state.chat_proxy)
+                    .label("Route chat through Prime to choose how friends see you")
+                    .on_toggle(Message::ChatProxyToggled)
+                    .text_size(13),
+            ]
+            .spacing(12)
+            .into(),
         ),
         section(
             SettingsSection::SystemTray,
@@ -64,7 +74,7 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         ),
         section(
             SettingsSection::Updates,
-            "Prime checks for new releases on startup.",
+            "Prime checks for new releases on startup and when its window is opened again.",
             update_controls(app),
         ),
         section(

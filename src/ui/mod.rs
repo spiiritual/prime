@@ -458,6 +458,9 @@ struct PrimeApp {
     /// When the last dialog closed, while its backdrop fades out.
     dialog_closed_at: Option<iced::time::Instant>,
     app_update_status: AppUpdateStatus,
+    /// When the last update check that nobody asked for started: at startup, or when the window
+    /// came back.
+    app_update_checked_at: Option<iced::time::Instant>,
     image_cache_usage: CacheUsage,
     image_cache_clearing: bool,
     loading_frame: usize,
@@ -1037,6 +1040,7 @@ enum Message {
     CloseRequested(window::Id),
     Tray(tray::TrayAction),
     MinimizeOnCloseToggled(bool),
+    ChatProxyToggled(bool),
     /// Opens or closes the weapon picker under one of Settings' Live Match columns, from 0.
     ToggleWeaponPicker(usize),
     ResetLiveMatchWeapons,

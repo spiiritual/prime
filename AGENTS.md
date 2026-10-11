@@ -66,7 +66,8 @@ from the Riot Client running on this PC, signed in as any account; they're looke
 on each poll, and without the Riot Client they show as unavailable, with the reason on hover.
 
 Invisible status: every launch goes through a chat proxy (`src/riot/chat_proxy/`), the way Deceive
-does. While VALORANT runs on this PC, Riot Client here is signed in as the selected account and its
+does, unless the Settings switch "Route chat through Prime" (on by default, `chat_proxy`) is off.
+While VALORANT runs on this PC, Riot Client here is signed in as the selected account and its
 chat goes through that proxy, Prime shows a sidebar control above the version label with the status
 friends see: Online, Mobile or Invisible. A change applies at once and is saved (`presence_status` in
 `accounts.json`, written only when not Online), so the next launch starts with it. If the proxy
@@ -74,7 +75,10 @@ can't start and the saved status is Invisible or Mobile, the launch asks before 
 launches anyway and warns that the status can't be changed this session. Prime checks the game every
 5 seconds while a proxy runs and stops the proxy when Riot Client closes. Quitting Prime drops Riot
 Client's chat until Riot Client restarts, so while chat goes through the proxy, quitting (from the
-tray too) and restarting for an update ask first.
+tray too) and restarting for an update ask first. In game, the proxy adds a made-up friend,
+"Prime Active!", to the friend list (as Deceive does) who messages the status friends see shortly
+after sign-in and on each change. Prime drops anything Riot Client sends to or about that friend,
+so Riot's server never sees it.
 
 Settings tab: Riot Client path, "keep in the system tray when closed" (on by default; while minimized or in the tray it
 polls every 30 minutes so sessions keep refreshing; the tray menu quits), Live Match's skin columns, client version
@@ -85,7 +89,9 @@ One instance: starting Prime while it runs, even from the tray, brings the runni
 and the new start exits (`single_instance.rs`). Debug builds use their own name, so `cargo run`
 works beside an installed Prime.
 
-Updates: Velopack checks the GitHub releases of `spiiritual/prime`. `PRIME_UPDATE_SOURCE` and
+Updates: Velopack checks the GitHub releases of `spiiritual/prime` at startup and whenever the
+window comes back from the tray or a second start (at most every 10 minutes), unless an update
+prompt was dismissed. `PRIME_UPDATE_SOURCE` and
 `PRIME_UPDATE_CHANNEL` override the source and channel.
 
 ## Feature flags
@@ -113,7 +119,9 @@ Dependencies run one way: `src/riot` → `src/ui/data` → `src/ui/app.rs` → v
 
 Local data: `%APPDATA%\spiiritual\prime\config\` holds `accounts.json`, `launcher-backups\` and
 `settings-profiles\`. Downloaded images go in `%LOCALAPPDATA%\spiiritual\prime\cache\images\`.
-The chat proxy's certificate is cached in `%LOCALAPPDATA%\spiiritual\prime\cache\chat-proxy-localhost.pfx`.
+The chat proxy's certificate is cached in `%LOCALAPPDATA%\spiiritual\prime\cache\chat-proxy-localhost.pfx`
+and downloaded again when it's missing, unreadable, out of date or 30 days old (an in-date copy
+is kept if that download fails).
 `accounts.json` rejects unknown fields, so a build older than a setting it holds can't load it.
 Settings left at their default aren't written, which keeps that rare.
 

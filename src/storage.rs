@@ -34,12 +34,20 @@ pub struct StoredState {
     /// starts with. Online, the default, isn't written.
     #[serde(default, skip_serializing_if = "PresenceStatus::is_online")]
     pub presence_status: PresenceStatus,
+    /// Whether launches go through the chat proxy, which the status control needs. On, the
+    /// default, isn't written.
+    #[serde(default = "chat_proxy_default", skip_serializing_if = "Clone::clone")]
+    pub chat_proxy: bool,
     /// The Aim Trainer's sensitivity, DPI and best run. Left out until one is set.
     #[serde(default, skip_serializing_if = "AimTrainerState::is_default")]
     pub aim_trainer: AimTrainerState,
 }
 
 fn minimize_on_close_default() -> bool {
+    true
+}
+
+fn chat_proxy_default() -> bool {
     true
 }
 
@@ -53,6 +61,7 @@ impl Default for StoredState {
             minimize_on_close: minimize_on_close_default(),
             live_match_weapons: None,
             presence_status: PresenceStatus::default(),
+            chat_proxy: chat_proxy_default(),
             aim_trainer: AimTrainerState::default(),
         }
     }
@@ -420,6 +429,23 @@ mod tests {
         state.minimize_on_close = false;
         repo.save(&state).expect("save");
         assert!(!repo.load().expect("load").minimize_on_close);
+    }
+
+    #[test]
+    fn the_chat_proxy_defaults_on_and_only_off_is_saved() {
+        let dir = tempdir().expect("temp dir");
+        let repo = AccountRepository::new(dir.path().join("accounts.json"));
+        let mut state = StoredState::default();
+        assert!(state.chat_proxy);
+
+        repo.save(&state).expect("save");
+        let saved = fs::read_to_string(repo.path()).expect("read");
+        assert!(!saved.contains("chat_proxy"), "{saved}");
+        assert!(repo.load().expect("load").chat_proxy);
+
+        state.chat_proxy = false;
+        repo.save(&state).expect("save");
+        assert!(!repo.load().expect("load").chat_proxy);
     }
 
     #[test]

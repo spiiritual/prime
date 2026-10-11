@@ -13,6 +13,7 @@
 
 mod certificate;
 mod config;
+mod indicator;
 mod presence;
 mod relay;
 

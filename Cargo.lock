@@ -3113,6 +3113,7 @@ dependencies = [
  "image",
  "native-tls",
  "reqwest",
+ "schannel",
  "serde",
  "serde_json",
  "tempfile",

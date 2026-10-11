@@ -142,6 +142,7 @@ impl PrimeApp {
                 toast_appeared_at: iced::time::Instant::now(),
                 dialog_closed_at: None,
                 app_update_status: AppUpdateStatus::Checking,
+                app_update_checked_at: Some(iced::time::Instant::now()),
                 image_cache_usage: CacheUsage::default(),
                 image_cache_clearing: false,
                 loading_frame: 0,
@@ -155,10 +156,7 @@ impl PrimeApp {
                 ),
                 fetch_client_version_task(false),
                 cache_rank_icons_task(&image_cache_for_ranks),
-                Task::perform(check_for_update(), |result| Message::AppUpdateChecked {
-                    user_requested: false,
-                    result: result.map_err(|error| error.to_string()),
-                }),
+                update_check_task(false),
                 Task::perform(
                     async move {
                         cache_for_size
@@ -1297,7 +1295,26 @@ impl PrimeApp {
             Message::Tray(super::tray::TrayAction::Open) => {
                 super::tray::remove();
                 let shown = self.window_shown();
+                // Coming back from the tray or a second start checks for updates, as startup does.
+                // Not while a quit waits on its question, after the prompt was dismissed, or
+                // within a few minutes of the last check, which GitHub's rate limit would refuse.
+                let update_check = if self.confirm_quit.is_none()
+                    && matches!(
+                        self.app_update_status,
+                        AppUpdateStatus::UpToDate | AppUpdateStatus::CheckFailed(_)
+                    )
+                    && self
+                        .app_update_checked_at
+                        .is_none_or(|checked| checked.elapsed() >= REOPEN_UPDATE_CHECK_INTERVAL)
+                {
+                    self.app_update_status = AppUpdateStatus::Checking;
+                    self.app_update_checked_at = Some(iced::time::Instant::now());
+                    update_check_task(false)
+                } else {
+                    Task::none()
+                };
                 Task::batch([
+                    update_check,
                     window::latest().then(|id| {
                         id.map_or_else(Task::none, |id| {
                             Task::batch([
@@ -1337,6 +1354,15 @@ impl PrimeApp {
                     return Task::none();
                 }
                 self.state.minimize_on_close = enabled;
+                self.save_task()
+            }
+            Message::ChatProxyToggled(enabled) => {
+                // Loading accounts.json would undo a change made before it arrives.
+                if !self.accounts_loaded {
+                    return Task::none();
+                }
+                // A running proxy keeps carrying chat; the next launch follows the setting.
+                self.state.chat_proxy = enabled;
                 self.save_task()
             }
             Message::LiveMatchWeaponPicked { column, weapon } => {
@@ -2646,10 +2672,7 @@ impl PrimeApp {
 
         self.app_update_status = AppUpdateStatus::Checking;
         self.set_status(Status::progress("Checking for Prime updates"));
-        Task::perform(check_for_update(), |result| Message::AppUpdateChecked {
-            user_requested: true,
-            result: result.map_err(|error| error.to_string()),
-        })
+        update_check_task(true)
     }
 
     fn handle_app_update_checked(
@@ -3483,14 +3506,24 @@ impl PrimeApp {
             Task::none()
         };
 
-        Task::batch([
-            self.save_task(),
+        let launch = if self.state.chat_proxy {
             Task::perform(
                 start_chat_proxy(self.state.presence_status),
                 move |result| Message::ChatProxyStarted(id, result),
-            ),
-            reload,
-        ])
+            )
+        } else {
+            // The launch restarts Riot Client, so the last proxy has nothing left to carry.
+            self.chat_proxy = None;
+            let launch = self.run_account_launch(account, None);
+            if !self.state.presence_status.is_online() {
+                self.set_status(Status::warning(
+                    "Friends see you online: routing chat through Prime is off in Settings, so                      your saved status doesn't apply",
+                ));
+            }
+            launch
+        };
+
+        Task::batch([self.save_task(), launch, reload])
     }
 
     /// Restores the account's login and launches VALORANT, through the chat proxy on
@@ -4193,6 +4226,18 @@ fn fetch_client_version_task(user_requested: bool) -> Task<Message> {
         Message::ClientVersionLoaded {
             user_requested,
             result,
+        }
+    })
+}
+
+/// The least time between update checks when the window comes back.
+const REOPEN_UPDATE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+fn update_check_task(user_requested: bool) -> Task<Message> {
+    Task::perform(check_for_update(), move |result| {
+        Message::AppUpdateChecked {
+            user_requested,
+            result: result.map_err(|error| error.to_string()),
         }
     })
 }

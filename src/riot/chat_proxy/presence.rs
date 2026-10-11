@@ -86,9 +86,11 @@ pub(super) fn is_own_presence(stanza: &str) -> bool {
     let Some(open_end) = tag_open_end(stanza.as_bytes(), 0) else {
         return false;
     };
-    !stanza[..open_end]
-        .split_ascii_whitespace()
-        .any(|attribute| attribute.starts_with("to="))
+    let open_tag = &stanza[..open_end];
+    find_tag_open(open_tag, "presence", 0) == Some(0)
+        && !open_tag
+            .split_ascii_whitespace()
+            .any(|attribute| attribute.starts_with("to="))
 }
 
 /// The index of the `>` that ends the tag opened at `start`, skipping any inside quoted attribute
@@ -211,17 +213,21 @@ fn replace_xml_element_text(mut text: String, tag: &str, replacement: &str) -> S
     text
 }
 
-const PRESENCE_OPEN: &[u8] = b"<presence";
+/// The most one stanza may hold while it waits for its end. A presence is a few KB and a roster
+/// with hundreds of friends a few hundred; past this, the connection is dropped and Riot Client
+/// reconnects.
+pub(super) const MAX_PENDING: usize = 4 << 20;
 
-/// The most one stanza may hold while it waits for its end. A real presence is a few KB; past
-/// this, the connection is dropped and Riot Client reconnects.
-pub(super) const MAX_PENDING: usize = 1 << 20;
+/// `<stream:stream>` stays open for the whole connection, and Riot's server opens a new one after
+/// sign-in without closing the first.
+const STREAM_TAG: &[u8] = b"stream:stream";
 
-/// A run of the chat stream: bytes to forward as they are, or one complete presence to rewrite.
+/// A run of the chat stream: bytes between stanzas, such as the stream header and whitespace
+/// keep-alives, or one complete stanza.
 #[derive(Debug, Eq, PartialEq)]
 pub(super) enum Piece {
     Raw(Vec<u8>),
-    Presence(String),
+    Stanza(String),
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -230,38 +236,101 @@ pub(super) enum SplitError {
     NotUtf8,
 }
 
-/// Cuts the bytes Riot Client sends into presences and everything else. Socket reads end anywhere,
-/// even inside a tag name or a multi-byte character, so an unfinished presence waits for the rest
-/// of it. Other bytes go out as soon as they can't be the start of a presence.
+/// Cuts a chat stream into whole stanzas and the bytes between them. Socket reads end anywhere,
+/// even inside a tag name or a multi-byte character, so an unfinished stanza waits for the rest
+/// of it. Everything handed out ends between two stanzas, so a stanza Prime writes after it can't
+/// land inside one.
 #[derive(Debug, Default)]
 pub(super) struct StanzaSplitter {
     pending: Vec<u8>,
+    /// How much of `pending` has been looked at.
+    scanned: usize,
+    /// Open elements, not counting `<stream:stream>`. A stanza is an element opened at 0.
+    depth: usize,
+    tag_start: Option<usize>,
+    quote: Option<u8>,
+    stanza_start: Option<usize>,
 }
 
 impl StanzaSplitter {
     pub(super) fn push(&mut self, bytes: &[u8]) -> Result<Vec<Piece>, SplitError> {
         self.pending.extend_from_slice(bytes);
         let mut pieces = Vec::new();
+        let mut emitted = 0;
 
-        loop {
-            let Some(start) = find_presence_start(&self.pending) else {
-                let flush = self.pending.len() - partial_open_suffix(&self.pending);
-                if flush > 0 {
-                    pieces.push(Piece::Raw(self.pending.drain(..flush).collect()));
+        while self.scanned < self.pending.len() {
+            let index = self.scanned;
+            let byte = self.pending[index];
+            self.scanned += 1;
+            let Some(tag_start) = self.tag_start else {
+                if byte == b'<' {
+                    self.tag_start = Some(index);
                 }
-                break;
+                continue;
             };
-            if start > 0 {
-                pieces.push(Piece::Raw(self.pending.drain(..start).collect()));
+            // A `>` inside a quoted attribute value doesn't end the tag.
+            match self.quote {
+                Some(open) => {
+                    if byte == open {
+                        self.quote = None;
+                    }
+                    continue;
+                }
+                None if byte == b'\'' || byte == b'"' => {
+                    self.quote = Some(byte);
+                    continue;
+                }
+                None if byte != b'>' => continue,
+                None => self.tag_start = None,
             }
-            let Some(end) = presence_end(&self.pending) else {
-                break;
+
+            let tag = &self.pending[tag_start..=index];
+            let closing = tag[1] == b'/';
+            if tag[if closing { 2 } else { 1 }..].starts_with(STREAM_TAG) {
+                continue;
+            }
+            let stanza = if closing {
+                self.depth = self.depth.saturating_sub(1);
+                if self.depth == 0 {
+                    self.stanza_start.take()
+                } else {
+                    None
+                }
+            } else if tag[1] == b'?' || tag[1] == b'!' {
+                None
+            } else if tag[tag.len() - 2] == b'/' {
+                (self.depth == 0).then_some(tag_start)
+            } else {
+                if self.depth == 0 {
+                    self.stanza_start = Some(tag_start);
+                }
+                self.depth += 1;
+                None
             };
-            let stanza: Vec<u8> = self.pending.drain(..end).collect();
-            pieces.push(Piece::Presence(
-                String::from_utf8(stanza).map_err(|_| SplitError::NotUtf8)?,
-            ));
+
+            if let Some(start) = stanza {
+                if start > emitted {
+                    pieces.push(Piece::Raw(self.pending[emitted..start].to_vec()));
+                }
+                let text = std::str::from_utf8(&self.pending[start..=index])
+                    .map_err(|_| SplitError::NotUtf8)?;
+                pieces.push(Piece::Stanza(text.to_string()));
+                emitted = index + 1;
+            }
         }
+
+        let held = self
+            .stanza_start
+            .or(self.tag_start)
+            .unwrap_or(self.pending.len());
+        if held > emitted {
+            pieces.push(Piece::Raw(self.pending[emitted..held].to_vec()));
+            emitted = held;
+        }
+        self.pending.drain(..emitted);
+        self.scanned -= emitted;
+        self.tag_start = self.tag_start.map(|start| start - emitted);
+        self.stanza_start = self.stanza_start.map(|start| start - emitted);
 
         if self.pending.len() > MAX_PENDING {
             return Err(SplitError::TooLarge);
@@ -270,179 +339,104 @@ impl StanzaSplitter {
     }
 }
 
-/// Where the first `<presence` tag starts. One that ends the buffer counts, since the next read
-/// may still turn it into a longer tag name, which is then skipped.
-fn find_presence_start(bytes: &[u8]) -> Option<usize> {
-    let mut from = 0;
-    while let Some(found) = find(&bytes[from..], PRESENCE_OPEN) {
-        let start = from + found;
-        match bytes.get(start + PRESENCE_OPEN.len()) {
-            None => return Some(start),
-            Some(&next) if next == b'>' || next == b'/' || next.is_ascii_whitespace() => {
-                return Some(start);
-            }
-            Some(_) => from = start + 1,
-        }
-    }
-    None
-}
-
-/// The end, exclusive, of the presence that starts `bytes`, once it has all arrived.
-fn presence_end(bytes: &[u8]) -> Option<usize> {
-    let open_end = tag_open_end(bytes, 0)?;
-    if bytes[open_end - 1] == b'/' {
-        return Some(open_end + 1);
-    }
-    find(&bytes[open_end..], PRESENCE_CLOSE.as_bytes())
-        .map(|close| open_end + close + PRESENCE_CLOSE.len())
-}
-
-/// How many bytes at the end of `bytes` could be the start of `<presence`.
-fn partial_open_suffix(bytes: &[u8]) -> usize {
-    (1..PRESENCE_OPEN.len())
-        .rev()
-        .find(|&len| bytes.ends_with(&PRESENCE_OPEN[..len]))
-        .unwrap_or(0)
-}
-
-fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn raw_bytes(pieces: &[Piece]) -> Vec<u8> {
-        pieces
-            .iter()
-            .flat_map(|piece| match piece {
-                Piece::Raw(bytes) => bytes.clone(),
-                Piece::Presence(_) => Vec::new(),
-            })
-            .collect()
+    fn split(splitter: &mut StanzaSplitter, bytes: &[u8]) -> Vec<Piece> {
+        splitter.push(bytes).expect("split")
+    }
+
+    fn stanza(text: &str) -> Piece {
+        Piece::Stanza(text.to_string())
     }
 
     #[test]
-    fn passes_other_traffic_through_unchanged() {
-        let mut splitter = StanzaSplitter::default();
-        let traffic = b"<iq type='get' id='1'><ping/></iq><message><body>hi</body></message>";
-
-        let pieces = splitter.push(traffic).expect("split");
-
-        assert_eq!(raw_bytes(&pieces), traffic);
-        assert!(pieces.iter().all(|piece| matches!(piece, Piece::Raw(_))));
-    }
-
-    #[test]
-    fn holds_a_presence_until_it_is_complete() {
+    fn cuts_the_stream_into_whole_stanzas() {
         let mut splitter = StanzaSplitter::default();
 
-        let first = splitter
-            .push(b"<iq/><presence><show>chat</show><games><valorant><p>e30")
-            .expect("split");
-        let second = splitter
-            .push(b"=</p></valorant></games></presence><iq/>")
-            .expect("split");
+        let pieces = split(
+            &mut splitter,
+            b"<?xml version='1.0'?><stream:stream to='x'>\
+              <iq type='get' id='1'><ping/></iq> <presence/><message><body>a > b</body></message>",
+        );
 
-        assert_eq!(first, vec![Piece::Raw(b"<iq/>".to_vec())]);
         assert_eq!(
-            second,
+            pieces,
             vec![
-                Piece::Presence(
-                    "<presence><show>chat</show><games><valorant><p>e30=</p></valorant></games></presence>"
-                        .to_string()
-                ),
-                Piece::Raw(b"<iq/>".to_vec()),
+                Piece::Raw(b"<?xml version='1.0'?><stream:stream to='x'>".to_vec()),
+                stanza("<iq type='get' id='1'><ping/></iq>"),
+                Piece::Raw(b" ".to_vec()),
+                stanza("<presence/>"),
+                stanza("<message><body>a > b</body></message>"),
             ]
         );
     }
 
     #[test]
-    fn holds_a_tag_name_cut_off_at_the_end_of_a_read() {
+    fn a_second_stream_header_after_sign_in_keeps_stanzas_at_the_top() {
         let mut splitter = StanzaSplitter::default();
+        split(&mut splitter, b"<stream:stream><success/>");
 
-        let first = splitter.push(b"<iq/><pres").expect("split");
-        let second = splitter
-            .push(b"ence><show>chat</show></presence>")
-            .expect("split");
-
-        assert_eq!(first, vec![Piece::Raw(b"<iq/>".to_vec())]);
-        assert_eq!(
-            second,
-            vec![Piece::Presence(
-                "<presence><show>chat</show></presence>".to_string()
-            )]
-        );
-    }
-
-    #[test]
-    fn keeps_multibyte_characters_cut_by_a_read_intact() {
-        let mut splitter = StanzaSplitter::default();
-        let message = "<message><body>héllo 🙂</body></message>".as_bytes();
-        let cut = message
-            .iter()
-            .position(|&byte| byte == 0xC3)
-            .expect("é starts with 0xC3")
-            + 1;
-
-        let mut pieces = splitter.push(&message[..cut]).expect("split");
-        pieces.extend(splitter.push(&message[cut..]).expect("split"));
-
-        assert_eq!(raw_bytes(&pieces), message);
-    }
-
-    #[test]
-    fn keeps_a_multibyte_character_cut_inside_a_presence_intact() {
-        let mut splitter = StanzaSplitter::default();
-        let stanza = "<presence><status>héllo 🙂</status></presence>";
-        let cut = stanza.find('é').expect("é") + 1;
-
-        let mut pieces = splitter.push(&stanza.as_bytes()[..cut]).expect("split");
-        pieces.extend(splitter.push(&stanza.as_bytes()[cut..]).expect("split"));
-
-        assert_eq!(pieces, vec![Piece::Presence(stanza.to_string())]);
-    }
-
-    #[test]
-    fn a_self_closing_presence_is_complete() {
-        let mut splitter = StanzaSplitter::default();
-
-        let pieces = splitter
-            .push(b"<presence type='unavailable'/>")
-            .expect("split");
+        let pieces = split(&mut splitter, b"<stream:stream id='2'><iq/>");
 
         assert_eq!(
             pieces,
-            vec![Piece::Presence(
-                "<presence type='unavailable'/>".to_string()
-            )]
+            vec![
+                Piece::Raw(b"<stream:stream id='2'>".to_vec()),
+                stanza("<iq/>")
+            ]
         );
     }
 
     #[test]
-    fn longer_tag_names_are_not_presence() {
+    fn holds_a_stanza_until_it_is_complete() {
         let mut splitter = StanzaSplitter::default();
-        let traffic = b"<presences>x</presences>";
 
-        assert_eq!(raw_bytes(&splitter.push(traffic).expect("split")), traffic);
+        let first = split(
+            &mut splitter,
+            b"<iq/><presence><show>chat</show><games><p>e30",
+        );
+        let second = split(&mut splitter, b"=</p></games></presence> ");
+
+        assert_eq!(first, vec![stanza("<iq/>")]);
+        assert_eq!(
+            second,
+            vec![
+                stanza("<presence><show>chat</show><games><p>e30=</p></games></presence>"),
+                Piece::Raw(b" ".to_vec()),
+            ]
+        );
     }
 
     #[test]
-    fn quoted_angle_brackets_do_not_end_the_tag() {
+    fn holds_a_tag_cut_off_at_the_end_of_a_read() {
         let mut splitter = StanzaSplitter::default();
-        let stanza = "<presence id='a>b'><show>chat</show></presence>";
 
         assert_eq!(
-            splitter.push(stanza.as_bytes()).expect("split"),
-            vec![Piece::Presence(stanza.to_string())]
+            split(&mut splitter, b" <pres"),
+            vec![Piece::Raw(b" ".to_vec())]
+        );
+        assert_eq!(
+            split(&mut splitter, b"ence id='a>b'/>"),
+            vec![stanza("<presence id='a>b'/>")]
         );
     }
 
     #[test]
-    fn an_oversized_presence_is_refused() {
+    fn keeps_a_multibyte_character_cut_by_a_read_intact() {
+        let mut splitter = StanzaSplitter::default();
+        let message = "<message><body>héllo 🙂</body></message>";
+        let cut = message.find('é').expect("é") + 1;
+
+        let mut pieces = split(&mut splitter, &message.as_bytes()[..cut]);
+        pieces.extend(split(&mut splitter, &message.as_bytes()[cut..]));
+
+        assert_eq!(pieces, vec![stanza(message)]);
+    }
+
+    #[test]
+    fn an_oversized_stanza_is_refused() {
         let mut splitter = StanzaSplitter::default();
         let mut huge = b"<presence>".to_vec();
         huge.extend(std::iter::repeat_n(b'a', MAX_PENDING));
@@ -513,6 +507,8 @@ mod tests {
         assert!(!is_own_presence(
             "<presence\n  to='room@lobby.example'><show>chat</show></presence>"
         ));
+        assert!(!is_own_presence("<presences/>"));
+        assert!(!is_own_presence("<message><body>hi</body></message>"));
     }
 
     #[test]

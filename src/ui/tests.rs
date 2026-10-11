@@ -2580,6 +2580,62 @@ fn a_chat_proxy_for_a_cancelled_launch_is_dropped() {
 }
 
 #[test]
+fn with_the_chat_proxy_off_a_launch_skips_it_and_drops_the_last_one() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = launchable_account(&app, "Main");
+    app.state.push_account(account.clone());
+    app.accounts_loaded = true;
+    app.chat_proxy = Some(LaunchedChatProxy {
+        account_id: account.id,
+        proxy: ChatProxy::detached(PresenceStatus::Online, true),
+    });
+
+    let _ = app.update(Message::ChatProxyToggled(false));
+    assert!(
+        app.chat_proxy.is_some(),
+        "a running proxy keeps carrying chat"
+    );
+
+    app.unavailable_launch_warning = Some(UnavailableLaunchWarning {
+        account_id: account.id,
+        display_name: account.display_name.clone(),
+        reason: "In a match.".to_string(),
+    });
+    let task = app.update(Message::LaunchAnyway(account.id));
+
+    assert!(task.units() > 0, "launches");
+    assert_eq!(app.launching_account, Some(account.id));
+    assert!(app.chat_proxy.is_none());
+    assert_ne!(
+        app.status.kind,
+        StatusKind::Warning,
+        "Online needs no warning"
+    );
+}
+
+#[test]
+fn with_the_chat_proxy_off_a_saved_invisible_status_warns_it_does_not_apply() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    let account = launchable_account(&app, "Main");
+    app.state.push_account(account.clone());
+    app.state.chat_proxy = false;
+    app.state.presence_status = PresenceStatus::Invisible;
+    app.unavailable_launch_warning = Some(UnavailableLaunchWarning {
+        account_id: account.id,
+        display_name: account.display_name.clone(),
+        reason: "In a match.".to_string(),
+    });
+
+    let task = app.update(Message::LaunchAnyway(account.id));
+
+    assert!(task.units() > 0, "launches anyway");
+    assert_eq!(app.status.kind, StatusKind::Warning);
+    assert!(app.status.text.contains("online"), "{}", app.status.text);
+}
+
+#[test]
 fn launch_online_launches_the_account_whose_proxy_failed() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
@@ -4225,6 +4281,45 @@ fn an_update_does_not_download_while_a_launch_runs() {
         "{}",
         app.status.text
     );
+}
+
+#[test]
+fn bringing_the_window_back_checks_for_updates_unless_one_was_dismissed() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.app_update_status = super::AppUpdateStatus::UpToDate;
+    app.app_update_checked_at = None;
+
+    let _ = app.update(Message::Tray(super::tray::TrayAction::Open));
+    assert!(matches!(
+        app.app_update_status,
+        super::AppUpdateStatus::Checking
+    ));
+
+    app.app_update_status =
+        super::AppUpdateStatus::Dismissed(crate::updater::sample_update("9.9.9"));
+    app.app_update_checked_at = None;
+    let _ = app.update(Message::Tray(super::tray::TrayAction::Open));
+    assert!(matches!(
+        app.app_update_status,
+        super::AppUpdateStatus::Dismissed(_)
+    ));
+}
+
+#[test]
+fn bringing_the_window_back_soon_after_a_check_does_not_check_again() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.app_update_status = super::AppUpdateStatus::UpToDate;
+    // Startup just checked.
+    assert!(app.app_update_checked_at.is_some());
+
+    let _ = app.update(Message::Tray(super::tray::TrayAction::Open));
+
+    assert!(matches!(
+        app.app_update_status,
+        super::AppUpdateStatus::UpToDate
+    ));
 }
 
 fn downloading_update_app(dir: &Path) -> PrimeApp {
