@@ -199,7 +199,8 @@ fn background_refresh_active(app: &PrimeApp) -> bool {
 /// account details, don't count, since each tick rebuilds the whole window.
 /// Live Match is fetching the names players hide, after "Show hidden details" or on a poll.
 fn hidden_names_loading(app: &PrimeApp) -> bool {
-    app.show_hidden_details && app.live_match_request.is_some()
+    // Stable, without the interface refresh, shows "Name unavailable" while they load.
+    app.refreshed() && app.show_hidden_details && app.live_match_request.is_some()
 }
 
 fn loading_indicator_active(app: &PrimeApp) -> bool {

@@ -47,6 +47,7 @@ const TOAST_RISE: f32 = 8.0;
 
 impl PrimeApp {
     pub(super) fn view(&self) -> Element<'_, Message> {
+        super::components::set_refreshed(self.refreshed());
         if self.aim_fullscreen() {
             return super::screens::aim_trainer_fullscreen(self);
         }
@@ -114,7 +115,8 @@ impl PrimeApp {
                     super::screens::bundle_details(
                         self.store_summary.as_ref()?,
                         bundle,
-                        self.bundle_art_loading.as_ref() == Some(&bundle.store_id),
+                        self.refreshed()
+                            && self.bundle_art_loading.as_ref() == Some(&bundle.store_id),
                         self.now,
                     )
                 }

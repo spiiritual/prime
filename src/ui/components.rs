@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget::Tree,
@@ -415,8 +416,30 @@ pub(super) fn asset_background_image<'a>(
     }
 }
 
+/// Whether the window being drawn has the interface refresh experiment, for placeholders drawn
+/// too deep to be handed the app. `PrimeApp::view` sets it each frame.
+// ponytail: one flag for the one window; pass `refresh` down instead if a second window draws.
+static REFRESHED: AtomicBool = AtomicBool::new(false);
+
+pub(super) fn set_refreshed(refreshed: bool) {
+    REFRESHED.store(refreshed, Ordering::Relaxed);
+}
+
+fn refreshed() -> bool {
+    REFRESHED.load(Ordering::Relaxed)
+}
+
 /// Art that doesn't exist, or that couldn't be downloaded.
 fn no_image_placeholder<'a>(height: impl Into<Length>) -> Element<'a, Message> {
+    if !refreshed() {
+        return container(text("No image").size(13))
+            .width(Length::Fill)
+            .height(height)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center)
+            .style(iced::widget::container::rounded_box)
+            .into();
+    }
     container(
         column![
             theme::icon(theme::Icon::ImageOff, 18.0, theme::FAINT),
@@ -892,9 +915,18 @@ pub(super) fn balances_unavailable<'a>() -> Element<'a, Message> {
         .into()
 }
 
-/// Skeleton pills in the wallet's place while the shop loads.
-/// The wallet's box while it loads, with a block for each balance chip.
+/// The wallet's box while it loads, with a block for each balance chip. Without the interface
+/// refresh, skeleton pills in the wallet's place.
 pub(super) fn wallet_skeleton<'a>() -> Element<'a, Message> {
+    if !refreshed() {
+        return row![
+            skeleton(92, 34.0, 8.0, 1.0),
+            skeleton(64, 34.0, 8.0, 1.0),
+            skeleton(84, 34.0, 8.0, 1.0),
+        ]
+        .spacing(8)
+        .into();
+    }
     let chip = |width| container(skeleton(width, 13.0, 4.0, 1.0)).padding([8, 12]);
 
     container(row![chip(56), chip(44), chip(60)].spacing(4))
@@ -910,7 +942,17 @@ fn currency_balance_row<'a>(balances: &'a [CurrencyBalanceDisplay]) -> Element<'
         row = row.push(currency_balance_chip(balance));
     }
 
-    container(row).padding(4).style(|_| card_style(10.0)).into()
+    container(row)
+        .padding(4)
+        .style(|theme| {
+            if refreshed() {
+                return card_style(10.0);
+            }
+            let mut style = iced::widget::container::bordered_box(theme);
+            style.border.radius = 10.0.into();
+            style
+        })
+        .into()
 }
 
 /// A currency's short name and colour. The wallet already names its currencies VP, Radianite and
