@@ -10,7 +10,7 @@ use crate::riot::chat_proxy::PresenceStatus;
 
 use super::components::{
     account_avatar, anchored_popover, anchored_popover_above, balances_unavailable,
-    compact_loading_indicator, currency_balance_display, loading_indicator, wallet_skeleton,
+    currency_balance_display, spinner, wallet_skeleton,
 };
 use super::data::account_details::{AccountAvailability, Busy};
 use super::data::live_match::{MatchPhase, indicator_detail};
@@ -627,7 +627,7 @@ impl PrimeApp {
     fn status_toast(&self) -> Element<'_, Message> {
         let kind = self.status.kind;
         let lead = if status_spinner_active(self) {
-            loading_indicator(self.loading_frame)
+            spinner(self.loading_frame, 15.0, theme::MUTED)
         } else {
             match kind {
                 StatusKind::Error => theme::icon(theme::Icon::TriangleAlert, 15.0, theme::ACCENT),
@@ -1546,7 +1546,7 @@ fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> El
             ),
             container(
                 row![
-                    compact_loading_indicator(app.loading_frame),
+                    spinner(app.loading_frame, 14.0, theme::MUTED),
                     text("Waiting for login")
                         .size(13)
                         .font(theme::BOLD_FONT)
@@ -1586,7 +1586,7 @@ fn capture_step<'a>(
                 .border(iced::border::rounded(12))
             })
             .into(),
-        CaptureStep::Active => container(compact_loading_indicator(app.loading_frame))
+        CaptureStep::Active => container(spinner(app.loading_frame, 13.0, theme::ACCENT))
             .center(24)
             .style(|_| {
                 filled(theme::ACCENT_SOFT).border(iced::Border {
@@ -2180,7 +2180,7 @@ fn image_viewer_overlay(
 ) -> Element<'_, Message> {
     let status: Element<_> = if image_to_view.high_res_loading {
         row![
-            loading_indicator(loading_frame),
+            spinner(loading_frame, 15.0, theme::MUTED),
             text("Loading full image").size(13)
         ]
         .spacing(8)

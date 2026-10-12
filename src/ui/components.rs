@@ -4,7 +4,7 @@ use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget::Tree,
 };
 use iced::widget::image::Handle;
-use iced::widget::{Column, Row, column, container, image, row, space};
+use iced::widget::{Row, column, container, image, row, space};
 use iced::{
     Color, ContentFit, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector,
     alignment,
@@ -732,88 +732,48 @@ gradientTransform="translate({center_x} {center_y}) scale({scale_x} {scale_y}) t
     .into()
 }
 
-pub(super) fn loading_indicator(frame: usize) -> Element<'static, Message> {
-    loading_orbit(frame, 5.0, 7.0, 2)
+/// The one loading spinner: Lucide's `loader`, its spokes fading in turn on each loading tick.
+/// Rotating the icon instead wouldn't show, since a 45° turn of eight spokes looks the same.
+pub(super) fn spinner(frame: usize, size: f32, color: Color) -> Element<'static, Message> {
+    const SPOKES: [&str; 8] = [
+        "M12 2v4",
+        "m16.2 7.8 2.9-2.9",
+        "M18 12h4",
+        "m16.2 16.2 2.9 2.9",
+        "M12 18v4",
+        "m4.9 19.1 2.9-2.9",
+        "M2 12h4",
+        "m4.9 4.9 2.9 2.9",
+    ];
+    let active = frame % SPOKES.len();
+    let paths: String = SPOKES
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let opacity = spoke_opacity(active, index, SPOKES.len());
+            format!(r#"<path d="{path}" stroke-opacity="{opacity}"/>"#)
+        })
+        .collect();
+    let source = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">{paths}</svg>"#
+    );
+
+    iced::widget::svg(iced::widget::svg::Handle::from_memory(source.into_bytes()))
+        .width(size)
+        .height(size)
+        .style(move |_, _| iced::widget::svg::Style { color: Some(color) })
+        .into()
 }
 
-pub(super) fn compact_loading_indicator(frame: usize) -> Element<'static, Message> {
-    loading_orbit(frame, 3.0, 5.0, 1)
-}
-
-fn loading_orbit(
-    frame: usize,
-    dot_size: f32,
-    slot_size: f32,
-    spacing: u32,
-) -> Element<'static, Message> {
-    let active = frame % 8;
-    let mut grid = Column::new().spacing(spacing);
-
-    for row_index in 0..3 {
-        let mut row = Row::new().spacing(spacing);
-
-        for column_index in 0..3 {
-            let cell: Element<_> = if let Some(index) = orbit_index(row_index, column_index) {
-                let intensity = loading_intensity(active, index, 8);
-                let size = dot_size * (0.45 + 0.55 * intensity);
-                container(space())
-                    .width(size)
-                    .height(size)
-                    .style(move |_| loading_shape_style(intensity, size / 2.0))
-                    .into()
-            } else {
-                space().width(0.0).height(0.0).into()
-            };
-
-            row = row.push(
-                container(cell)
-                    .width(slot_size)
-                    .height(slot_size)
-                    .align_x(alignment::Horizontal::Center)
-                    .align_y(alignment::Vertical::Center),
-            );
-        }
-
-        grid = grid.push(row);
-    }
-
-    grid.into()
-}
-
-fn orbit_index(row: usize, column: usize) -> Option<usize> {
-    match (row, column) {
-        (0, 1) => Some(0),
-        (0, 2) => Some(1),
-        (1, 2) => Some(2),
-        (2, 2) => Some(3),
-        (2, 1) => Some(4),
-        (2, 0) => Some(5),
-        (1, 0) => Some(6),
-        (0, 0) => Some(7),
-        _ => None,
-    }
-}
-
-fn loading_intensity(active: usize, index: usize, count: usize) -> f32 {
-    let distance = active.abs_diff(index);
-    let wrapped_distance = distance.min(count - distance);
-
-    match wrapped_distance {
+/// How strongly a spoke shows: the active spoke fully, the ones behind it fading out. Iced fades
+/// a translucent SVG pixel twice (see `radial_glow`), so these sit higher than they look.
+fn spoke_opacity(active: usize, index: usize, count: usize) -> f32 {
+    match (active + count - index) % count {
         0 => 1.0,
-        1 => 0.62,
-        2 => 0.34,
-        _ => 0.18,
+        1 => 0.85,
+        2 => 0.7,
+        _ => 0.55,
     }
-}
-
-fn loading_shape_style(intensity: f32, radius: f32) -> iced::widget::container::Style {
-    let alpha = 0.18 + 0.74 * intensity;
-    let mut style = iced::widget::container::Style {
-        background: Some(Color::from_rgba8(255, 255, 255, alpha).into()),
-        ..Default::default()
-    };
-    style.border.radius = iced::border::radius(radius);
-    style
 }
 
 pub(super) fn currency_balance_display(summary: &StoreSummary) -> Element<'_, Message> {

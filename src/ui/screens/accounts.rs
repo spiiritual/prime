@@ -10,7 +10,7 @@ use time::{OffsetDateTime, UtcOffset};
 use crate::account::{AccountId, AccountProfile, CompetitiveRank};
 
 use crate::ui::components::{
-    account_avatar, anchored_popover, card_style, compact_loading_indicator, mono, skeleton,
+    account_avatar, anchored_popover, card_style, mono, skeleton, spinner,
 };
 use crate::ui::data::account_details::AccountAvailability;
 use crate::ui::shell::popover_style;
@@ -126,7 +126,7 @@ fn header_button(
         (false, false) => theme::FAINT,
     };
     let lead = match capturing {
-        Some(frame) => compact_loading_indicator(frame),
+        Some(frame) => spinner(frame, 15.0, color),
         None => theme::icon(icon, 15.0, color),
     };
 
@@ -391,7 +391,7 @@ fn launch_button<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<
 
     let busy = busy_label.is_some();
     let lead = if busy {
-        compact_loading_indicator(app.loading_frame)
+        spinner(app.loading_frame, 18.0, theme::BG)
     } else {
         let alpha = if blocked { 0.4 } else { 1.0 };
         theme::icon(
@@ -899,7 +899,7 @@ fn status_cell<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a
 
     if app.profile_identity_refreshing.contains(&account.id) {
         return line(
-            compact_loading_indicator(app.loading_frame),
+            spinner(app.loading_frame, 14.0, theme::MUTED),
             "Refreshing…".to_string(),
             theme::MUTED,
         );
