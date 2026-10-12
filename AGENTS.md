@@ -58,15 +58,19 @@ still and moves the crosshair. Dots are fixed directions in the world, drawn thr
 like floating in a void; yaw turns freely and pitch stops at ±89°. In 3D dots appear only in a
 fixed zone straight ahead, half the view each way and outlined on the front wall, so none appears
 out of sight; in 2D they appear anywhere in the view. With raw counts the cursor is
-hidden and held on one pixel. Windows in 3D reads how far the cursor moved from the arena's centre
-on each raw packet and puts it back; a pixel turns the view by a pixel's angle at the centre.
+hidden and held on one pixel. Windows in 3D reads how far the hidden cursor moved on each raw
+packet and puts it back at the arena's centre only a quarter of the way to its edge (back after
+every packet lost about a tenth of the movement); a pixel turns the view by a pixel's angle at the
+centre.
 Windows in 2D is Windows' own crosshair cursor, kept inside the arena; a drawn one trailed it by
 frames. The reader sums counts and clicks and each frame takes them: a message per count rebuilt
 the whole UI up to 1000 times a second and starved the repaints. Clicks are tested where they
 happened: each raw click keeps the counts read before it and the frame applies them in order, and
 in 2D with the Windows cursor the arena tracks the cursor through each movement event, because
 iced gives every event in a batch the cursor from the batch's end. "Play
-fullscreen" makes runs borderless fullscreen with only the arena and scores; pausing or ending a
+fullscreen" makes runs borderless fullscreen with only the arena and scores, as a borderless
+window a pixel taller than the monitor: one covering it exactly gets its own flip from Windows, and
+with vsync that dropped a 144 Hz monitor to about 86 fps with 50 ms frames; pausing or ending a
 run puts the window back to its fixed size. Esc, leaving the tab or game over end the run, focus
 loss pauses it. Difficulty sets how fast dots come: Easy, Normal (the default) and Hard keep at
 most 4, 6 and 11 on screen. Sensitivity, DPI, the three choices, fullscreen

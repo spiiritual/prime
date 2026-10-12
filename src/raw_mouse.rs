@@ -4,8 +4,9 @@
 //! to one window, so this takes it from winit while a run plays; iced ignores it anyway.
 //!
 //! When the Windows cursor turns a 3D view, each packet instead reads how far the cursor moved
-//! from the arena's centre and puts it back, so its movement counts with Windows' pointer speed
-//! and acceleration.
+//! since the last one, so its movement counts with Windows' pointer speed and acceleration. It's
+//! put back at the arena's centre only near the edge: putting it back after every packet lost the
+//! movement that arrived in between, about a tenth of it, and more or less with speed.
 //!
 //! Counts and clicks are gathered here and taken once per frame: a message per packet rebuilt
 //! the whole UI up to a thousand times a second, which starved the repaints. Each click keeps the
@@ -14,10 +15,12 @@
 use std::ptr::{null, null_mut};
 use std::sync::Mutex;
 
-use iced::Rectangle;
 use iced::futures::{SinkExt, Stream};
+use iced::{Point, Rectangle};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
+use windows_sys::Win32::Graphics::Gdi::{
+    ClientToScreen, GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow;
@@ -27,8 +30,8 @@ use windows_sys::Win32::UI::Input::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     ClipCursor, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClipCursor,
-    GetCursorPos, GetMessageW, HWND_MESSAGE, MSG, PostMessageW, PostQuitMessage, RegisterClassW,
-    SetCursorPos, WM_CLOSE, WM_DESTROY, WM_INPUT, WNDCLASSW,
+    GetCursorPos, GetMessageW, GetWindowRect, HWND_MESSAGE, MSG, PostMessageW, PostQuitMessage,
+    RegisterClassW, SetCursorPos, WM_CLOSE, WM_DESTROY, WM_INPUT, WNDCLASSW,
 };
 
 const GENERIC_DESKTOP: u16 = 0x01;
@@ -45,8 +48,10 @@ struct Grab {
     /// cursor, and when the cursor enters or leaves the window), so the reader puts it back on
     /// each movement.
     clip: RECT,
-    /// Where the cursor is put back after each packet while the Windows cursor turns a 3D view.
+    /// Where the cursor is put back near the edge while the Windows cursor turns a 3D view.
     centre: Option<POINT>,
+    /// Where the cursor was after the last packet, which its next move counts from.
+    last: POINT,
 }
 
 static INPUT: Mutex<Input> = Mutex::new(Input {
@@ -116,6 +121,7 @@ pub fn hold_cursor() {
                 bottom: point.y + 1,
             },
             centre: None,
+            last: point,
         });
     }
 }
@@ -128,12 +134,15 @@ pub fn confine_cursor(area: Rectangle) {
         return;
     }
     if let Some((clip, _)) = on_screen(area) {
-        grab(Grab { clip, centre: None });
+        grab(Grab {
+            clip,
+            centre: None,
+            last: POINT::default(),
+        });
     }
 }
 
-/// Confines the cursor to `area` and puts it back at its centre after each packet, reading how
-/// far it moved as counts. Returns the window's physical pixels per logical one, or `None` if the
+/// Confines the cursor to `area`, starting at its centre, and reads how far it moves as counts. Returns the window's physical pixels per logical one, or `None` if the
 /// window couldn't be found. Called like `confine_cursor`.
 pub fn recentre_cursor(area: Rectangle) -> Option<f64> {
     // Tests must never move the real cursor.
@@ -148,6 +157,7 @@ pub fn recentre_cursor(area: Rectangle) -> Option<f64> {
     grab(Grab {
         clip,
         centre: Some(centre),
+        last: centre,
     });
     Some(scale.into())
 }
@@ -179,6 +189,45 @@ fn on_screen(area: Rectangle) -> Option<(RECT, f32)> {
     }
 }
 
+/// The active window's top-left corner and its monitor's bounds, in the window's logical pixels.
+pub fn window_and_monitor() -> Option<(Point, Rectangle)> {
+    // Tests have no window to move.
+    if cfg!(test) {
+        return None;
+    }
+    // SAFETY: the calls only read the window and monitor and write the local values passed to them.
+    unsafe {
+        let window = GetActiveWindow();
+        if window.is_null() {
+            return None;
+        }
+        let dpi = GetDpiForWindow(window);
+        let mut frame = RECT::default();
+        let mut info = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+        if dpi == 0
+            || GetWindowRect(window, &mut frame) == 0
+            || GetMonitorInfoW(monitor, &mut info) == 0
+        {
+            return None;
+        }
+        let scale = dpi as f32 / 96.0;
+        let bounds = info.rcMonitor;
+        Some((
+            Point::new(frame.left as f32 / scale, frame.top as f32 / scale),
+            Rectangle {
+                x: bounds.left as f32 / scale,
+                y: bounds.top as f32 / scale,
+                width: (bounds.right - bounds.left) as f32 / scale,
+                height: (bounds.bottom - bounds.top) as f32 / scale,
+            },
+        ))
+    }
+}
+
 fn grab(grab: Grab) {
     // The lock stays held so a packet can't read the cursor before it's centred.
     let mut held = GRAB.lock().unwrap_or_else(|e| e.into_inner());
@@ -193,14 +242,15 @@ fn grab(grab: Grab) {
 }
 
 /// Keeps the grab up for one packet and returns the counts it stands for: the raw ones, or how
-/// far the cursor moved from the centre when recentring, putting it back. The clip is only put
-/// back on a change, since each clip sends the window a WM_MOUSEMOVE.
+/// far the cursor moved when it turns a 3D view. The clip is only put back on a change, since
+/// each clip sends the window a WM_MOUSEMOVE.
 fn keep_grab(counts: (i32, i32)) -> (i32, i32) {
     // The lock stays held so a release can't slip in between.
-    let guard = GRAB.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(Grab { clip, centre }) = *guard else {
+    let mut guard = GRAB.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(Grab { clip, centre, last }) = &mut *guard else {
         return counts;
     };
+    let (clip, centre) = (*clip, *centre);
     // SAFETY: the calls only read or write the local values passed to them, or move the cursor.
     unsafe {
         let mut active = RECT::default();
@@ -218,12 +268,24 @@ fn keep_grab(counts: (i32, i32)) -> (i32, i32) {
         if GetCursorPos(&mut at) == 0 {
             return (0, 0);
         }
-        let moved = (at.x - centre.x, at.y - centre.y);
-        if moved != (0, 0) {
+        let (moved, back) = follow(at, *last, centre, clip);
+        *last = if back { centre } else { at };
+        if back {
             SetCursorPos(centre.x, centre.y);
         }
         moved
     }
+}
+
+/// How far the cursor moved from `last` to `at`, and whether to put it back at `centre`, which
+/// it is once it's a quarter of the clip's width or height away. Moves land between reading the cursor and
+/// putting it back are lost, so it goes back as rarely as the clip allows; a quarter leaves room
+/// for the fastest flick between two packets.
+fn follow(at: POINT, last: POINT, centre: POINT, clip: RECT) -> ((i32, i32), bool) {
+    let moved = (at.x - last.x, at.y - last.y);
+    let near_edge = (at.x - centre.x).abs() > (clip.right - clip.left) / 4
+        || (at.y - centre.y).abs() > (clip.bottom - clip.top) / 4;
+    (moved, near_edge)
 }
 
 pub fn release_cursor() {
@@ -395,6 +457,45 @@ unsafe fn read_packet(lparam: LPARAM) -> Option<((i32, i32), bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cursor_turns_from_where_it_was_and_goes_back_only_near_the_edge() {
+        let clip = RECT {
+            left: 0,
+            top: 0,
+            right: 400,
+            bottom: 200,
+        };
+        let centre = POINT { x: 200, y: 100 };
+        // Inside the middle half it stays where it went, and the next move counts from there.
+        assert_eq!(
+            follow(POINT { x: 230, y: 90 }, centre, centre, clip),
+            ((30, -10), false)
+        );
+        assert_eq!(
+            follow(
+                POINT { x: 290, y: 90 },
+                POINT { x: 230, y: 90 },
+                centre,
+                clip
+            ),
+            ((60, 0), false)
+        );
+        // Past a quarter of the width or height it goes back to the centre.
+        assert_eq!(
+            follow(
+                POINT { x: 310, y: 90 },
+                POINT { x: 290, y: 90 },
+                centre,
+                clip
+            ),
+            ((20, 0), true)
+        );
+        assert_eq!(
+            follow(POINT { x: 200, y: 151 }, centre, centre, clip),
+            ((0, 51), true)
+        );
+    }
 
     #[test]
     fn each_click_keeps_the_counts_read_before_it() {
