@@ -70,7 +70,7 @@ impl PrimeApp {
         let dialog = self.open_dialog().and_then(|dialog| {
             let overlay = match dialog {
                 Dialog::AddAccount => {
-                    add_account_prompt_overlay(self.capture_prompt_valorant_running)
+                    add_account_prompt_overlay(self.capture_prompt_valorant_running, self.refreshed())
                 }
                 Dialog::LoginCapture => login_capture_overlay(self, self.login_capture.as_ref()?),
                 Dialog::CapturedAccount => {
@@ -1434,16 +1434,9 @@ fn account_identity_card(account: &AccountProfile) -> Element<'_, Message> {
     )
 }
 
-fn add_account_prompt_overlay(valorant_running: bool) -> Element<'static, Message> {
-    let mut body = column![
-        dialog_point(
-            theme::Icon::Power,
-            "Riot Client and VALORANT will be closed"
-        ),
-        dialog_point(
-            theme::Icon::Eraser,
-            "The current remembered login is cleared (other saved accounts are untouched)"
-        ),
+/// Without the interface refresh (`refresh`), the "Stay signed in" step is a plain point.
+fn add_account_prompt_overlay(valorant_running: bool, refresh: bool) -> Element<'static, Message> {
+    let tick_step: Element<'static, Message> = if refresh {
         // The step people miss, so the box's name stands out.
         row![
             container(theme::icon(
@@ -1468,7 +1461,24 @@ fn add_account_prompt_overlay(valorant_running: bool) -> Element<'static, Messag
             .width(Length::Fill),
         ]
         .spacing(10)
-        .align_y(alignment::Vertical::Center),
+        .align_y(alignment::Vertical::Center)
+        .into()
+    } else {
+        dialog_point(
+            theme::Icon::MousePointerClick,
+            "Sign in and tick \u{201c}Stay signed in\u{201d}",
+        )
+    };
+    let mut body = column![
+        dialog_point(
+            theme::Icon::Power,
+            "Riot Client and VALORANT will be closed"
+        ),
+        dialog_point(
+            theme::Icon::Eraser,
+            "The current remembered login is cleared (other saved accounts are untouched)"
+        ),
+        tick_step,
     ];
 
     if valorant_running {

@@ -123,7 +123,7 @@ know is ignored and kept. Each name is a constant in `storage.rs`; `PrimeApp::ex
   no progress toast over it; spinners on busy buttons, and centred states when Shop or
   Loadout can't load yet; themed placeholders for missing art, the loading wallet and bundle
   items, and "Looking up name…" in Live Match; and no toasts that repeat Add account's, the
-  sign-in's or Export account's dialog.
+  sign-in's or Export account's dialog. Add account's prompt shows "Stay signed in" in bold gold.
 
 One instance: starting Prime while it runs, even from the tray, brings the running window forward
 and the new start exits (`single_instance.rs`). Debug builds use their own name, so `cargo run`
