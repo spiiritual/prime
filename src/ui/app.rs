@@ -505,6 +505,12 @@ impl PrimeApp {
 
                 self.close_account_surfaces();
                 self.show_add_account_prompt = true;
+                // Stable, without the interface refresh, repeats its dialog in a toast.
+                if !self.refreshed() {
+                    self.set_status(Status::info(
+                        "Before Riot Client opens, confirm that you will tick \u{201c}Stay signed in\u{201d}.",
+                    ));
+                }
 
                 check_capture_prompt_game_task()
             }
@@ -537,7 +543,17 @@ impl PrimeApp {
                 }
 
                 // The sign-in dialog shows what's happening, so the only toast is for a loss.
-                if self.discard_pending_account() {
+                let discarded = self.discard_pending_account();
+                if !self.refreshed() {
+                    self.set_status(Status::progress(format!(
+                        "{}Opening Riot Client. When it appears, sign in with \u{201c}Stay signed in\u{201d} ticked.",
+                        if discarded {
+                            "Discarded the unsaved captured account. "
+                        } else {
+                            ""
+                        }
+                    )));
+                } else if discarded {
                     self.set_status(Status::warning("Discarded the unsaved captured account"));
                 }
                 self.close_account_surfaces();
@@ -705,7 +721,14 @@ impl PrimeApp {
                 match result {
                     Ok(export) => {
                         // The export dialog is the result.
-                        self.clear_progress_status();
+                        if self.refreshed() {
+                            self.clear_progress_status();
+                        } else {
+                            self.set_status(Status::success(format!(
+                                "Prepared account export for {}",
+                                export.display_name
+                            )));
+                        }
                         self.exported_account = Some(export);
                     }
                     Err(error) => {
@@ -1030,12 +1053,12 @@ impl PrimeApp {
                     return Task::none();
                 }
 
-                if !self
+                let Some(account) = self
                     .state
                     .accounts
                     .iter()
-                    .any(|account| account.id == account_id)
-                {
+                    .find(|account| account.id == account_id)
+                else {
                     self.open_account_menu = None;
                     self.account_switcher_open = false;
                     self.set_status(Status::error("Account profile no longer exists"));
@@ -1043,7 +1066,13 @@ impl PrimeApp {
                 };
 
                 // The sign-in dialog shows what's happening, so no toast.
+                let summary = account.summary();
                 self.close_account_surfaces();
+                if !self.refreshed() {
+                    self.set_status(Status::progress(format!(
+                        "Opening Riot Client and waiting for remembered login capture for {summary}"
+                    )));
+                }
                 // Capture into a separate slot so the account's working backup is only replaced
                 // after the login is confirmed to belong to this account.
                 self.start_login_capture(LoginCaptureTarget::Existing {

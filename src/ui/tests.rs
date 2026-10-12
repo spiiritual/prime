@@ -7938,6 +7938,13 @@ fn a_dialog_that_opens_is_its_own_feedback_without_a_toast() {
     let dir = tempdir().expect("temp dir");
     let (mut app, first, _) = two_account_app(dir.path());
 
+    // Stable, without the interface refresh, still posts the toast.
+    let _ = app.update(Message::AddAccount);
+    assert!(status_bar_visible(&app));
+    let _ = app.update(Message::CancelAddAccountCapture);
+    app.status = Status::default();
+
+    app.update_channel = Some(crate::updater::BETA_CHANNEL.to_string());
     let _ = app.update(Message::AddAccount);
     assert!(app.show_add_account_prompt);
     assert!(!status_bar_visible(&app));
