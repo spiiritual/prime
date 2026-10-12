@@ -58,8 +58,10 @@ still and moves the crosshair. Dots are fixed directions in the world, drawn thr
 like floating in a void; yaw turns freely and pitch stops at ±89°. In 3D dots appear only in a
 fixed zone straight ahead, half the view each way and outlined on the front wall, so none appears
 out of sight; in 2D they appear anywhere in the view. With raw counts the cursor is
-hidden and held on one pixel. Windows in 3D reads how far the cursor moved from the arena's centre
-on each raw packet and puts it back; a pixel turns the view by a pixel's angle at the centre.
+hidden and held on one pixel. Windows in 3D reads how far the hidden cursor moved on each raw
+packet and puts it back at the arena's centre only a quarter of the way to its edge (back after
+every packet lost about a tenth of the movement); a pixel turns the view by a pixel's angle at the
+centre.
 Windows in 2D is Windows' own crosshair cursor, kept inside the arena; a drawn one trailed it by
 frames. The reader sums counts and clicks and each frame takes them: a message per count rebuilt
 the whole UI up to 1000 times a second and starved the repaints. Clicks are tested where they
