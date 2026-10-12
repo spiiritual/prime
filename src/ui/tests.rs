@@ -7864,3 +7864,34 @@ fn aim_esc_closes_a_dialog_before_stopping_a_paused_run() {
     let _ = app.update(Message::EscapePressed);
     assert!(matches!(app.aim.phase, AimPhase::Over { .. }));
 }
+
+#[test]
+fn fetch_latest_waits_for_its_lookup_and_the_shop_fills_the_page_without_a_version() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, _) = two_account_app(dir.path());
+    app.client_version_input.clear();
+    assert!(super::screens::fills_page(&app, super::Tab::Shop));
+
+    assert_eq!(app.update(Message::RefreshClientVersion).units(), 1);
+    assert!(app.client_version_fetching);
+    assert_eq!(app.update(Message::RefreshClientVersion).units(), 0);
+
+    let _ = app.update(Message::ClientVersionLoaded {
+        user_requested: true,
+        result: Err("offline".to_string()),
+    });
+    assert!(!app.client_version_fetching);
+}
+
+#[test]
+fn export_account_runs_once_at_a_time() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, first, _) = two_account_app(dir.path());
+
+    assert_eq!(app.update(Message::RequestExportAccount(first.id)).units(), 1);
+    assert!(app.account_export_in_progress);
+    assert_eq!(app.update(Message::RequestExportAccount(first.id)).units(), 0);
+
+    let _ = app.update(Message::AccountExportPrepared(Err("failed".to_string())));
+    assert!(!app.account_export_in_progress);
+}

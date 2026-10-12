@@ -485,6 +485,9 @@ struct PrimeApp {
     update_channel: Option<String>,
     image_cache_usage: CacheUsage,
     image_cache_clearing: bool,
+    /// A Settings "Fetch latest" or Shop "Try again" client version lookup is running.
+    client_version_fetching: bool,
+    account_export_in_progress: bool,
     loading_frame: usize,
     now: iced::time::Instant,
 }

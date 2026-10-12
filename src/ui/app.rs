@@ -146,6 +146,8 @@ impl PrimeApp {
                 update_channel: crate::updater::current_channel(),
                 image_cache_usage: CacheUsage::default(),
                 image_cache_clearing: false,
+                client_version_fetching: false,
+                account_export_in_progress: false,
                 loading_frame: 0,
                 now: iced::time::Instant::now(),
             },
@@ -674,6 +676,9 @@ impl PrimeApp {
                 Task::none()
             }
             Message::RequestExportAccount(id) => {
+                if self.account_export_in_progress {
+                    return Task::none();
+                }
                 let Some(account) = self
                     .state
                     .accounts
@@ -692,6 +697,7 @@ impl PrimeApp {
                 let summary = account.summary();
                 self.close_account_surfaces();
                 self.set_status(Status::progress(format!("Exporting {summary}")));
+                self.account_export_in_progress = true;
 
                 Task::perform(
                     async move {
@@ -705,6 +711,7 @@ impl PrimeApp {
                 )
             }
             Message::AccountExportPrepared(result) => {
+                self.account_export_in_progress = false;
                 match result {
                     Ok(export) => {
                         self.set_status(Status::success(format!(
@@ -918,6 +925,10 @@ impl PrimeApp {
                 Task::none()
             }
             Message::RefreshClientVersion => {
+                if self.client_version_fetching {
+                    return Task::none();
+                }
+                self.client_version_fetching = true;
                 self.set_status(Status::progress("Refreshing Riot client version"));
                 fetch_client_version_task(true)
             }
@@ -931,37 +942,44 @@ impl PrimeApp {
             Message::ClientVersionLoaded {
                 user_requested,
                 result,
-            } => match result {
-                Ok(version) => {
-                    // The automatic lookup only fills an empty field; a manual refresh replaces it.
-                    if user_requested || self.client_version_input.trim().is_empty() {
-                        self.client_version_input = version.clone();
-                    }
-                    // The field shows the version.
-                    if user_requested {
-                        self.clear_progress_status();
-                    }
-
-                    self.load_active_tab()
+            } => {
+                if user_requested {
+                    self.client_version_fetching = false;
                 }
-                Err(error) => {
-                    let status =
-                        Status::error(format!("Could not fetch Riot client version: {error}"));
+                match result {
+                    Ok(version) => {
+                        // The automatic lookup only fills an empty field; a manual refresh replaces it.
+                        if user_requested || self.client_version_input.trim().is_empty() {
+                            self.client_version_input = version.clone();
+                        }
+                        // The field shows the version.
+                        if user_requested {
+                            self.clear_progress_status();
+                        }
 
-                    if user_requested {
-                        self.set_status(status);
-                        return Task::none();
+                        self.load_active_tab()
                     }
+                    Err(error) => {
+                        let status =
+                            Status::error(format!("Could not fetch Riot client version: {error}"));
 
-                    // Rank, level, availability, Shop and Loadout all need the version, so keep
-                    // trying in the background.
-                    self.set_background_status(status);
-                    Task::perform(
-                        async { tokio::time::sleep(super::CLIENT_VERSION_RETRY_INTERVAL).await },
-                        |()| Message::RetryClientVersion,
-                    )
+                        if user_requested {
+                            self.set_status(status);
+                            return Task::none();
+                        }
+
+                        // Rank, level, availability, Shop and Loadout all need the version, so keep
+                        // trying in the background.
+                        self.set_background_status(status);
+                        Task::perform(
+                            async {
+                                tokio::time::sleep(super::CLIENT_VERSION_RETRY_INTERVAL).await
+                            },
+                            |()| Message::RetryClientVersion,
+                        )
+                    }
                 }
-            },
+            }
             Message::ImportRedirect => {
                 let Some(account) = self.state.selected_account_mut() else {
                     self.account_switcher_open = false;

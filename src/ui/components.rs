@@ -566,11 +566,11 @@ pub(super) fn unavailable_state<'a>(
 pub(super) fn empty_state<'a>(
     icon: theme::Icon,
     title: &'a str,
-    body: &'a str,
+    body: impl Into<String>,
 ) -> Element<'a, Message> {
     let badge = container(theme::icon(icon, 24.0, theme::MUTED)).style(|_| card_style(14.0));
 
-    centred_state(badge, title, body.to_string(), [None, None])
+    centred_state(badge, title, body.into(), [None, None])
 }
 
 fn centred_state<'a>(

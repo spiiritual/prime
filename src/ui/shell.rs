@@ -1870,16 +1870,29 @@ fn import_account_prompt_overlay(app: &PrimeApp) -> Element<'_, Message> {
                 "Cancel",
                 (!app.import_account_in_progress).then_some(Message::CancelImportAccount),
             ),
-            dialog_action(
-                theme::Icon::Download,
-                if app.import_account_in_progress {
-                    "Importing\u{2026}"
-                } else {
-                    "Import"
-                },
-                theme::primary_button_style,
-                import_ready.then_some(Message::ConfirmImportAccount),
-            ),
+            if app.import_account_in_progress {
+                button(
+                    row![
+                        spinner(app.loading_frame, 15.0, theme::BG),
+                        text("Importing\u{2026}")
+                            .size(13)
+                            .font(theme::SEMIBOLD_FONT)
+                            .color(theme::BG)
+                    ]
+                    .spacing(8)
+                    .align_y(alignment::Vertical::Center),
+                )
+                .padding([9, 16])
+                .style(theme::primary_button_style)
+                .into()
+            } else {
+                dialog_action(
+                    theme::Icon::Download,
+                    "Import",
+                    theme::primary_button_style,
+                    import_ready.then_some(Message::ConfirmImportAccount),
+                )
+            },
         ],
     )
 }

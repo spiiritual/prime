@@ -1046,7 +1046,7 @@ fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Me
             Icon::Upload,
             "Export account",
             false,
-            Some(Message::RequestExportAccount(account_id)),
+            (!app.account_export_in_progress).then_some(Message::RequestExportAccount(account_id)),
         ))
         .push(menu_item(
             Icon::Trash,
@@ -1110,6 +1110,7 @@ fn menu_divider() -> Element<'static, Message> {
 /// The page with no accounts yet: the three ways to add one.
 fn first_account(app: &PrimeApp) -> Element<'_, Message> {
     let capture_idle = !app.launcher_capture_in_progress && !app.launch_in_progress();
+    let capturing_current = app.launcher_capture_kind == Some(LauncherCaptureKind::Current);
 
     let intro = column![
         text("Add your first account")
@@ -1135,13 +1136,19 @@ fn first_account(app: &PrimeApp) -> Element<'_, Message> {
             "Add account",
             "Sign in fresh in Riot Client. prime captures the login once you tick “Stay signed in”.",
             true,
+            None,
             capture_idle.then_some(Message::AddAccount),
         ),
         first_account_option(
             Icon::LogIn,
             "Add current account",
-            "Use whoever is already signed in to Riot Client right now.",
+            if capturing_current {
+                "Capturing who\u{2019}s signed in\u{2026}"
+            } else {
+                "Use whoever is already signed in to Riot Client right now."
+            },
             false,
+            capturing_current.then_some(app.loading_frame),
             capture_idle.then_some(Message::AddCurrentAccount),
         ),
         first_account_option(
@@ -1149,6 +1156,7 @@ fn first_account(app: &PrimeApp) -> Element<'_, Message> {
             "Import account",
             "Paste an export from another prime install.",
             false,
+            None,
             (!app.import_account_in_progress && capture_idle)
                 .then_some(Message::OpenImportAccount),
         ),
@@ -1178,6 +1186,8 @@ fn first_account_option(
     title: &'static str,
     body: &'static str,
     primary: bool,
+    // The loading frame while this option's capture runs; its icon turns into the spinner.
+    busy: Option<usize>,
     on_press: Option<Message>,
 ) -> Element<'static, Message> {
     let (badge, icon_color) = if primary {
@@ -1185,17 +1195,18 @@ fn first_account_option(
     } else {
         (theme::RAISED, theme::TEXT)
     };
+    let icon = match busy {
+        Some(frame) => spinner(frame, 17.0, icon_color),
+        None => theme::icon(icon, 17.0, icon_color),
+    };
 
     iced::widget::button(
         column![
-            container(theme::icon(icon, 17.0, icon_color))
-                .center_x(34)
-                .center_y(34)
-                .style(move |_| {
-                    container::Style::default()
-                        .background(badge)
-                        .border(iced::border::rounded(9))
-                }),
+            container(icon).center_x(34).center_y(34).style(move |_| {
+                container::Style::default()
+                    .background(badge)
+                    .border(iced::border::rounded(9))
+            }),
             text(title)
                 .size(14)
                 .font(theme::SEMIBOLD_FONT)
