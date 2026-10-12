@@ -401,6 +401,8 @@ struct PrimeApp {
     redirect_input: String,
     /// The Settings section last picked from its menu.
     settings_section: SettingsSection,
+    /// The Settings page shown, with the settings-pages experiment on.
+    settings_page: SettingsPage,
     token_import_open: bool,
     client_version_input: String,
     riot_client_path_input: String,
@@ -983,6 +985,44 @@ impl std::fmt::Display for SettingsSection {
     }
 }
 
+/// The Settings tab's pages with the settings-pages experiment on, in nav order.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SettingsPage {
+    General,
+    Status,
+    LiveMatch,
+    Storage,
+    About,
+    Experiments,
+    Advanced,
+}
+
+impl SettingsPage {
+    const ALL: [SettingsPage; 7] = [
+        SettingsPage::General,
+        SettingsPage::Status,
+        SettingsPage::LiveMatch,
+        SettingsPage::Storage,
+        SettingsPage::About,
+        SettingsPage::Experiments,
+        SettingsPage::Advanced,
+    ];
+}
+
+impl std::fmt::Display for SettingsPage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            SettingsPage::General => "General",
+            SettingsPage::Status => "Status",
+            SettingsPage::LiveMatch => "Live Match",
+            SettingsPage::Storage => "Storage",
+            SettingsPage::About => "About & updates",
+            SettingsPage::Experiments => "Experiments",
+            SettingsPage::Advanced => "Advanced",
+        })
+    }
+}
+
 /// The Accounts tab's sub-tabs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AccountsTab {
@@ -1183,6 +1223,7 @@ enum Message {
     RiotClientPathPicked(Option<PathBuf>),
     SaveSettings,
     SettingsSectionSelected(SettingsSection),
+    SettingsPageSelected(SettingsPage),
     ToggleTokenImport,
     OpenInExplorer(PathBuf),
     ExplorerOpened(Result<(), String>),

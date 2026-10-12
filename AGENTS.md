@@ -110,7 +110,16 @@ so Riot's server never sees it.
 Settings tab: Riot Client path, "keep in the system tray when closed" (on by default; while minimized or in the tray it
 polls every 30 minutes so sessions keep refreshing; the tray menu quits), Live Match's skin columns, client version
 (fetched at startup), image cache size and clearing, app updates, experiments, and a Riot redirect-token
-import as an advanced fallback for API access.
+import as an advanced fallback for API access. Stable shows them as one scrolling page whose nav scrolls
+to a section.
+
+With the settings-pages beta experiment, Settings is instead one page per section, picked from a nav
+beside it, each setting a row with its control on the right (`screens/settings_pages.rs`). General:
+the tray switch and the Riot Client path, saved as soon as it's empty or names a file, with no Save
+button. Status: the chat proxy switch and the status friends see. Live Match: its skin columns.
+Storage: the data folder and image cache size and clearing. About & updates: app updates, the beta
+channel and the client version (editable). Experiments. Advanced: the redirect-token import, not
+collapsed.
 
 Experiments: features still being tried, for beta only. Stable builds don't show Settings >
 Experiments and run without them; beta starts with each on and a switch turns it off.

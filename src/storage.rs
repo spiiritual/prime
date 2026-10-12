@@ -70,6 +70,10 @@ pub const AIM_MODES_EXPERIMENT: &str = "aim-trainer-modes";
 /// that look like what they stand in for. Off, as in stable, Prime looks as it did before.
 pub const INTERFACE_REFRESH_EXPERIMENT: &str = "interface-refresh";
 
+/// Settings as one page per section. Off, as in stable, it is one scrolling page whose nav
+/// scrolls to a section.
+pub const SETTINGS_PAGES_EXPERIMENT: &str = "settings-pages";
+
 fn minimize_on_close_default() -> bool {
     true
 }
