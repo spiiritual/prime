@@ -6698,6 +6698,27 @@ fn an_edited_riot_client_path_shows_as_unsaved_until_saved() {
 }
 
 #[test]
+fn a_typed_riot_client_path_saves_once_the_file_exists() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.update_channel = Some(crate::updater::BETA_CHANNEL.to_string());
+    let client = dir.path().join("RiotClientServices.exe");
+    fs::write(&client, "exe").expect("client");
+
+    let half_typed = client.display().to_string();
+    let half_typed = &half_typed[..half_typed.len() - 4];
+    let task = app.update(Message::RiotClientPathChanged(half_typed.to_string()));
+    assert_eq!(task.units(), 0);
+    assert!(app.riot_client_path_unsaved());
+
+    let _ = app.update(Message::RiotClientPathChanged(client.display().to_string()));
+    assert_eq!(app.state.riot_client_path, Some(client));
+
+    let _ = app.update(Message::RiotClientPathChanged(String::new()));
+    assert_eq!(app.state.riot_client_path, None);
+}
+
+#[test]
 fn a_failed_update_download_can_be_tried_again() {
     let dir = tempdir().expect("temp dir");
     let mut app = downloading_update_app(dir.path());
@@ -7956,4 +7977,26 @@ fn a_dialog_that_opens_is_its_own_feedback_without_a_toast() {
     )));
     assert!(app.exported_account.is_some());
     assert!(!status_bar_visible(&app));
+}
+
+#[test]
+fn stable_settings_stay_one_scrolling_page() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.update_channel = Some(crate::updater::STABLE_CHANNEL.to_string());
+    assert!(!app.experiment(crate::storage::SETTINGS_PAGES_EXPERIMENT));
+
+    // The nav scrolls to the section rather than switching pages.
+    let task = app.update(Message::SettingsSectionSelected(
+        super::SettingsSection::Storage,
+    ));
+    assert_eq!(app.settings_section, super::SettingsSection::Storage);
+    assert_eq!(app.settings_page, super::SettingsPage::General);
+    assert!(task.units() > 0);
+
+    app.update_channel = Some(crate::updater::BETA_CHANNEL.to_string());
+    assert!(app.experiment(crate::storage::SETTINGS_PAGES_EXPERIMENT));
+    let task = app.update(Message::SettingsPageSelected(super::SettingsPage::Storage));
+    assert_eq!(app.settings_page, super::SettingsPage::Storage);
+    assert_eq!(task.units(), 0);
 }

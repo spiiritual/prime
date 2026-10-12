@@ -13,7 +13,7 @@ use crate::riot::launcher_session::{
     CapturedLauncherSession, adopt_launcher_session_backup, remove_launcher_session_backup,
 };
 use crate::secret_clipboard::copy_secret_text;
-use crate::storage::{AccountRepository, StoredState};
+use crate::storage::{AccountRepository, SETTINGS_PAGES_EXPERIMENT, StoredState};
 use crate::updater::{UpdateCheckOutcome, check_for_update, download_and_prepare_update};
 
 use super::aim::{AimMessage, AimPhase, AimTrainerTab};
@@ -42,7 +42,7 @@ use super::{
     AccountsTab, AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, LoginCapture,
     LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange,
     PendingSettingsCheck, PresetNamePrompt, PresetNameTarget, PrimeApp, QuitAction, SettingsChange,
-    SettingsSection, Status, StatusKind, Tab, TabScrollOffsets, ViewRequest,
+    SettingsPage, SettingsSection, Status, StatusKind, Tab, TabScrollOffsets, ViewRequest,
     background_refresh_active, screens,
 };
 
@@ -76,6 +76,7 @@ impl PrimeApp {
                 new_display_name: String::new(),
                 redirect_input: String::new(),
                 settings_section: SettingsSection::RiotClient,
+                settings_page: SettingsPage::General,
                 token_import_open: false,
                 client_version_input: String::new(),
                 riot_client_path_input: String::new(),
@@ -2300,7 +2301,7 @@ impl PrimeApp {
             }
             Message::RiotClientPathChanged(value) => {
                 self.riot_client_path_input = value;
-                Task::none()
+                self.save_riot_client_path_if_valid()
             }
             Message::BrowseRiotClientPath => {
                 let start_dir = typed_riot_client_path(&self.riot_client_path_input)
@@ -2323,15 +2324,19 @@ impl PrimeApp {
                 )
             }
             Message::RiotClientPathPicked(path) => {
-                // Still needs Save, like a typed path.
+                // Like a typed path, it still needs Save unless Settings has pages.
                 if let Some(path) = path {
                     self.riot_client_path_input = path.display().to_string();
                 }
-                Task::none()
+                self.save_riot_client_path_if_valid()
             }
             Message::SettingsSectionSelected(section) => {
                 self.settings_section = section;
                 screens::scroll_to_settings_section(section)
+            }
+            Message::SettingsPageSelected(page) => {
+                self.settings_page = page;
+                Task::none()
             }
             Message::ToggleTokenImport => {
                 self.token_import_open = !self.token_import_open;
@@ -3724,6 +3729,18 @@ impl PrimeApp {
 
     pub(super) fn riot_client_path_unsaved(&self) -> bool {
         typed_riot_client_path(&self.riot_client_path_input) != self.state.riot_client_path
+    }
+
+    /// With Settings pages, which have no Save button, saves the typed path once it's empty (find
+    /// it automatically) or names a file, so half-typed paths are left alone.
+    fn save_riot_client_path_if_valid(&mut self) -> Task<Message> {
+        let valid =
+            typed_riot_client_path(&self.riot_client_path_input).is_none_or(|path| path.is_file());
+        if self.experiment(SETTINGS_PAGES_EXPERIMENT) && valid && self.riot_client_path_unsaved() {
+            self.handle_message(Message::SaveSettings)
+        } else {
+            Task::none()
+        }
     }
 
     fn load_settings_profiles_task(&self) -> Task<Message> {

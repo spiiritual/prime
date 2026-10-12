@@ -6,7 +6,7 @@ use iced::widget::operation::{AbsoluteOffset, scroll_to};
 use iced::widget::{checkbox, column, container, row, space, stack};
 use iced::{Color, Element, Length, Padding, Rectangle, Task, Theme, Vector, alignment};
 
-use crate::storage::{AIM_MODES_EXPERIMENT, INTERFACE_REFRESH_EXPERIMENT};
+use crate::storage::{AIM_MODES_EXPERIMENT, INTERFACE_REFRESH_EXPERIMENT, SETTINGS_PAGES_EXPERIMENT};
 use crate::ui::components::{anchored_popover, card_style, spinner};
 use crate::ui::data::live_match::{LIVE_MATCH_WEAPON_GROUPS, shown_weapons, weapon_name};
 use crate::ui::data::{format_bytes, typed_riot_client_path};
@@ -17,7 +17,7 @@ use crate::updater::{BETA_CHANNEL, STABLE_CHANNEL};
 
 const SECTION_NAV_WIDTH: f32 = 170.0;
 const KEY_WIDTH: f32 = 110.0;
-const ERROR_TEXT: Color = iced::color!(0xFF8A94);
+pub(super) const ERROR_TEXT: Color = iced::color!(0xFF8A94);
 const WEAPON_SLOT_WIDTH: f32 = 148.0;
 const WEAPON_SLOT_HEIGHT: f32 = 36.0;
 const WEAPON_PICKER_WIDTH: f32 = 452.0;
@@ -68,7 +68,7 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
             SettingsSection::LiveMatch,
             "The weapons whose skins show beside each player, left to right. Click a column to \
              change it.",
-            live_match_weapon_controls(app),
+            live_match_weapon_controls(app, WEAPON_SLOT_WIDTH),
         ),
         section(
             SettingsSection::Storage,
@@ -87,18 +87,7 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
                 SettingsSection::Experiments,
                 "Beta features still being worked on, on until you switch them off. Each can \
                  change or go away.",
-                column![
-                    checkbox(app.experiment(AIM_MODES_EXPERIMENT))
-                        .label("Aim Trainer: 3D view and Windows sensitivity")
-                        .on_toggle(|on| Message::ExperimentToggled(AIM_MODES_EXPERIMENT, on))
-                        .text_size(13),
-                    checkbox(app.refreshed())
-                        .label("Interface refresh: new spinner, sign-in dialog and placeholders")
-                        .on_toggle(|on| Message::ExperimentToggled(INTERFACE_REFRESH_EXPERIMENT, on))
-                        .text_size(13),
-                ]
-                .spacing(12)
-                .into(),
+                experiment_controls(app),
             )
         } else {
             space().into()
@@ -111,6 +100,31 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         ),
     ]
     .width(Length::Fill)
+    .into()
+}
+
+/// A checkbox per experiment.
+pub(super) fn experiment_controls(app: &PrimeApp) -> Element<'_, Message> {
+    [
+        (
+            AIM_MODES_EXPERIMENT,
+            "Aim Trainer: 3D view and Windows sensitivity",
+        ),
+        (
+            INTERFACE_REFRESH_EXPERIMENT,
+            "Interface refresh: new spinner, sign-in dialog and placeholders",
+        ),
+        (SETTINGS_PAGES_EXPERIMENT, "Settings: one page per section"),
+    ]
+    .into_iter()
+    .fold(column![].spacing(10), |controls, (name, label)| {
+        controls.push(
+            checkbox(app.experiment(name))
+                .label(label)
+                .on_toggle(move |on| Message::ExperimentToggled(name, on))
+                .text_size(13),
+        )
+    })
     .into()
 }
 
@@ -265,13 +279,13 @@ fn field_label(label: &str) -> Element<'_, Message> {
 }
 
 /// The design's plain secondary button.
-fn plain_button(label: &str) -> iced::widget::Button<'_, Message> {
+pub(super) fn plain_button(label: &str) -> iced::widget::Button<'_, Message> {
     button(text(label).size(13).font(theme::SEMIBOLD_FONT)).padding([8, 14])
 }
 
 /// A button's label, or the spinner and `busy` while its work runs. Without the interface
 /// refresh, `busy` alone.
-fn busy_label<'a>(
+pub(super) fn busy_label<'a>(
     app: &PrimeApp,
     busy: Option<&'a str>,
     idle: Element<'a, Message>,
@@ -357,7 +371,7 @@ fn riot_client_path_controls(app: &PrimeApp) -> Element<'_, Message> {
 }
 
 /// A slot per skin column, left to right as on the page, each opening a weapon picker.
-fn live_match_weapon_controls(app: &PrimeApp) -> Element<'_, Message> {
+pub(super) fn live_match_weapon_controls(app: &PrimeApp, slot_width: f32) -> Element<'_, Message> {
     let shown = shown_weapons(app.state.live_match_weapons.as_deref());
     let mut columns = shown
         .iter()
@@ -365,13 +379,13 @@ fn live_match_weapon_controls(app: &PrimeApp) -> Element<'_, Message> {
         .fold(row![].spacing(8), |columns, (column, weapon)| {
             let open = app.open_weapon_picker == Some(column);
             columns.push(anchored_popover(
-                weapon_slot(column, weapon_name(weapon), open),
+                weapon_slot(column, weapon_name(weapon), open, slot_width),
                 weapon_picker(column, &shown),
                 open,
                 WEAPON_SLOT_HEIGHT + 6.0,
                 // The popover lines up with its anchor's right edge, so a negative inset of
                 // the width difference lines it up with the slot's left edge instead.
-                WEAPON_SLOT_WIDTH - WEAPON_PICKER_WIDTH,
+                slot_width - WEAPON_PICKER_WIDTH,
             ))
         })
         .align_y(alignment::Vertical::Center)
@@ -401,7 +415,7 @@ fn live_match_weapon_controls(app: &PrimeApp) -> Element<'_, Message> {
     columns.into()
 }
 
-fn hovered(status: iced::widget::button::Status) -> bool {
+pub(super) fn hovered(status: iced::widget::button::Status) -> bool {
     matches!(
         status,
         iced::widget::button::Status::Hovered | iced::widget::button::Status::Pressed
@@ -409,7 +423,12 @@ fn hovered(status: iced::widget::button::Status) -> bool {
 }
 
 /// The column's number, weapon and a chevron, raised while its picker is open.
-fn weapon_slot(column: usize, name: &'static str, open: bool) -> Element<'static, Message> {
+fn weapon_slot(
+    column: usize,
+    name: &'static str,
+    open: bool,
+    width: f32,
+) -> Element<'static, Message> {
     iced::widget::button(
         row![
             text((column + 1).to_string())
@@ -441,7 +460,7 @@ fn weapon_slot(column: usize, name: &'static str, open: bool) -> Element<'static
         bottom: 0.0,
         left: 12.0,
     })
-    .width(WEAPON_SLOT_WIDTH)
+    .width(width)
     .height(WEAPON_SLOT_HEIGHT)
     .style(move |_, status| iced::widget::button::Style {
         background: Some(if open || hovered(status) {
@@ -653,7 +672,7 @@ fn path_row<'a>(label: &'a str, path: &Path) -> Element<'a, Message> {
 }
 
 /// The path with %APPDATA% or %LOCALAPPDATA% in place of the user's own folders.
-fn short_path(path: &Path) -> String {
+pub(super) fn short_path(path: &Path) -> String {
     for variable in ["LOCALAPPDATA", "APPDATA"] {
         if let Some(root) = std::env::var_os(variable)
             && let Ok(rest) = path.strip_prefix(&root)
@@ -665,7 +684,7 @@ fn short_path(path: &Path) -> String {
     path.display().to_string()
 }
 
-fn update_controls(app: &PrimeApp) -> Element<'_, Message> {
+pub(super) fn update_controls(app: &PrimeApp) -> Element<'_, Message> {
     let current = crate::updater::CURRENT_VERSION;
 
     if let Some(update) = app.app_update_status.pending_update() {
@@ -776,7 +795,7 @@ fn update_controls(app: &PrimeApp) -> Element<'_, Message> {
 /// Beta gets new versions first. Joining or leaving checks the other channel; its latest release
 /// shows as an update to install, older or not. Outside an install, such as `cargo run`, it shows
 /// stable and can't switch.
-fn channel_controls(app: &PrimeApp) -> Element<'_, Message> {
+pub(super) fn channel_controls(app: &PrimeApp) -> Element<'_, Message> {
     let beta = app.update_channel.as_deref() == Some(BETA_CHANNEL);
     let switching = app
         .app_update_status
@@ -946,7 +965,7 @@ fn token_import_controls(app: &PrimeApp) -> Element<'_, Message> {
     .into()
 }
 
-fn clear_cache_style(
+pub(super) fn clear_cache_style(
     theme: &Theme,
     status: iced::widget::button::Status,
 ) -> iced::widget::button::Style {

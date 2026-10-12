@@ -1057,7 +1057,7 @@ fn menu_item_style(
     }
 }
 
-fn presence_label(status: PresenceStatus) -> &'static str {
+pub(super) fn presence_label(status: PresenceStatus) -> &'static str {
     match status {
         PresenceStatus::Online => "Online",
         PresenceStatus::Mobile => "Mobile",
@@ -1073,7 +1073,7 @@ fn presence_description(status: PresenceStatus) -> &'static str {
     }
 }
 
-fn presence_mark(status: PresenceStatus) -> Element<'static, Message> {
+pub(super) fn presence_mark(status: PresenceStatus) -> Element<'static, Message> {
     match status {
         PresenceStatus::Online => container(space())
             .width(9)

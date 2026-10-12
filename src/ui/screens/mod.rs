@@ -4,10 +4,13 @@ mod game_settings;
 mod live_match;
 mod loadout;
 mod settings;
+mod settings_pages;
 mod shop;
 
 use iced::Element;
 use iced::widget::row;
+
+use crate::storage::SETTINGS_PAGES_EXPERIMENT;
 
 use super::components::{empty_state, spinner, unavailable_state};
 use super::theme::{self, Icon, button, text};
@@ -32,6 +35,7 @@ pub(super) fn tab(app: &PrimeApp, tab: Tab) -> Element<'_, Message> {
         Tab::Shop => shop::tab(app),
         Tab::Loadout => loadout::tab(app),
         Tab::AimTrainer => aim_trainer::tab(app),
+        Tab::Settings if app.experiment(SETTINGS_PAGES_EXPERIMENT) => settings_pages::tab(app),
         Tab::Settings => settings::tab(app),
         Tab::LiveMatch => live_match::tab(app),
     }
@@ -61,7 +65,13 @@ pub(super) fn fills_page(app: &PrimeApp, tab: Tab) -> bool {
 
 /// A tab's menu that stays beside its scrolling page; only Settings has one.
 pub(super) fn side_nav(app: &PrimeApp, tab: Tab) -> Option<Element<'_, Message>> {
-    (tab == Tab::Settings).then(|| settings::section_nav(app))
+    (tab == Tab::Settings).then(|| {
+        if app.experiment(SETTINGS_PAGES_EXPERIMENT) {
+            settings_pages::section_nav(app)
+        } else {
+            settings::section_nav(app)
+        }
+    })
 }
 
 /// What Shop or Loadout shows instead of content it can't load yet: no account to load, or the
