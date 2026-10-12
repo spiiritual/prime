@@ -15,6 +15,7 @@ use thiserror::Error;
 use time::OffsetDateTime;
 
 use crate::account::AccountId;
+use crate::storage::UnknownFields;
 
 mod summary;
 
@@ -33,7 +34,6 @@ pub enum GameSettingsProfilePurpose {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct GameSettingsProfile {
     pub id: String,
     pub name: String,
@@ -45,6 +45,8 @@ pub struct GameSettingsProfile {
     pub preference_base_url: String,
     pub settings_version: Option<i64>,
     pub preference: ValorantSettingsDocument,
+    #[serde(flatten)]
+    pub unknown: UnknownFields,
 }
 
 impl GameSettingsProfile {
@@ -623,6 +625,7 @@ mod tests {
                 "type": VALORANT_PLAYER_SETTINGS_TYPE,
                 "data": {"roamingSetttingsVersion": 15}
             })),
+            unknown: Default::default(),
         };
         repository.save(&profile).expect("save profile");
         fs::write(dir.path().join("corrupt.json"), "{ not json").expect("corrupt file");
@@ -659,6 +662,7 @@ mod tests {
                 "type": VALORANT_PLAYER_SETTINGS_TYPE,
                 "data": {"roamingSetttingsVersion": 15}
             })),
+            unknown: Default::default(),
         }
     }
 

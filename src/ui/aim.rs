@@ -11,6 +11,7 @@ use crate::aim_trainer::{
     self, AimRun, AimTrainerState, Difficulty, Game, SensitivityMode, View, ViewMode,
 };
 use crate::raw_mouse;
+use crate::storage::AIM_MODES_EXPERIMENT;
 
 #[derive(Clone, Debug)]
 pub(super) enum AimMessage {
@@ -255,15 +256,27 @@ impl PrimeApp {
         }
     }
 
-    fn start_aim_run(&mut self) -> Task<Message> {
+    /// The Sensitivity and View a new run uses. Without the experiment they're the original
+    /// trainer's, whatever is saved, so switching it back on restores the saved choices.
+    pub(super) fn aim_modes(&self) -> (SensitivityMode, ViewMode) {
         let settings = &self.state.aim_trainer;
-        if !self.aim.can_start(settings.sensitivity_mode) {
+        if self.state.experiment(AIM_MODES_EXPERIMENT) {
+            (settings.sensitivity_mode, settings.view_mode)
+        } else {
+            (SensitivityMode::Valorant, ViewMode::TwoD)
+        }
+    }
+
+    fn start_aim_run(&mut self) -> Task<Message> {
+        let (sensitivity_mode, view_mode) = self.aim_modes();
+        let settings = &self.state.aim_trainer;
+        if !self.aim.can_start(sensitivity_mode) {
             return Task::none();
         }
         let (Some(view), Some(arena)) = (self.aim.view(), self.aim.arena) else {
             return Task::none();
         };
-        let sensitivity = match settings.sensitivity_mode {
+        let sensitivity = match sensitivity_mode {
             SensitivityMode::Valorant => self.aim.sensitivity(),
             SensitivityMode::Windows => None,
         };
@@ -271,7 +284,7 @@ impl PrimeApp {
             AimPhase::Paused(game) => game,
             _ => Box::new(Game::new(
                 sensitivity,
-                settings.view_mode,
+                view_mode,
                 settings.difficulty,
                 view,
                 seed(),
@@ -315,9 +328,9 @@ impl PrimeApp {
             unix_now(),
         );
         let previous_best = self.state.aim_trainer.best(game.difficulty());
-        let new_best = run.score > previous_best.map_or(0, |best| best.score);
+        let new_best = run.score > previous_best.as_ref().map_or(0, |best| best.score);
         let save = if new_best {
-            *self.state.aim_trainer.best_mut(game.difficulty()) = Some(run);
+            *self.state.aim_trainer.best_mut(game.difficulty()) = Some(run.clone());
             self.save_task()
         } else {
             Task::none()

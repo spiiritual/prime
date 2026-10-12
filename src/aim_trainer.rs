@@ -6,6 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::storage::UnknownFields;
+
 /// VALORANT turns this many degrees per mouse count at sensitivity 1.
 pub const DEGREES_PER_COUNT: f64 = 0.07;
 /// VALORANT's horizontal field of view, across the whole monitor.
@@ -647,7 +649,6 @@ impl Rng {
 
 /// What `accounts.json` keeps for the Aim Trainer. Left out while it's all default.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct AimTrainerState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sensitivity: Option<f64>,
@@ -670,6 +671,8 @@ pub struct AimTrainerState {
     /// Runs fill the monitor.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fullscreen: bool,
+    #[serde(flatten)]
+    pub unknown: UnknownFields,
 }
 
 /// How fast the mouse aims.
@@ -714,9 +717,9 @@ impl AimTrainerState {
     /// Each difficulty keeps its own best run.
     pub fn best(&self, difficulty: Difficulty) -> Option<AimRun> {
         match difficulty {
-            Difficulty::Easy => self.best_easy,
-            Difficulty::Normal => self.best_normal,
-            Difficulty::Hard => self.best,
+            Difficulty::Easy => self.best_easy.clone(),
+            Difficulty::Normal => self.best_normal.clone(),
+            Difficulty::Hard => self.best.clone(),
         }
     }
 
@@ -730,8 +733,7 @@ impl AimTrainerState {
 }
 
 /// A finished run as saved: each difficulty keeps its best one for the whole app.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AimRun {
     pub score: u32,
     pub misses: u32,
@@ -744,6 +746,8 @@ pub struct AimRun {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dpi: Option<u32>,
     pub finished_at_unix: i64,
+    #[serde(flatten)]
+    pub unknown: UnknownFields,
 }
 
 impl AimRun {
@@ -762,6 +766,7 @@ impl AimRun {
             sensitivity,
             dpi,
             finished_at_unix,
+            unknown: Default::default(),
         }
     }
 

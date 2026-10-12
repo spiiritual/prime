@@ -6,6 +6,8 @@ use thiserror::Error;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use crate::storage::UnknownFields;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct AccountId(Uuid);
@@ -120,13 +122,14 @@ impl fmt::Display for ValorantRegion {
 }
 
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct AuthSession {
     pub access_token: String,
     pub id_token: Option<String>,
     pub entitlements_token: Option<String>,
     pub token_type: String,
     pub expires_at_unix: Option<i64>,
+    #[serde(flatten)]
+    pub unknown: UnknownFields,
 }
 
 impl fmt::Debug for AuthSession {
@@ -161,6 +164,7 @@ impl AuthSession {
             entitlements_token,
             token_type: token_type.into(),
             expires_at_unix,
+            unknown: Default::default(),
         }
     }
 
@@ -178,11 +182,12 @@ impl AuthSession {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct LauncherSessionBackup {
     pub data_dir: PathBuf,
     pub captured_at_unix: i64,
     pub puuid: String,
+    #[serde(flatten)]
+    pub unknown: UnknownFields,
 }
 
 impl LauncherSessionBackup {
@@ -196,7 +201,6 @@ impl LauncherSessionBackup {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CompetitiveRank {
     pub tier: i64,
     pub rank_name: String,
@@ -205,6 +209,8 @@ pub struct CompetitiveRank {
     #[serde(deserialize_with = "discard_legacy_field")]
     // Compatibility: older files saved the rank's season, which nothing read.
     pub legacy_season_id: (),
+    #[serde(flatten)]
+    pub unknown: UnknownFields,
 }
 
 impl CompetitiveRank {
@@ -214,6 +220,7 @@ impl CompetitiveRank {
             rank_name: rank_name.into(),
             ranked_rating,
             legacy_season_id: (),
+            unknown: Default::default(),
         }
     }
 
@@ -223,7 +230,6 @@ impl CompetitiveRank {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct AccountPenaltyDuration {
     pub ends_at_unix: Option<i64>,
     pub games_remaining: Option<i64>,
@@ -261,7 +267,6 @@ impl AccountPenaltyDuration {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct AccountPenalty {
     pub rating_name: Option<String>,
     pub duration: AccountPenaltyDuration,
@@ -298,7 +303,7 @@ impl AccountPenalty {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case", tag = "status", deny_unknown_fields)]
+#[serde(rename_all = "snake_case", tag = "status")]
 pub enum AccountPenaltyStatus {
     #[default]
     Unchecked,
@@ -366,7 +371,6 @@ fn format_penalty_duration(seconds: i64) -> String {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct AccountProfile {
     pub id: AccountId,
     pub display_name: String,
@@ -395,6 +399,8 @@ pub struct AccountProfile {
     #[serde(deserialize_with = "discard_legacy_field")]
     // Compatibility: older profiles saved an optional Riot sign-in name; it is read and dropped.
     pub legacy_username: (),
+    #[serde(flatten)]
+    pub unknown: UnknownFields,
 }
 
 /// Reads and drops a field older files may still contain.
@@ -415,6 +421,20 @@ where
 }
 
 impl AccountProfile {
+    /// Drops the fields a newer Prime wrote that this build doesn't know, nested ones included.
+    pub fn clear_unknown(&mut self) {
+        self.unknown = UnknownFields::default();
+        if let Some(session) = &mut self.session {
+            session.unknown = UnknownFields::default();
+        }
+        if let Some(backup) = &mut self.launcher_session {
+            backup.unknown = UnknownFields::default();
+        }
+        if let Some(rank) = &mut self.competitive_rank {
+            rank.unknown = UnknownFields::default();
+        }
+    }
+
     pub fn new(
         display_name: impl Into<String>,
         shard: Shard,
@@ -441,6 +461,7 @@ impl AccountProfile {
             player_card_id: None,
             legacy_last_refreshed_at_unix: (),
             legacy_username: (),
+            unknown: UnknownFields::default(),
         })
     }
 
@@ -668,6 +689,7 @@ mod tests {
             data_dir: dir.path().to_path_buf(),
             captured_at_unix: 100,
             puuid: "puuid-a".to_string(),
+            unknown: Default::default(),
         };
 
         assert!(!backup.is_ready());
@@ -684,6 +706,7 @@ mod tests {
             data_dir: PathBuf::from("backup"),
             captured_at_unix: 100,
             puuid: "puuid-a".to_string(),
+            unknown: Default::default(),
         };
 
         account
@@ -702,6 +725,7 @@ mod tests {
             data_dir: PathBuf::from("backup"),
             captured_at_unix: 100,
             puuid: "puuid-b".to_string(),
+            unknown: Default::default(),
         };
 
         let err = account

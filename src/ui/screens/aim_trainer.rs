@@ -9,6 +9,7 @@ use iced::{
 use time::{OffsetDateTime, UtcOffset};
 
 use crate::aim_trainer::{self, AimRun, Difficulty, Game, SensitivityMode, ViewMode};
+use crate::storage::AIM_MODES_EXPERIMENT;
 use crate::ui::aim::{AimMessage, AimPhase, AimTrainerTab};
 use crate::ui::components::{mono, segmented};
 use crate::ui::theme::{self, Icon, text};
@@ -27,11 +28,11 @@ fn run_settings(app: &PrimeApp) -> (SensitivityMode, ViewMode, Difficulty) {
             (game.sensitivity_mode(), game.mode(), game.difficulty())
         }
         _ => {
-            let settings = &app.state.aim_trainer;
+            let (sensitivity_mode, view_mode) = app.aim_modes();
             (
-                settings.sensitivity_mode,
-                settings.view_mode,
-                settings.difficulty,
+                sensitivity_mode,
+                view_mode,
+                app.state.aim_trainer.difficulty,
             )
         }
     }
@@ -242,7 +243,13 @@ fn setup_card(app: &PrimeApp, paused: bool) -> Element<'_, Message> {
                 .color(theme::MUTED),
         ]
         .spacing(4),
-        choice(
+    ]
+    .spacing(14);
+
+    // The Sensitivity and View choices are an experiment; without it runs use the original modes.
+    let modes = app.state.experiment(AIM_MODES_EXPERIMENT);
+    if modes {
+        card = card.push(choice(
             "Sensitivity",
             [
                 (SensitivityMode::Valorant, "VALORANT"),
@@ -252,22 +259,23 @@ fn setup_card(app: &PrimeApp, paused: bool) -> Element<'_, Message> {
             sensitivity_hint,
             paused,
             AimMessage::SensitivityModeChanged,
-        ),
-    ]
-    .spacing(14);
+        ));
+    }
 
     if sensitivity_mode == SensitivityMode::Valorant {
         card = card.push(sensitivity_fields(tab, paused));
     }
 
-    card = card.push(choice(
-        "View",
-        [(ViewMode::ThreeD, "3D"), (ViewMode::TwoD, "2D")],
-        view_mode,
-        view_hint,
-        paused,
-        AimMessage::ViewModeChanged,
-    ));
+    if modes {
+        card = card.push(choice(
+            "View",
+            [(ViewMode::ThreeD, "3D"), (ViewMode::TwoD, "2D")],
+            view_mode,
+            view_hint,
+            paused,
+            AimMessage::ViewModeChanged,
+        ));
+    }
 
     card = card.push(choice(
         "Difficulty",

@@ -27,7 +27,6 @@ pub struct ImportedAccount {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct AccountExportPackage {
     version: u32,
     account: AccountProfile,
@@ -35,7 +34,6 @@ struct AccountExportPackage {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct ExportedLauncherFile {
     path: String,
     contents: String,
@@ -100,6 +98,8 @@ pub fn import_account(
 
     let backup_root = backup_root.as_ref();
     let mut account = package.account;
+    // Fields this build doesn't know came from someone else's Prime; don't keep or pass them on.
+    account.clear_unknown();
     let original_id = account.id;
     let launcher_backup = validate_imported_launcher_session(&account, &package.launcher_files)?;
     if let Some(existing) =
@@ -580,6 +580,7 @@ mod tests {
             data_dir: backup_source.path().to_path_buf(),
             captured_at_unix: 100,
             puuid: "puuid".to_string(),
+            unknown: Default::default(),
         });
 
         let encoded = export_account(&account).expect("export");
@@ -628,6 +629,7 @@ mod tests {
             data_dir: backup_source.path().to_path_buf(),
             captured_at_unix: 100,
             puuid: "puuid".to_string(),
+            unknown: Default::default(),
         });
 
         let encoded = export_account(&account).expect("export");
@@ -653,12 +655,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn import_drops_fields_this_build_does_not_know() {
+        let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
+        account.competitive_rank = Some(crate::account::CompetitiveRank::new(15, "Gold 1", 42));
+        let mut package = serde_json::to_value(AccountExportPackage {
+            version: EXPORT_VERSION,
+            account,
+            launcher_files: Vec::new(),
+        })
+        .expect("package json");
+        package["account"]["from_elsewhere"] = serde_json::json!("x".repeat(64));
+        package["account"]["competitive_rank"]["from_elsewhere"] = serde_json::json!(1);
+        let encoded = base64_encode(&serde_json::to_vec(&package).expect("package bytes"));
+        let import_root = tempdir().expect("import root");
+
+        let imported = import_account(&encoded, import_root.path(), &[]).expect("import");
+
+        let saved = serde_json::to_string(&imported.account).expect("account json");
+        assert!(!saved.contains("from_elsewhere"), "{saved}");
+    }
+
     fn export_with_settings(puuid: &str, settings: &str) -> String {
         let mut account = AccountProfile::new("Main", Shard::Na).expect("account");
         account.launcher_session = Some(LauncherSessionBackup {
             data_dir: PathBuf::from("Data"),
             captured_at_unix: 100,
             puuid: puuid.to_string(),
+            unknown: Default::default(),
         });
         let package = AccountExportPackage {
             version: EXPORT_VERSION,
@@ -743,6 +767,7 @@ mod tests {
             data_dir: PathBuf::from("Data"),
             captured_at_unix: 100,
             puuid: "puuid".to_string(),
+            unknown: Default::default(),
         });
         let package = AccountExportPackage {
             version: EXPORT_VERSION,
@@ -810,6 +835,7 @@ mod tests {
             data_dir: PathBuf::from("Data"),
             captured_at_unix: 100,
             puuid: "puuid".to_string(),
+            unknown: Default::default(),
         });
         let package = AccountExportPackage {
             version: EXPORT_VERSION,
@@ -876,6 +902,7 @@ mod tests {
             data_dir: missing.path().join("Data"),
             captured_at_unix: 100,
             puuid: "puuid".to_string(),
+            unknown: Default::default(),
         });
 
         let err = export_account(&account).expect_err("incomplete launcher session");

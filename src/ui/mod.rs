@@ -459,6 +459,9 @@ struct PrimeApp {
     /// When the last update check that nobody asked for started: at startup, or when the window
     /// came back.
     app_update_checked_at: Option<iced::time::Instant>,
+    /// The update channel checks follow (`win` for stable, or `beta`), read at startup. `None`
+    /// outside an install.
+    update_channel: Option<String>,
     image_cache_usage: CacheUsage,
     image_cache_clearing: bool,
     loading_frame: usize,
@@ -887,16 +890,18 @@ enum SettingsSection {
     LiveMatch,
     Storage,
     Updates,
+    Experiments,
     Advanced,
 }
 
 impl SettingsSection {
-    const ALL: [SettingsSection; 6] = [
+    const ALL: [SettingsSection; 7] = [
         SettingsSection::RiotClient,
         SettingsSection::SystemTray,
         SettingsSection::LiveMatch,
         SettingsSection::Storage,
         SettingsSection::Updates,
+        SettingsSection::Experiments,
         SettingsSection::Advanced,
     ];
 }
@@ -909,6 +914,7 @@ impl std::fmt::Display for SettingsSection {
             SettingsSection::LiveMatch => "Live Match",
             SettingsSection::Storage => "Storage & cache",
             SettingsSection::Updates => "Updates",
+            SettingsSection::Experiments => "Experiments",
             SettingsSection::Advanced => "Advanced",
         })
     }
@@ -1032,6 +1038,7 @@ enum Message {
     Tray(tray::TrayAction),
     MinimizeOnCloseToggled(bool),
     ChatProxyToggled(bool),
+    ExperimentToggled(&'static str, bool),
     /// Opens or closes the weapon picker under one of Settings' Live Match columns, from 0.
     ToggleWeaponPicker(usize),
     ResetLiveMatchWeapons,
@@ -1143,6 +1150,8 @@ enum Message {
     ToggleStatusMenu,
     PresenceStatusPicked(crate::riot::chat_proxy::PresenceStatus),
     CheckForAppUpdate,
+    /// Checks another update channel, so its latest release can be installed.
+    SwitchUpdateChannel(&'static str),
     AppUpdateChecked {
         user_requested: bool,
         result: Result<UpdateCheckOutcome, String>,
