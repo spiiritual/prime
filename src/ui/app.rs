@@ -147,6 +147,7 @@ impl PrimeApp {
                 update_channel: crate::updater::current_channel(),
                 image_cache_usage: CacheUsage::default(),
                 image_cache_clearing: false,
+                logs_exporting: false,
                 client_version_fetching: false,
                 account_export_in_progress: false,
                 image_cache_measured: false,
@@ -346,6 +347,13 @@ impl PrimeApp {
     /// Shows a status message. Setting the same text again restarts its display time, so a
     /// repeated action still gets visible feedback.
     pub(super) fn set_status(&mut self, status: Status) {
+        // What the user saw, in order, is most of what a log needs to follow what happened.
+        match status.kind {
+            StatusKind::Error | StatusKind::Warning => {
+                log::warn!("{:?}: {}", status.kind, status.text)
+            }
+            _ => log::info!("{:?}: {}", status.kind, status.text),
+        }
         self.now = iced::time::Instant::now();
         if !super::status_bar_visible(self) {
             self.toast_appeared_at = self.now;
@@ -2391,6 +2399,25 @@ impl PrimeApp {
             }
             Message::ClearImageCache => self.clear_image_cache(),
             Message::ImageCacheCleared(result) => self.handle_image_cache_cleared(result),
+            Message::ExportLogs => self.export_logs(),
+            Message::LogsExported(result) => {
+                self.logs_exporting = false;
+                match result {
+                    Ok(path) => {
+                        self.set_status(Status::success(
+                            "Saved the logs. Send the selected zip to the Prime developer.",
+                        ));
+                        return Task::perform(
+                            async move { open_in_explorer(&path).map_err(|error| error.to_string()) },
+                            Message::ExplorerOpened,
+                        );
+                    }
+                    Err(error) => {
+                        self.set_status(Status::error(format!("Could not export logs: {error}")))
+                    }
+                }
+                Task::none()
+            }
             Message::LaunchAccount(id) => {
                 if self.launching_account.is_some() || self.launch_preflight_account.is_some() {
                     return Task::none();
@@ -2657,7 +2684,9 @@ impl PrimeApp {
                 self.riot_client_checking = false;
                 // Riot Client closed, so nothing will connect through this proxy again. During a
                 // launch it may not have started yet.
-                if !riot_client_running && self.launching_account.is_none() {
+                if !riot_client_running && self.launching_account.is_none() && self.chat_proxy.is_some()
+                {
+                    log::info!("Riot Client closed");
                     self.chat_proxy = None;
                 }
                 if !self.status_control_visible() {
@@ -2973,6 +3002,74 @@ impl PrimeApp {
         }
 
         Task::none()
+    }
+
+    fn export_logs(&mut self) -> Task<Message> {
+        if self.logs_exporting {
+            return Task::none();
+        }
+
+        self.logs_exporting = true;
+        self.set_status(Status::progress("Exporting logs"));
+        let system_info = self.system_info();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || crate::log_export::export(&system_info))
+                    .await
+                    .map_err(|error| error.to_string())?
+                    .map_err(|error| error.to_string())
+            },
+            Message::LogsExported,
+        )
+    }
+
+    /// How Prime is set up, for Export logs: no account names, IDs or tokens.
+    pub(super) fn system_info(&self) -> String {
+        use crate::storage::{
+            AIM_MODES_EXPERIMENT, INTERFACE_REFRESH_EXPERIMENT, SETTINGS_PAGES_EXPERIMENT,
+        };
+
+        let experiments: Vec<&str> = [
+            AIM_MODES_EXPERIMENT,
+            INTERFACE_REFRESH_EXPERIMENT,
+            SETTINGS_PAGES_EXPERIMENT,
+        ]
+        .into_iter()
+        .filter(|name| self.experiment(name))
+        .collect();
+        let env = |name| std::env::var(name).unwrap_or_else(|_| "unset".to_string());
+        format!(
+            "Prime {} ({})\n\
+             Experiments on: {}\n\
+             Route chat through Prime: {}\n\
+             Status friends see: {:?}\n\
+             Keep in tray when closed: {}\n\
+             Riot Client path: {}\n\
+             Accounts: {}\n\
+             WGPU_BACKEND: {}\n\
+             WGPU_POWER_PREF: {}\n",
+            crate::updater::CURRENT_VERSION,
+            self.update_channel
+                .as_deref()
+                .map_or("not installed".to_string(), |channel| format!("{channel} channel")),
+            if experiments.is_empty() {
+                "none".to_string()
+            } else {
+                experiments.join(", ")
+            },
+            self.state.chat_proxy,
+            self.state.presence_status,
+            self.state.minimize_on_close,
+            self.state
+                .riot_client_path
+                .as_ref()
+                .map_or("found automatically".to_string(), |path| {
+                    path.display().to_string()
+                }),
+            self.state.accounts.len(),
+            env("WGPU_BACKEND"),
+            env("WGPU_POWER_PREF"),
+        )
     }
 
     fn clear_image_cache(&mut self) -> Task<Message> {

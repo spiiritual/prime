@@ -109,7 +109,7 @@ so Riot's server never sees it.
 
 Settings tab: Riot Client path, "keep in the system tray when closed" (on by default; while minimized or in the tray it
 polls every 30 minutes so sessions keep refreshing; the tray menu quits), Live Match's skin columns, client version
-(fetched at startup), image cache size and clearing, app updates, experiments, and a Riot redirect-token
+(fetched at startup), image cache size and clearing, Export logs, app updates, experiments, and a Riot redirect-token
 import as an advanced fallback for API access. Stable shows them as one scrolling page whose nav scrolls
 to a section.
 
@@ -117,7 +117,7 @@ With the settings-pages beta experiment, Settings is instead one page per sectio
 beside it, each setting a row with its control on the right (`screens/settings_pages.rs`). General:
 the tray switch and the Riot Client path, saved as soon as it's empty or names a file, with no Save
 button. Status: the chat proxy switch and the status friends see. Live Match: its skin columns.
-Storage: the data folder and image cache size and clearing. About & updates: app updates, the beta
+Storage: the data folder, image cache size and clearing, and Export logs. About & updates: app updates, the beta
 channel and the client version (editable). Experiments. Advanced: the redirect-token import, not
 collapsed.
 
@@ -133,6 +133,15 @@ know is ignored and kept. Each name is a constant in `storage.rs`; `PrimeApp::ex
   Loadout can't load yet; themed placeholders for missing art, the loading wallet and bundle
   items, and "Looking up name…" in Live Match; and no toasts that repeat Add account's, the
   sign-in's or Export account's dialog. Add account's prompt shows "Stay signed in" in bold gold.
+
+Logs: Prime logs what it does to `%LOCALAPPDATA%\spiiritual\prime\logs\prime.log` (`logging.rs`;
+debug builds write `prime-dev.log`), keeping the last 5 runs: each status it shows, Riot Client
+starts with their arguments, every process it ends, the chat proxy's config requests and
+connections, the Aim Trainer's raw mouse reader, panics, and the GPU adapter iced picked. Settings >
+Export logs (`log_export.rs`, not an experiment, so stable users can send one) zips Prime's logs,
+VALORANT's 3 newest logs and crash reports (text only, no `.dmp`), Riot Client's 3 newest logs and a
+summary of Prime's settings and Windows version, with every JWT and token value taken out, then
+shows the zip in Explorer. It was added because some users say VALORANT crashes with Prime.
 
 One instance: starting Prime while it runs, even from the tray, brings the running window forward
 and the new start exits (`single_instance.rs`). Debug builds use their own name, so `cargo run`
@@ -172,8 +181,8 @@ Dependencies run one way: `src/riot` → `src/ui/data` → `src/ui/app.rs` → v
 - Views: `src/ui/screens/*` (one per tab), `src/ui/shell.rs` (header, status bar, dialogs) and
   `src/ui/components.rs` (shared widgets).
 - Outside the UI: `account.rs`, `storage.rs`, `launch.rs` (Riot Client processes), `account_transfer.rs`,
-  `game_settings.rs`, `image_cache.rs`, `updater.rs`, `secret_clipboard.rs`, `aim_trainer.rs` and
-  `raw_mouse.rs`.
+  `game_settings.rs`, `image_cache.rs`, `updater.rs`, `secret_clipboard.rs`, `aim_trainer.rs`,
+  `raw_mouse.rs`, `logging.rs` and `log_export.rs`.
 
 Local data: `%APPDATA%\spiiritual\prime\config\` holds `accounts.json`, `launcher-backups\` and
 `settings-profiles\`. Downloaded images go in `%LOCALAPPDATA%\spiiritual\prime\cache\images\`.
@@ -190,6 +199,8 @@ written.
 
 - Never store Riot passwords. There is no username/password sign-in, because Riot's direct auth flow
   breaks on captcha and anti-bot checks. Only session tokens are stored, and `Debug` output redacts them.
+- Never log a token, password or the local Riot Client's lockfile password. Export logs redacts
+  JWTs and known token names as a backstop, not as permission.
 - Before using or saving a session for an account, check that it belongs to that account's PUUID.
 - Launch belongs on the Accounts tab only. Don't add a launch button to every tab header.
 - Shop and Loadout load when their tab opens. Loadout has no refresh button or account level indicator.

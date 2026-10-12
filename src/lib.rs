@@ -6,6 +6,8 @@ pub mod game_settings;
 mod http_error;
 pub mod image_cache;
 pub mod launch;
+pub mod log_export;
+pub mod logging;
 pub mod raw_mouse;
 pub mod riot;
 pub mod secret_clipboard;

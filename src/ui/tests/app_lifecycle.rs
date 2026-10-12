@@ -634,3 +634,21 @@ fn stable_settings_stay_one_scrolling_page() {
     assert_eq!(app.settings_page, crate::ui::SettingsPage::Storage);
     assert_eq!(task.units(), 0);
 }
+
+#[test]
+fn export_logs_runs_once_at_a_time_and_names_no_account() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, first, _) = two_account_app(dir.path());
+
+    assert_eq!(app.update(Message::ExportLogs).units(), 1);
+    assert!(app.logs_exporting);
+    assert_eq!(app.update(Message::ExportLogs).units(), 0);
+    let info = app.system_info();
+    assert!(info.contains("Accounts: 2"));
+    assert!(!info.contains(&first.display_name));
+
+    let task = app.update(Message::LogsExported(Err("disk full".to_string())));
+    assert_eq!(task.units(), 0);
+    assert!(!app.logs_exporting);
+    assert_eq!(app.status.kind, StatusKind::Error);
+}

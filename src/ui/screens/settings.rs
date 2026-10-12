@@ -640,15 +640,48 @@ fn storage_controls(app: &PrimeApp) -> Element<'_, Message> {
     .width(Length::Fill)
     .style(|_| card_style(10.0));
 
+    let logs = container(
+        row![
+            column![
+                text("Logs").size(13).font(theme::SEMIBOLD_FONT),
+                text(LOGS_HELP).size(12).color(theme::MUTED),
+            ]
+            .spacing(3)
+            .width(Length::Fill),
+            export_logs_button(app),
+        ]
+        .spacing(14)
+        .align_y(alignment::Vertical::Center),
+    )
+    .padding(14)
+    .width(Length::Fill)
+    .style(|_| card_style(10.0));
+
     column![
         column![
             path_row("Profiles", app.repo.path()),
             path_row("Image cache", app.image_cache.path())
         ]
         .spacing(10),
-        cache
+        cache,
+        logs
     ]
     .spacing(14)
+    .into()
+}
+
+pub(super) const LOGS_HELP: &str = "Prime's, VALORANT's and Riot Client's logs in one zip, \
+                                     tokens taken out. Send it if VALORANT crashes or Prime \
+                                     misbehaves.";
+
+pub(super) fn export_logs_button(app: &PrimeApp) -> Element<'_, Message> {
+    button(busy_label(
+        app,
+        app.logs_exporting.then_some("Exporting\u{2026}"),
+        theme::icon_label(Icon::Download, "Export logs", theme::TEXT),
+    ))
+    .padding([8, 14])
+    .on_press_maybe((!app.logs_exporting).then_some(Message::ExportLogs))
     .into()
 }
 

@@ -313,12 +313,15 @@ impl Reader {
         take_input();
         let (ready, started) = std::sync::mpsc::channel();
         std::thread::spawn(move || read_on_this_thread(ready));
-        started.recv().ok().flatten().map(|window| Self { window })
+        let reader = started.recv().ok().flatten().map(|window| Self { window });
+        log::info!("raw mouse reader started: {}", reader.is_some());
+        reader
     }
 }
 
 impl Drop for Reader {
     fn drop(&mut self) {
+        log::info!("raw mouse reader stopped");
         // SAFETY: posting to a window that's already gone just fails.
         unsafe {
             PostMessageW(self.window as HWND, WM_CLOSE, 0, 0);
