@@ -1,6 +1,6 @@
 use iced::widget::image::Handle;
 use iced::widget::text::Wrapping;
-use iced::widget::{Column, column, container, image, opaque, row, scrollable, space, stack};
+use iced::widget::{Column, Stack, column, container, image, opaque, row, scrollable, space, stack};
 use iced::{Color, ContentFit, Element, Length, Padding, Theme, alignment};
 use std::path::PathBuf;
 
@@ -121,34 +121,32 @@ impl PrimeApp {
             Some((overlay, backdrop_press))
         });
 
-        let content: Element<_> = if let Some((overlay, backdrop_press)) = dialog {
+        // One stack whatever is open, with the page always its first layer: wrapping the page
+        // only while a layer shows changed the widget tree and reset the page's scroll.
+        let mut layers: Stack<'_, Message> = Stack::new()
+            .push(content)
+            .width(Length::Fill)
+            .height(Length::Fill);
+        if let Some((overlay, backdrop_press)) = dialog {
             let progress = self
                 .dialog_opened
                 .map_or(1.0, |(_, since)| appear_progress(since, self.now));
-            stack![
-                content,
-                backdrop(progress, backdrop_press),
-                appear(overlay, progress, DIALOG_RISE)
-            ]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+            layers = layers
+                .push(backdrop(progress, backdrop_press))
+                .push(appear(overlay, progress, DIALOG_RISE));
         } else if let Some(strength) = super::closing_scrim(self) {
             // A closed dialog's backdrop fades out; it no longer holds back clicks.
-            stack![content, scrim(strength)].into()
-        } else {
-            content.into()
-        };
+            layers = layers.push(Element::from(scrim(strength)));
+        }
 
         // Over the dialogs, so errors from a dialog's action stay readable.
-        let content: Element<_> = if status_bar_visible(self) {
-            stack![
-                content,
+        if status_bar_visible(self) {
+            layers = layers.push(
                 // Bottom right, lined up with the right edge of the page content.
                 container(appear(
                     self.status_toast(),
                     super::toast_progress(self),
-                    TOAST_RISE
+                    TOAST_RISE,
                 ))
                 .padding(Padding {
                     bottom: 24.0,
@@ -158,23 +156,16 @@ impl PrimeApp {
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .align_x(alignment::Horizontal::Right)
-                .align_y(alignment::Vertical::Bottom)
-            ]
-            .into()
-        } else {
-            content
-        };
+                .align_y(alignment::Vertical::Bottom),
+            );
+        }
 
         if super::image_viewer_enabled()
             && let Some(image) = &self.image_viewer
         {
-            stack![content, image_viewer_overlay(image, self.loading_frame)]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-        } else {
-            content
+            layers = layers.push(image_viewer_overlay(image, self.loading_frame));
         }
+        layers.into()
     }
 
     pub(super) fn account_by_id(

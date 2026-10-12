@@ -233,3 +233,7 @@ written.
   VALORANT and replace the live login.
 - Apply settings profile writes VALORANT settings to a Riot account.
 - Delete account, Delete image cache and Download and restart can't be undone.
+
+To see the add-account sign-in dialog without any of that, start a debug build with
+`PRIME_PREVIEW_LOGIN_CAPTURE=1` (its first step) or `=2` (its second). Nothing runs behind it;
+Cancel works on step 2, and step 1 stays until Prime closes.

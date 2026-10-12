@@ -55,7 +55,8 @@ impl PrimeApp {
         let cache_for_size = image_cache.clone();
         let image_cache_for_ranks = image_cache.clone();
 
-        (
+        #[cfg_attr(not(debug_assertions), allow(unused_mut))]
+        let (mut app, task) = (
             Self {
                 repo,
                 image_cache,
@@ -166,7 +167,31 @@ impl PrimeApp {
                     Message::ImageCacheSizeLoaded,
                 ),
             ]),
-        )
+        );
+        #[cfg(debug_assertions)]
+        app.preview_login_capture();
+        (app, task)
+    }
+
+    /// Debug builds only: `PRIME_PREVIEW_LOGIN_CAPTURE=1` opens the add-account dialog at its first
+    /// step and `=2` at its second, with nothing running, so its look can be checked without
+    /// touching Riot Client.
+    #[cfg(debug_assertions)]
+    fn preview_login_capture(&mut self) {
+        let wait = match std::env::var("PRIME_PREVIEW_LOGIN_CAPTURE").as_deref() {
+            Ok("1") => None,
+            // Nothing runs behind the handle, so Cancel only closes the dialog.
+            Ok("2") => Some(Task::<Message>::none().abortable().1),
+            _ => return,
+        };
+        let target = LoginCaptureTarget::NewAccount(AccountId::new());
+        // The toast Add account shows.
+        self.set_status(Status::progress(
+            "Opening Riot Client. When it appears, sign in normally with \"Stay signed in\" ticked.",
+        ));
+        self.launcher_capture_in_progress = true;
+        self.launcher_capture_kind = Some(target.kind());
+        self.login_capture = Some(LoginCapture { target, wait });
     }
 
     pub(super) fn update(&mut self, message: Message) -> Task<Message> {
