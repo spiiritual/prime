@@ -1,6 +1,6 @@
 [package]
 name = "prime"
-version = "0.3.3-beta.3"
+version = "0.3.3-beta.4"
 edition = "2024"
 
 [features]
