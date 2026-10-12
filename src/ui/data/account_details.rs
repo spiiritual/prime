@@ -708,3 +708,342 @@ pub(in crate::ui) async fn fetch_profile_identity(
         tag_line: player_info.acct.tag_line,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::account::{AccountPenalty, AccountPenaltyDuration, AccountPenaltyStatus};
+    use crate::riot::models::{PlayerMmrResponse, PlayerPenaltiesResponse};
+
+    #[test]
+    fn account_activity_classification_uses_priority_order() {
+        assert_eq!(
+            classify_account_activity(
+                AccountActivityProbe::Present,
+                AccountActivityProbe::Present,
+                AccountActivityProbe::Present,
+            ),
+            AccountActivity::InMatch
+        );
+        assert_eq!(
+            classify_account_activity(
+                AccountActivityProbe::NotFound,
+                AccountActivityProbe::Present,
+                AccountActivityProbe::Present,
+            ),
+            AccountActivity::AgentSelect
+        );
+        assert_eq!(
+            classify_account_activity(
+                AccountActivityProbe::NotFound,
+                AccountActivityProbe::NotFound,
+                AccountActivityProbe::Present,
+            ),
+            AccountActivity::InLobby
+        );
+    }
+
+    #[test]
+    fn account_activity_classification_treats_all_missing_as_available() {
+        assert_eq!(
+            classify_account_activity(
+                AccountActivityProbe::NotFound,
+                AccountActivityProbe::NotFound,
+                AccountActivityProbe::NotFound,
+            ),
+            AccountActivity::Available
+        );
+    }
+
+    #[test]
+    fn account_activity_classification_treats_errors_as_unknown() {
+        assert_eq!(
+            classify_account_activity(
+                AccountActivityProbe::Failed("activity check failed".to_string()),
+                AccountActivityProbe::NotFound,
+                AccountActivityProbe::NotFound,
+            ),
+            AccountActivity::Unknown("activity check failed".to_string())
+        );
+    }
+
+    #[test]
+    fn competitive_rank_from_mmr_uses_latest_competitive_season() {
+        let response: PlayerMmrResponse = serde_json::from_value(serde_json::json!({
+            "Version": 1,
+            "Subject": "puuid",
+            "QueueSkills": {
+                "competitive": {
+                    "SeasonalInfoBySeasonID": {
+                        "old-season": {
+                            "SeasonID": "old-season",
+                            "CompetitiveTier": 12,
+                            "RankedRating": 80,
+                            "NumberOfGames": 9,
+                            "GamesNeededForRating": 0
+                        },
+                        "current-season": {
+                            "SeasonID": "current-season",
+                            "CompetitiveTier": 15,
+                            "RankedRating": 42,
+                            "NumberOfGames": 12,
+                            "GamesNeededForRating": 0
+                        }
+                    }
+                }
+            },
+            "LatestCompetitiveUpdate": {
+                "SeasonID": "current-season",
+                "TierAfterUpdate": 15,
+                "RankedRatingAfterUpdate": 42
+            }
+        }))
+        .expect("mmr");
+
+        let rank = competitive_rank_from_mmr(&response).expect("rank");
+
+        assert_eq!(rank.rank_name, "Platinum 1");
+        assert_eq!(rank.ranked_rating, 42);
+        assert_eq!(rank.label(), "Platinum 1 - 42 RR");
+    }
+
+    #[test]
+    fn competitive_rank_names_known_tiers() {
+        assert_eq!(rank_name_for_competitive_tier(0), "Unrated");
+        assert_eq!(rank_name_for_competitive_tier(21), "Ascendant 1");
+        assert_eq!(rank_name_for_competitive_tier(27), "Radiant");
+    }
+
+    #[test]
+    fn penalty_status_detects_empty_active_expired_and_missing_expiry() {
+        let now = time::OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+
+        assert_eq!(
+            penalty_status_from_response(&penalty_response(std::iter::empty()), now),
+            AccountPenaltyStatus::NotPenalized
+        );
+        assert_eq!(
+            penalty_status_from_response(&penalty_response([Some("2027-02-01T00:00:00Z")]), now),
+            AccountPenaltyStatus::penalized_for(
+                Some("Queue Dodge".to_string()),
+                AccountPenaltyDuration::new(
+                    Some(expiry_timestamp("2027-02-01T00:00:00Z")),
+                    Some(1)
+                )
+            )
+        );
+        assert_eq!(
+            penalty_status_from_response(&penalty_response([Some("2027-01-01T00:00:00Z")]), now),
+            AccountPenaltyStatus::NotPenalized
+        );
+        assert_eq!(
+            penalty_status_from_response(&penalty_response([None]), now),
+            AccountPenaltyStatus::penalized_for(
+                Some("Queue Dodge".to_string()),
+                AccountPenaltyDuration::new(None, Some(1))
+            )
+        );
+    }
+
+    #[test]
+    fn penalty_status_treats_invalid_expiry_as_active() {
+        let now = time::OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+
+        assert_eq!(
+            penalty_status_from_response(&penalty_response([Some("not-a-date")]), now),
+            AccountPenaltyStatus::penalized_for(
+                Some("Queue Dodge".to_string()),
+                AccountPenaltyDuration::new(None, Some(1))
+            )
+        );
+    }
+
+    #[test]
+    fn penalty_status_includes_all_active_penalties() {
+        let now = time::OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+
+        assert_eq!(
+            penalty_status_from_response(
+                &penalty_response([Some("2027-02-01T00:00:00Z"), Some("2027-03-01T00:00:00Z")]),
+                now
+            ),
+            AccountPenaltyStatus::Penalized {
+                penalties: vec![
+                    AccountPenalty::new(
+                        Some("Queue Dodge".to_string()),
+                        AccountPenaltyDuration::new(
+                            Some(expiry_timestamp("2027-02-01T00:00:00Z")),
+                            Some(1)
+                        )
+                    ),
+                    AccountPenalty::new(
+                        Some("Queue Dodge".to_string()),
+                        AccountPenaltyDuration::new(
+                            Some(expiry_timestamp("2027-03-01T00:00:00Z")),
+                            Some(1)
+                        )
+                    )
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn penalty_status_uses_premier_effect_in_display_name() {
+        let now = time::OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+        let response: PlayerPenaltiesResponse = serde_json::from_value(serde_json::json!({
+            "Subject": "puuid",
+            "Penalties": [{
+                "ID": "penalty-id",
+                "IssuingGameStartUnixMillis": 1_800_000_000_000i64,
+                "IssuingMatchID": "match-id",
+                "Expiry": "2027-02-01T00:00:00Z",
+                "GamesRemaining": 0,
+                "ApplyToAllPlatforms": true,
+                "ApplyToPlatforms": ["PC"],
+                "ApplyToPlatformGroups": ["riot"],
+                "InfractionID": "infraction-id",
+                "Origin": "automated",
+                "ForgivenessIneligible": false,
+                "IsAutomatedDetection": true,
+                "PenaltyInfo": null,
+                "DelayedPenaltyEffect": null,
+                "GameBanEffect": null,
+                "QueueDelayEffect": null,
+                "QueueRestrictionEffect": null,
+                "RankedRatingPenaltyEffect": null,
+                "RiotRestrictionEffect": null,
+                "RMSNotifyEffect": null,
+                "WarningEffect": null,
+                "XPMultiplierEffect": null,
+                "PremierRestrictionEffect": {
+                    "RestrictionType": "DISQUALIFIED",
+                    "SeasonID": "season-id",
+                    "Source": "COMMS_RESTRICTION"
+                }
+            }],
+            "Infractions": [{
+                "ID": "infraction-id",
+                "Name": "comms",
+                "RatingName": "comms"
+            }],
+            "Version": 1
+        }))
+        .expect("penalty response");
+
+        assert_eq!(
+            penalty_status_from_response(&response, now),
+            AccountPenaltyStatus::penalized_for(
+                Some("Premier Disqualification".to_string()),
+                AccountPenaltyDuration::new(Some(expiry_timestamp("2027-02-01T00:00:00Z")), None)
+            )
+        );
+    }
+
+    #[test]
+    fn penalty_status_humanizes_unknown_premier_restriction_type() {
+        let now = time::OffsetDateTime::from_unix_timestamp(1_800_000_000).unwrap();
+        let response: PlayerPenaltiesResponse = serde_json::from_value(serde_json::json!({
+            "Subject": "puuid",
+            "Penalties": [{
+                "ID": "penalty-id",
+                "IssuingGameStartUnixMillis": 1_800_000_000_000i64,
+                "IssuingMatchID": "match-id",
+                "Expiry": "2027-02-01T00:00:00Z",
+                "GamesRemaining": 0,
+                "ApplyToAllPlatforms": true,
+                "ApplyToPlatforms": ["PC"],
+                "ApplyToPlatformGroups": ["riot"],
+                "InfractionID": "infraction-id",
+                "Origin": "automated",
+                "ForgivenessIneligible": false,
+                "IsAutomatedDetection": true,
+                "PenaltyInfo": null,
+                "DelayedPenaltyEffect": null,
+                "GameBanEffect": null,
+                "QueueDelayEffect": null,
+                "QueueRestrictionEffect": null,
+                "RankedRatingPenaltyEffect": null,
+                "RiotRestrictionEffect": null,
+                "RMSNotifyEffect": null,
+                "WarningEffect": null,
+                "XPMultiplierEffect": null,
+                "PremierRestrictionEffect": {
+                    "RestrictionType": "MATCHMAKING_LOCK",
+                    "SeasonID": "season-id",
+                    "Source": "source"
+                }
+            }],
+            "Infractions": [{
+                "ID": "infraction-id",
+                "Name": "unknown",
+                "RatingName": "unknown"
+            }],
+            "Version": 1
+        }))
+        .expect("penalty response");
+
+        assert_eq!(
+            penalty_status_from_response(&response, now),
+            AccountPenaltyStatus::penalized_for(
+                Some("Premier Matchmaking Lock".to_string()),
+                AccountPenaltyDuration::new(Some(expiry_timestamp("2027-02-01T00:00:00Z")), None)
+            )
+        );
+    }
+
+    fn expiry_timestamp(value: &str) -> i64 {
+        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339)
+            .unwrap()
+            .unix_timestamp()
+    }
+
+    fn penalty_response(
+        expiries: impl IntoIterator<Item = Option<&'static str>>,
+    ) -> PlayerPenaltiesResponse {
+        let penalties = expiries
+            .into_iter()
+            .enumerate()
+            .map(|(index, expiry)| {
+                serde_json::json!({
+                    "ID": format!("penalty-{index}"),
+                    "IssuingGameStartUnixMillis": 1_800_000_000_000i64,
+                    "IssuingMatchID": "match-id",
+                    "Expiry": expiry,
+                    "GamesRemaining": 1,
+                    "ApplyToAllPlatforms": true,
+                    "ApplyToPlatforms": ["PC"],
+                    "ApplyToPlatformGroups": ["riot"],
+                    "InfractionID": "infraction-id",
+                    "Origin": "automated",
+                    "ForgivenessIneligible": false,
+                    "IsAutomatedDetection": true,
+                    "PenaltyInfo": null,
+                    "DelayedPenaltyEffect": null,
+                    "GameBanEffect": null,
+                    "QueueDelayEffect": null,
+                    "QueueRestrictionEffect": null,
+                    "RankedRatingPenaltyEffect": null,
+                    "RiotRestrictionEffect": null,
+                    "RMSNotifyEffect": null,
+                    "WarningEffect": null,
+                    "XPMultiplierEffect": null,
+                    "PremierRestrictionEffect": null
+                })
+            })
+            .collect::<Vec<_>>();
+
+        serde_json::from_value(serde_json::json!({
+            "Subject": "puuid",
+            "Penalties": penalties,
+            "Infractions": [{
+                "ID": "infraction-id",
+                "Name": "queue dodge",
+                "RatingName": "Queue Dodge"
+            }],
+            "Version": 1
+        }))
+        .expect("penalty response")
+    }
+}

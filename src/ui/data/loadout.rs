@@ -996,34 +996,4 @@ pub(in crate::ui) fn resolve_current_skin(
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::riot::content::Flex;
-
-    use super::*;
-
-    #[test]
-    fn totem_rewards_resolve_to_flex_items() {
-        let accessories =
-            AccessoryCatalog::from_parts(vec![], vec![], vec![], vec![]).with_flex(vec![Flex {
-                uuid: "flex-uuid".to_string(),
-                display_name: "ORA Flex".to_string(),
-                display_icon: Some("flex-icon".to_string()),
-            }]);
-        let reward = ResolvedContractReward {
-            kind: "Totem".to_string(),
-            uuid: "FLEX-UUID".to_string(),
-            amount: 1,
-        };
-
-        let resolved = resolve_battle_pass_reward(
-            &reward,
-            &SkinCatalog::default(),
-            &accessories,
-            &CurrencyCatalog::default(),
-        );
-
-        assert_eq!(resolved.name, "ORA Flex");
-        assert_eq!(resolved.kind, "Flex");
-        assert_eq!(resolved.display_icon.as_deref(), Some("flex-icon"));
-    }
-}
+pub(in crate::ui) mod tests;
