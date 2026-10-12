@@ -1264,10 +1264,10 @@ impl PrimeApp {
                 }
             }
             Message::CloseRequested(id) => {
-                // A run holds the cursor on one pixel; pausing gives it back first.
+                // A run holds the cursor; pausing gives it back and leaves fullscreen first.
                 if matches!(self.aim.phase, AimPhase::Playing(_)) {
-                    let _ = self.pause_aim_run();
-                    return self.handle_message(Message::CloseRequested(id));
+                    let paused = self.pause_aim_run();
+                    return paused.chain(self.handle_message(Message::CloseRequested(id)));
                 }
                 if !self.state.minimize_on_close {
                     if self.chat_carried() {

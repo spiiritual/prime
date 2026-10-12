@@ -4,7 +4,7 @@ use iced::{Color, Element, Length, alignment};
 
 use crate::ui::components::{
     card_style, empty_state, faded_asset_image, high_res_image_source, mono, outlined, radial_glow,
-    skeleton, unavailable_state,
+    segmented, skeleton, unavailable_state,
 };
 use crate::ui::data::loadout::{
     BattlePassChapterDisplay, BattlePassProgressDisplay, BattlePassRewardDisplay,
@@ -112,32 +112,12 @@ fn shows_state(app: &PrimeApp) -> bool {
 
 /// Skins and Battle Pass, beside the page title.
 pub(in crate::ui) fn sub_tabs(app: &PrimeApp) -> Element<'_, Message> {
-    let tab_button = |tab: LoadoutTab| {
-        let selected = app.active_loadout_tab == tab;
-        button(text(tab.to_string()).size(13).font(if selected {
-            theme::SEMIBOLD_FONT
-        } else {
-            theme::MEDIUM_FONT
-        }))
-        .padding([7, 16])
-        .style(move |theme, status| {
-            let mut style = theme::choice_style(theme, status, selected);
-            style.border.radius = 7.0.into();
-            style
-        })
-        .on_press_maybe((!selected).then_some(Message::LoadoutTabSelected(tab)))
-    };
-
-    container(
-        row![
-            tab_button(LoadoutTab::Skins),
-            tab_button(LoadoutTab::BattlePass)
-        ]
-        .spacing(2),
+    segmented(
+        [LoadoutTab::Skins, LoadoutTab::BattlePass].map(|tab| (tab, tab.to_string())),
+        app.active_loadout_tab,
+        Length::Shrink,
+        |tab| Some(Message::LoadoutTabSelected(tab)),
     )
-    .padding(3)
-    .style(|_| card_style(9.0))
-    .into()
 }
 
 fn page_state(app: &PrimeApp) -> Element<'_, Message> {

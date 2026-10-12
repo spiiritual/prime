@@ -38,7 +38,7 @@ pub struct StoredState {
     /// default, isn't written.
     #[serde(default = "chat_proxy_default", skip_serializing_if = "Clone::clone")]
     pub chat_proxy: bool,
-    /// The Aim Trainer's sensitivity, DPI and best run. Left out until one is set.
+    /// The Aim Trainer's settings and best runs. Left out until one is set.
     #[serde(default, skip_serializing_if = "AimTrainerState::is_default")]
     pub aim_trainer: AimTrainerState,
 }
@@ -490,8 +490,8 @@ mod tests {
             bursts: 4,
             avg_reaction_ms: Some(412),
             duration_ms: 72_000,
-            sensitivity: 0.34,
-            dpi: 1600,
+            sensitivity: Some(0.34),
+            dpi: Some(1600),
             finished_at_unix: 1_791_331_200,
         });
         repo.save(&state).expect("save");

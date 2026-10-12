@@ -612,6 +612,43 @@ pub(super) fn mono<'a>(
         .line_height(theme::MONO_LINE_HEIGHT)
 }
 
+/// Options in a row with the picked one raised, like Loadout's sub-tabs. `width` is each
+/// option's; `on_pick` gives `None` to leave an option inactive.
+pub(super) fn segmented<'a, T: Copy + PartialEq + 'a>(
+    options: impl IntoIterator<Item = (T, String)>,
+    selected: T,
+    width: Length,
+    on_pick: impl Fn(T) -> Option<Message> + 'a,
+) -> Element<'a, Message> {
+    let option = |(value, label): (T, String)| {
+        let is_selected = selected == value;
+        button(
+            text(label)
+                .size(13)
+                .font(if is_selected {
+                    theme::SEMIBOLD_FONT
+                } else {
+                    theme::MEDIUM_FONT
+                })
+                .width(width)
+                .align_x(alignment::Horizontal::Center),
+        )
+        .width(width)
+        .padding([7, 16])
+        .style(move |theme, status| {
+            let mut style = theme::choice_style(theme, status, is_selected);
+            style.border.radius = 7.0.into();
+            style
+        })
+        .on_press_maybe((!is_selected).then(|| on_pick(value)).flatten())
+        .into()
+    };
+    container(Row::with_children(options.into_iter().map(option)).spacing(2))
+        .padding(3)
+        .style(|_| card_style(9.0))
+        .into()
+}
+
 /// A box drawn only as its 1px outline.
 pub(super) fn outlined(radius: f32) -> container::Style {
     container::Style::default().border(iced::Border {
