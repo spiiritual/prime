@@ -3111,6 +3111,7 @@ dependencies = [
  "flate2",
  "iced",
  "image",
+ "log",
  "native-tls",
  "reqwest",
  "schannel",
@@ -3127,6 +3128,7 @@ dependencies = [
  "velopack",
  "windows-sys 0.61.2",
  "winresource",
+ "zip",
 ]
 
 [[package]]

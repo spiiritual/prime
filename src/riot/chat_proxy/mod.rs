@@ -43,6 +43,7 @@ struct Running {
 
 impl Drop for Running {
     fn drop(&mut self) {
+        log::info!("chat proxy stopped");
         for task in &self.tasks {
             task.abort();
         }
@@ -88,6 +89,7 @@ impl ChatProxy {
             .abort_handle(),
         ];
 
+        log::info!("chat proxy started: config port {config_port}, chat port {chat_port}");
         Ok(Self(Arc::new(Running {
             config_port,
             status: status_sender,

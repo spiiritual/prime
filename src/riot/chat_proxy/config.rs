@@ -157,15 +157,26 @@ async fn handle(
         }
     }
 
-    let Ok(response) = outbound.send().await else {
-        respond(&mut writer, 502, "Bad Gateway", "{}").await;
-        return;
+    // The query names the client and region, never a token, but only the path is needed.
+    let path = request.path.split('?').next().unwrap_or_default();
+    let response = match outbound.send().await {
+        Ok(response) => response,
+        Err(error) => {
+            log::warn!("client config {path} failed, answered 502: {error}");
+            respond(&mut writer, 502, "Bad Gateway", "{}").await;
+            return;
+        }
     };
     let status = response.status();
-    let Ok(body) = response.text().await else {
-        respond(&mut writer, 502, "Bad Gateway", "{}").await;
-        return;
+    let body = match response.text().await {
+        Ok(body) => body,
+        Err(error) => {
+            log::warn!("client config {path} body failed, answered 502: {error}");
+            respond(&mut writer, 502, "Bad Gateway", "{}").await;
+            return;
+        }
     };
+    log::info!("client config {path}: {status}");
 
     let body = if status.is_success() {
         let affinity = match request.headers.get("authorization") {

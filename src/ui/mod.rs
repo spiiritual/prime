@@ -505,6 +505,7 @@ struct PrimeApp {
     update_channel: Option<String>,
     image_cache_usage: CacheUsage,
     image_cache_clearing: bool,
+    logs_exporting: bool,
     /// A Settings "Fetch latest" or Shop "Try again" client version lookup is running.
     client_version_fetching: bool,
     account_export_in_progress: bool,
@@ -1233,6 +1234,8 @@ enum Message {
     AccountFilterChanged(String),
     ClearImageCache,
     ImageCacheCleared(Result<(), String>),
+    ExportLogs,
+    LogsExported(Result<PathBuf, String>),
     LaunchAccount(AccountId),
     /// Preflight result for a launch, and whether VALORANT was already running.
     LaunchPreflightChecked(AccountActivityCheck, bool),

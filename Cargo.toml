@@ -12,6 +12,7 @@ base64 = "0.23.1"
 flate2 = "1.1.10"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 iced = { version = "0.14.0", features = ["advanced", "canvas", "image-without-codecs", "svg", "tokio"] }
+log = "0.4.34"
 native-tls = "0.2.18"
 reqwest = { version = "0.13.5", default-features = false, features = ["gzip", "json", "rustls"] }
 schannel = "0.1.29"
@@ -41,6 +42,7 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

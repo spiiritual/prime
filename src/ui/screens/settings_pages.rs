@@ -6,7 +6,8 @@ use iced::widget::{column, container, row, space, stack, toggler};
 use iced::{Color, Element, Length, Padding, alignment};
 
 use super::settings::{
-    ERROR_TEXT, busy_label, channel_controls, clear_cache_style, experiment_controls, hovered,
+    ERROR_TEXT, LOGS_HELP, busy_label, channel_controls, clear_cache_style, experiment_controls,
+    export_logs_button, hovered,
     live_match_weapon_controls, short_path, update_controls,
 };
 use crate::riot::chat_proxy::PresenceStatus;
@@ -411,6 +412,7 @@ fn storage_rows(app: &PrimeApp) -> Vec<Element<'_, Message>> {
             .align_y(alignment::Vertical::Center)
             .into(),
         ),
+        setting_row("Logs", LOGS_HELP, export_logs_button(app)),
     ]
 }
 

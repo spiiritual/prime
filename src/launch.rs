@@ -50,6 +50,8 @@ fn start_riot_client(
             .ok_or(LaunchError::RiotClientNotFound)?,
     };
 
+    let args: Vec<_> = args.iter().map(|arg| arg.as_ref().to_owned()).collect();
+    log::info!("starting {} {args:?}", executable.display());
     Command::new(executable)
         .creation_flags(CREATE_NO_WINDOW)
         .args(args)
@@ -93,10 +95,13 @@ fn close_process_images(images: impl IntoIterator<Item = &'static str>) -> Resul
             let handle = OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, 0, process.id);
             // A process that already exited, or that this user can't end, is left as it is,
             // like taskkill's errors were.
-            (!handle.is_null()).then(|| {
-                TerminateProcess(handle, 1);
-                handle
-            })
+            if handle.is_null() {
+                log::warn!("couldn't end {} ({})", process.image_name, process.id);
+                return None;
+            }
+            log::info!("ending {} ({})", process.image_name, process.id);
+            TerminateProcess(handle, 1);
+            Some(handle)
         })
         .collect();
     for handle in handles {

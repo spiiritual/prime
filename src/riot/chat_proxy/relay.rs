@@ -47,19 +47,34 @@ pub(super) async fn serve(
         tokio::spawn(async move {
             // Riot Client asks the config proxy where chat is before it connects here.
             let Some(target) = endpoint.get() else {
+                log::warn!("chat connection before any client config; dropped");
                 return;
             };
-            let Ok(client) = acceptor.accept(incoming).await else {
-                return;
+            let client = match acceptor.accept(incoming).await {
+                Ok(client) => client,
+                Err(error) => {
+                    log::warn!("chat TLS from Riot Client failed: {error}");
+                    return;
+                }
             };
-            let Ok(upstream) = TcpStream::connect((target.host.as_str(), target.port)).await else {
-                return;
+            let upstream = match TcpStream::connect((target.host.as_str(), target.port)).await {
+                Ok(upstream) => upstream,
+                Err(error) => {
+                    log::warn!("chat server {}:{} unreachable: {error}", target.host, target.port);
+                    return;
+                }
             };
-            let Ok(server) = connector.connect(&target.host, upstream).await else {
-                return;
+            let server = match connector.connect(&target.host, upstream).await {
+                Ok(server) => server,
+                Err(error) => {
+                    log::warn!("chat TLS to {} failed: {error}", target.host);
+                    return;
+                }
             };
+            log::info!("chat relayed to {}:{}", target.host, target.port);
             let _open = OpenConnection::new(connections);
             relay_streams(client, server, status).await;
+            log::info!("chat connection to {} closed", target.host);
         });
     }
 }
