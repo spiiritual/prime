@@ -85,12 +85,12 @@ on each poll, and without the Riot Client they show as unavailable, with the rea
 
 Invisible status: every launch goes through a chat proxy (`src/riot/chat_proxy/`), the way Deceive
 does, unless the Settings switch "Route chat through Prime" (on by default, `chat_proxy`) is off.
-While VALORANT runs on this PC, Riot Client here is signed in as the selected account and its
-chat goes through that proxy, Prime shows a sidebar control above the version label with the status
-friends see: Online, Mobile or Invisible. A change applies at once and is saved (`presence_status` in
-`accounts.json`, written only when not Online), so the next launch starts with it. If the proxy
+While that switch is on, or a proxy still runs, Prime shows a sidebar control above the version
+label with the status friends see: Online, Mobile or Invisible, so it can be picked before a launch.
+A change is saved (`presence_status` in `accounts.json`, written only when not Online), so the next
+launch starts with it, and a running proxy applies it at once. If the proxy
 can't start and the saved status is Invisible or Mobile, the launch asks before going online; with Online it
-launches anyway and warns that the status can't be changed this session. Prime checks the game every
+launches anyway and warns that the status can't be changed this session. Prime checks Riot Client every
 5 seconds while a proxy runs and stops the proxy when Riot Client closes. Quitting Prime drops Riot
 Client's chat until Riot Client restarts, so while chat goes through the proxy, quitting (from the
 tray too) and restarting for an update ask first. In game, the proxy adds a made-up friend,
@@ -193,8 +193,6 @@ Settings left at their default aren't written, which keeps that rare.
   `chat.host`, `chat.port` and `chat.affinities` in Riot's client config. The real server is the
   player's affinity host from `riot-geo.pas.si.riotgames.com/pas/v1/service/chat`, unless
   `chat.affinity.enabled` is false.
-- Who the local Riot Client is signed in as comes from its `GET /entitlements/v1/token` subject.
-  Only the subject is kept.
 
 ## Tests
 

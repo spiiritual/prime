@@ -164,33 +164,6 @@ pub fn riot_client_running() -> bool {
     read_lockfile().is_some()
 }
 
-/// The PUUID the Riot Client on this PC is signed in as, or `None` when it isn't running, isn't
-/// signed in, or didn't answer. Read from its entitlements token, of which only the subject is
-/// kept.
-pub async fn signed_in_puuid() -> Option<String> {
-    let auth = read_lockfile()?;
-    let body = local_request(&auth, |client, base| {
-        client.get(format!("{base}/entitlements/v1/token"))
-    })
-    .await
-    .ok()?;
-    entitlements_subject(&body)
-}
-
-pub fn entitlements_subject(body: &str) -> Option<String> {
-    #[derive(Deserialize)]
-    struct Entitlements {
-        #[serde(default)]
-        subject: Option<String>,
-    }
-
-    serde_json::from_str::<Entitlements>(body)
-        .ok()?
-        .subject
-        .map(|subject| subject.trim().to_string())
-        .filter(|subject| !subject.is_empty())
-}
-
 #[derive(Deserialize)]
 struct Namesets {
     #[serde(default)]
@@ -404,19 +377,5 @@ mod tests {
             presence_score(&body, "self"),
             Err(ScoreUnavailable::Failed(_))
         ));
-    }
-
-    #[test]
-    fn reads_the_signed_in_puuid_from_the_entitlements_token() {
-        let body = r#"{"accessToken":"a","entitlements":[],"issuer":"i",
-            "subject":" 1f6c9a3e-puuid ","token":"t"}"#;
-
-        assert_eq!(
-            entitlements_subject(body).as_deref(),
-            Some("1f6c9a3e-puuid")
-        );
-        assert_eq!(entitlements_subject(r#"{"subject":""}"#), None);
-        assert_eq!(entitlements_subject(r#"{"subject":null}"#), None);
-        assert_eq!(entitlements_subject("not json"), None);
     }
 }

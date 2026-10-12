@@ -20,8 +20,7 @@ use super::data::game_settings::{
 };
 use super::data::launch_flow::CapturedAccountDraft;
 use super::data::launch_flow::{
-    LaunchAccountResult, LocalGame, is_pending_launcher_capture_error, load_accounts,
-    require_launcher_session,
+    LaunchAccountResult, is_pending_launcher_capture_error, load_accounts, require_launcher_session,
 };
 use super::data::live_match::{
     LiveMatch, LiveMatchError, LiveMatchResult, MatchPhase, shown_weapons,
@@ -39,9 +38,7 @@ use super::data::shop::{
     AccessoryKind, BundleItem, StoreAccessoryDisplay, StoreBundleDisplay, StoreOfferDisplay,
     StoreSummary, currency_balances_from_wallet, format_whole_number,
 };
-use super::{
-    Dialog, LaunchedChatProxy, QuitAction, StatusLaunchFailure, Tab, UnavailableLaunchWarning,
-};
+use super::{Dialog, QuitAction, StatusLaunchFailure, Tab, UnavailableLaunchWarning};
 use super::{
     Message, PendingSettingsChange, PendingSettingsCheck, PresetNamePrompt, PresetNameTarget,
     PrimeApp, SettingsChange, Status, StatusKind, countdown_timer_interval,
@@ -2511,10 +2508,7 @@ fn launching_online_without_a_proxy_drops_the_previous_one() {
     let account = launchable_account(&app, "Main");
     app.state.push_account(account.clone());
     app.launching_account = Some(account.id);
-    app.chat_proxy = Some(LaunchedChatProxy {
-        account_id: account.id,
-        proxy: ChatProxy::detached(PresenceStatus::Online, true),
-    });
+    app.chat_proxy = Some(ChatProxy::detached(PresenceStatus::Online, true));
 
     let _ = app.update(proxy_failure_for(&account));
 
@@ -2529,10 +2523,7 @@ fn cancelling_after_an_invisible_failure_keeps_the_running_proxy() {
     app.state.push_account(account.clone());
     app.state.presence_status = PresenceStatus::Invisible;
     app.launching_account = Some(account.id);
-    app.chat_proxy = Some(LaunchedChatProxy {
-        account_id: account.id,
-        proxy: ChatProxy::detached(PresenceStatus::Online, true),
-    });
+    app.chat_proxy = Some(ChatProxy::detached(PresenceStatus::Online, true));
 
     let _ = app.update(proxy_failure_for(&account));
     let _ = app.update(Message::CancelStatusLaunch);
@@ -2541,7 +2532,7 @@ fn cancelling_after_an_invisible_failure_keeps_the_running_proxy() {
 }
 
 #[test]
-fn a_started_chat_proxy_is_kept_for_the_launched_account() {
+fn a_started_chat_proxy_is_kept() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
     let account = launchable_account(&app, "Main");
@@ -2557,10 +2548,7 @@ fn a_started_chat_proxy_is_kept_for_the_launched_account() {
 
     assert!(task.units() > 0, "launches through the proxy");
     assert!(!app.launch_client_open);
-    assert_eq!(
-        app.chat_proxy.as_ref().map(|launched| launched.account_id),
-        Some(account.id)
-    );
+    assert!(app.chat_proxy.is_some());
 }
 
 #[test]
@@ -2586,10 +2574,7 @@ fn with_the_chat_proxy_off_a_launch_skips_it_and_drops_the_last_one() {
     let account = launchable_account(&app, "Main");
     app.state.push_account(account.clone());
     app.accounts_loaded = true;
-    app.chat_proxy = Some(LaunchedChatProxy {
-        account_id: account.id,
-        proxy: ChatProxy::detached(PresenceStatus::Online, true),
-    });
+    app.chat_proxy = Some(ChatProxy::detached(PresenceStatus::Online, true));
 
     let _ = app.update(Message::ChatProxyToggled(false));
     assert!(
@@ -2681,130 +2666,90 @@ fn a_failed_launch_stops_its_chat_proxy() {
     let account = launchable_account(&app, "Main");
     app.state.push_account(account.clone());
     app.launching_account = Some(account.id);
-    app.chat_proxy = Some(LaunchedChatProxy {
-        account_id: account.id,
-        proxy: ChatProxy::detached(PresenceStatus::Online, false),
-    });
+    app.chat_proxy = Some(ChatProxy::detached(PresenceStatus::Online, false));
 
     let _ = app.update(Message::LaunchFinished(Err("boom".to_string())));
 
     assert!(app.chat_proxy.is_none());
 }
 
-fn in_game_here(puuid: &str) -> LocalGame {
-    LocalGame {
-        valorant_running: true,
-        signed_in_puuid: Some(puuid.to_string()),
-        riot_client_running: true,
-    }
-}
-
-/// An app whose selected account plays here through Prime's connected chat proxy.
-fn app_in_game(dir: &Path) -> (PrimeApp, AccountProfile) {
+/// An app whose selected account was launched through Prime's connected chat proxy.
+fn app_with_proxy(dir: &Path) -> (PrimeApp, AccountProfile) {
     let mut app = test_app(dir);
     let account = launchable_account(&app, "Main");
     app.state.push_account(account.clone());
-    app.chat_proxy = Some(LaunchedChatProxy {
-        account_id: account.id,
-        proxy: ChatProxy::detached(PresenceStatus::Online, true),
-    });
-    app.local_game = Some(in_game_here("Main-puuid"));
+    app.chat_proxy = Some(ChatProxy::detached(PresenceStatus::Online, true));
     (app, account)
 }
 
 #[test]
-fn the_status_control_shows_while_the_selected_account_plays_here() {
+fn the_status_control_shows_before_a_launch_while_chat_goes_through_prime() {
     let dir = tempdir().expect("temp dir");
-    let (mut app, _) = app_in_game(dir.path());
+    let mut app = test_app(dir.path());
+    app.accounts_loaded = false;
+    assert!(
+        !app.status_control_visible(),
+        "hidden until accounts.json loads"
+    );
+    let _ = app.update(Message::PresenceStatusPicked(PresenceStatus::Invisible));
+    assert_eq!(app.state.presence_status, PresenceStatus::Online);
+
+    app.accounts_loaded = true;
     assert!(app.status_control_visible());
+    let task = app.update(Message::PresenceStatusPicked(PresenceStatus::Invisible));
+    assert_eq!(app.state.presence_status, PresenceStatus::Invisible);
+    assert_eq!(task.units(), 1, "the pick is saved for the next launch");
 
-    app.local_game = Some(in_game_here("MAIN-PUUID"));
-    assert!(app.status_control_visible(), "PUUIDs compare without case");
-}
-
-#[test]
-fn the_status_control_hides_unless_every_condition_holds() {
-    type Change = fn(&mut PrimeApp);
-    let cases: [(&str, Change); 6] = [
-        ("VALORANT isn't running here", |app| {
-            app.local_game.as_mut().expect("game").valorant_running = false;
-        }),
-        ("Riot Client is signed in as someone else", |app| {
-            app.local_game.as_mut().expect("game").signed_in_puuid = Some("other".to_string());
-        }),
-        ("Riot Client didn't say who is signed in", |app| {
-            app.local_game.as_mut().expect("game").signed_in_puuid = None;
-        }),
-        ("chat isn't going through Prime", |app| {
-            let account_id = app.chat_proxy.as_ref().expect("proxy").account_id;
-            app.chat_proxy = Some(LaunchedChatProxy {
-                account_id,
-                proxy: ChatProxy::detached(PresenceStatus::Online, false),
-            });
-        }),
-        ("Prime launched another account", |app| {
-            app.chat_proxy.as_mut().expect("proxy").account_id = AccountId::new();
-        }),
-        ("Prime didn't launch the game", |app| app.chat_proxy = None),
-    ];
-
-    for (why, change) in cases {
-        let dir = tempdir().expect("temp dir");
-        let (mut app, _) = app_in_game(dir.path());
-        change(&mut app);
-        assert!(!app.status_control_visible(), "{why}");
-    }
-}
-
-#[test]
-fn the_status_control_hides_when_another_account_is_selected() {
-    let dir = tempdir().expect("temp dir");
-    let (mut app, _) = app_in_game(dir.path());
-    let alt = launchable_account(&app, "Alt");
-    app.state.push_account(alt.clone());
-
-    let _ = app.update(Message::SelectAccount(alt.id));
-
+    app.status_menu_open = true;
+    let _ = app.update(Message::ChatProxyToggled(false));
     assert!(!app.status_control_visible());
+    assert!(!app.status_menu_open);
+}
+
+#[test]
+fn the_status_control_stays_while_a_proxy_runs_after_routing_is_turned_off() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _) = app_with_proxy(dir.path());
+    app.state.chat_proxy = false;
+    assert!(app.status_control_visible());
 }
 
 #[test]
 fn the_game_is_only_checked_while_a_proxy_runs() {
     let dir = tempdir().expect("temp dir");
-    let (mut app, _) = app_in_game(dir.path());
+    let (mut app, _) = app_with_proxy(dir.path());
 
-    assert_eq!(app.update(Message::LocalGameTick).units(), 1);
+    assert_eq!(app.update(Message::RiotClientTick).units(), 1);
     assert_eq!(
-        app.update(Message::LocalGameTick).units(),
+        app.update(Message::RiotClientTick).units(),
         0,
         "one check at a time"
     );
 
-    app.local_game_checking = false;
+    app.riot_client_checking = false;
     app.chat_proxy = None;
-    assert_eq!(app.update(Message::LocalGameTick).units(), 0);
+    assert_eq!(app.update(Message::RiotClientTick).units(), 0);
 }
 
 #[test]
 fn closing_riot_client_stops_the_chat_proxy() {
     let dir = tempdir().expect("temp dir");
-    let (mut app, _) = app_in_game(dir.path());
-    app.local_game_checking = true;
+    let (mut app, _) = app_with_proxy(dir.path());
+    app.riot_client_checking = true;
 
-    let _ = app.update(Message::LocalGameChecked(LocalGame::default()));
+    let _ = app.update(Message::RiotClientChecked(false));
 
     assert!(app.chat_proxy.is_none());
-    assert!(app.local_game.is_none());
-    assert!(!app.local_game_checking);
+    assert!(!app.riot_client_checking);
 }
 
 #[test]
 fn riot_client_starting_during_a_launch_keeps_the_proxy() {
     let dir = tempdir().expect("temp dir");
-    let (mut app, account) = app_in_game(dir.path());
+    let (mut app, account) = app_with_proxy(dir.path());
     app.launching_account = Some(account.id);
 
-    let _ = app.update(Message::LocalGameChecked(LocalGame::default()));
+    let _ = app.update(Message::RiotClientChecked(false));
 
     assert!(app.chat_proxy.is_some());
 }
@@ -2812,7 +2757,7 @@ fn riot_client_starting_during_a_launch_keeps_the_proxy() {
 #[test]
 fn the_status_menu_opens_only_with_the_control() {
     let dir = tempdir().expect("temp dir");
-    let (mut app, _) = app_in_game(dir.path());
+    let (mut app, _) = app_with_proxy(dir.path());
 
     let _ = app.update(Message::ToggleStatusMenu);
     assert!(app.status_menu_open);
@@ -2820,6 +2765,7 @@ fn the_status_menu_opens_only_with_the_control() {
     assert!(!app.status_menu_open);
 
     app.chat_proxy = None;
+    app.state.chat_proxy = false;
     let _ = app.update(Message::ToggleStatusMenu);
     assert!(!app.status_menu_open);
 }
@@ -2827,7 +2773,7 @@ fn the_status_menu_opens_only_with_the_control() {
 #[test]
 fn picking_a_status_saves_it_and_applies_it_now() {
     let dir = tempdir().expect("temp dir");
-    let (mut app, _) = app_in_game(dir.path());
+    let (mut app, _) = app_with_proxy(dir.path());
     app.status_menu_open = true;
 
     let task = app.update(Message::PresenceStatusPicked(PresenceStatus::Invisible));
@@ -2835,7 +2781,7 @@ fn picking_a_status_saves_it_and_applies_it_now() {
     assert!(task.units() > 0, "saves accounts.json");
     assert_eq!(app.state.presence_status, PresenceStatus::Invisible);
     assert_eq!(
-        app.chat_proxy.as_ref().expect("proxy").proxy.status(),
+        app.chat_proxy.as_ref().expect("proxy").status(),
         PresenceStatus::Invisible
     );
     assert!(!app.status_menu_open);
@@ -2844,7 +2790,7 @@ fn picking_a_status_saves_it_and_applies_it_now() {
 #[test]
 fn picking_the_current_status_saves_nothing() {
     let dir = tempdir().expect("temp dir");
-    let (mut app, _) = app_in_game(dir.path());
+    let (mut app, _) = app_with_proxy(dir.path());
 
     let task = app.update(Message::PresenceStatusPicked(PresenceStatus::Online));
 
@@ -2854,7 +2800,7 @@ fn picking_the_current_status_saves_nothing() {
 #[test]
 fn escape_and_outside_clicks_close_the_status_menu() {
     let dir = tempdir().expect("temp dir");
-    let (mut app, _) = app_in_game(dir.path());
+    let (mut app, _) = app_with_proxy(dir.path());
 
     app.status_menu_open = true;
     let _ = app.update(Message::EscapePressed);
@@ -2868,13 +2814,12 @@ fn escape_and_outside_clicks_close_the_status_menu() {
 #[test]
 fn the_status_menu_closes_when_the_control_hides() {
     let dir = tempdir().expect("temp dir");
-    let (mut app, _) = app_in_game(dir.path());
+    let (mut app, _) = app_with_proxy(dir.path());
+    app.state.chat_proxy = false;
     app.status_menu_open = true;
 
-    let _ = app.update(Message::LocalGameChecked(LocalGame {
-        riot_client_running: true,
-        ..LocalGame::default()
-    }));
+    // Riot Client closed, so the proxy goes, and with routing off the control goes with it.
+    let _ = app.update(Message::RiotClientChecked(false));
 
     assert!(!app.status_menu_open);
 }
@@ -4185,10 +4130,7 @@ fn the_image_cache_is_not_cleared_twice_at_once() {
 fn app_with_chat_through_prime(dir: &Path) -> PrimeApp {
     let mut app = test_app(dir);
     app.state.minimize_on_close = false;
-    app.chat_proxy = Some(LaunchedChatProxy {
-        account_id: AccountId::new(),
-        proxy: ChatProxy::detached(PresenceStatus::Online, true),
-    });
+    app.chat_proxy = Some(ChatProxy::detached(PresenceStatus::Online, true));
     app
 }
 
@@ -4211,10 +4153,7 @@ fn closing_asks_before_dropping_riot_client_chat() {
 fn closing_quits_at_once_when_chat_doesnt_go_through_prime() {
     let dir = tempdir().expect("temp dir");
     let mut app = app_with_chat_through_prime(dir.path());
-    app.chat_proxy = Some(LaunchedChatProxy {
-        account_id: AccountId::new(),
-        proxy: ChatProxy::detached(PresenceStatus::Online, false),
-    });
+    app.chat_proxy = Some(ChatProxy::detached(PresenceStatus::Online, false));
 
     let task = app.update(Message::CloseRequested(iced::window::Id::unique()));
 
