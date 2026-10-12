@@ -247,7 +247,7 @@ fn setup_card(app: &PrimeApp, paused: bool) -> Element<'_, Message> {
     .spacing(14);
 
     // The Sensitivity and View choices are an experiment; without it runs use the original modes.
-    let modes = app.state.experiment(AIM_MODES_EXPERIMENT);
+    let modes = app.experiment(AIM_MODES_EXPERIMENT);
     if modes {
         card = card.push(choice(
             "Sensitivity",

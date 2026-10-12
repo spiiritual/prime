@@ -46,8 +46,8 @@ the window: the tier reached, the pass's completion and a rail of chapters on to
 rewards (the current one first; others' art loads when opened), and the next weapon skins ahead.
 
 Aim Trainer tab: red dots that grow until they burst (health 100, a burst costs 15, a
-miss 5). The Sensitivity and View choices are an experiment (Settings > Experiments, off by
-default); without it runs use VALORANT sensitivity and the 2D view, as the trainer first shipped,
+miss 5). The Sensitivity and View choices are a beta experiment (Settings > Experiments);
+without it, as in stable, runs use VALORANT sensitivity and the 2D view, as the trainer first shipped,
 and the saved choices come back when it's switched on. The setup modal picks two things. Sensitivity: "VALORANT" turns `0.07° × sens` per raw
 mouse count, read with Windows Raw Input (`src/raw_mouse.rs`) because iced drops winit's raw device
 events, so Windows pointer speed and acceleration don't matter; "Windows" moves as the desktop
@@ -106,9 +106,10 @@ polls every 30 minutes so sessions keep refreshing; the tray menu quits), Live M
 (fetched at startup), image cache size and clearing, app updates, experiments, and a Riot redirect-token
 import as an advanced fallback for API access.
 
-Experiments: features still being tried, each a switch in Settings, off by default. `accounts.json`
-keeps the names of the ones switched on (`experiments`), so a name a build doesn't know is ignored
-and kept. Each name is a constant in `storage.rs`.
+Experiments: features still being tried, for beta only. Stable builds don't show Settings >
+Experiments and run without them; beta starts with each on and a switch turns it off.
+`accounts.json` keeps the names switched off (`disabled_experiments`), so a name a build doesn't
+know is ignored and kept. Each name is a constant in `storage.rs`; `PrimeApp::experiment` checks one.
 
 One instance: starting Prime while it runs, even from the tray, brings the running window forward
 and the new start exits (`single_instance.rs`). Debug builds use their own name, so `cargo run`

@@ -28,6 +28,7 @@ const CURRENT_PILL_BORDER: Color = iced::color!(0xFF4F5E, 0x55 as f32 / 255.0);
 pub(super) fn section_nav(app: &PrimeApp) -> Element<'_, Message> {
     SettingsSection::ALL
         .into_iter()
+        .filter(|section| *section != SettingsSection::Experiments || app.experiments_shown())
         .fold(column![].spacing(2), |nav, section| {
             nav.push(section_nav_item(section, app.settings_section == section))
         })
@@ -81,15 +82,19 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
                 .spacing(12)
                 .into(),
         ),
-        section(
-            SettingsSection::Experiments,
-            "Try features that are still being worked on. Each can change or go away.",
-            checkbox(app.state.experiment(AIM_MODES_EXPERIMENT))
-                .label("Aim Trainer: 3D view and Windows sensitivity")
-                .on_toggle(|on| Message::ExperimentToggled(AIM_MODES_EXPERIMENT, on))
-                .text_size(13)
-                .into(),
-        ),
+        if app.experiments_shown() {
+            section(
+                SettingsSection::Experiments,
+                "Beta features still being worked on, on until you switch them off. Each can                  change or go away.",
+                checkbox(app.experiment(AIM_MODES_EXPERIMENT))
+                    .label("Aim Trainer: 3D view and Windows sensitivity")
+                    .on_toggle(|on| Message::ExperimentToggled(AIM_MODES_EXPERIMENT, on))
+                    .text_size(13)
+                    .into(),
+            )
+        } else {
+            space().into()
+        },
         section(
             SettingsSection::Advanced,
             "Import a Riot web redirect token for API access when a captured launcher session \

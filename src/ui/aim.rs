@@ -260,7 +260,7 @@ impl PrimeApp {
     /// trainer's, whatever is saved, so switching it back on restores the saved choices.
     pub(super) fn aim_modes(&self) -> (SensitivityMode, ViewMode) {
         let settings = &self.state.aim_trainer;
-        if self.state.experiment(AIM_MODES_EXPERIMENT) {
+        if self.experiment(AIM_MODES_EXPERIMENT) {
             (settings.sensitivity_mode, settings.view_mode)
         } else {
             (SensitivityMode::Valorant, ViewMode::TwoD)

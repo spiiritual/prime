@@ -41,10 +41,10 @@ pub struct StoredState {
     /// The Aim Trainer's settings and best runs. Left out until one is set.
     #[serde(default, skip_serializing_if = "AimTrainerState::is_default")]
     pub aim_trainer: AimTrainerState,
-    /// The experiments switched on in Settings, by name. A name this build doesn't know is kept
-    /// and ignored, so ending an experiment or going back a version still loads the file.
+    /// The experiments a beta tester switched off in Settings, by name; beta starts with every
+    /// one on. A name this build doesn't know is kept and ignored.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub experiments: BTreeSet<String>,
+    pub disabled_experiments: BTreeSet<String>,
     #[serde(flatten)]
     pub unknown: UnknownFields,
 }
@@ -62,8 +62,8 @@ impl std::fmt::Debug for UnknownFields {
     }
 }
 
-/// The new Aim Trainer modes: the Sensitivity and View choices, 3D included. Off, runs use
-/// VALORANT sensitivity and the 2D crosshair, as the trainer first shipped.
+/// The new Aim Trainer modes: the Sensitivity and View choices, 3D included. Off, as in stable,
+/// runs use VALORANT sensitivity and the 2D crosshair, as the trainer first shipped.
 pub const AIM_MODES_EXPERIMENT: &str = "aim-trainer-modes";
 
 fn minimize_on_close_default() -> bool {
@@ -86,17 +86,13 @@ impl Default for StoredState {
             presence_status: PresenceStatus::default(),
             chat_proxy: chat_proxy_default(),
             aim_trainer: AimTrainerState::default(),
-            experiments: BTreeSet::new(),
+            disabled_experiments: BTreeSet::new(),
             unknown: UnknownFields::default(),
         }
     }
 }
 
 impl StoredState {
-    pub fn experiment(&self, name: &str) -> bool {
-        self.experiments.contains(name)
-    }
-
     pub fn selected_account(&self) -> Option<&AccountProfile> {
         let selected = self.selected_account?;
         self.accounts.iter().find(|account| account.id == selected)

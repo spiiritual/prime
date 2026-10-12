@@ -1374,9 +1374,9 @@ impl PrimeApp {
                     return Task::none();
                 }
                 if enabled {
-                    self.state.experiments.insert(name.to_string());
+                    self.state.disabled_experiments.remove(name);
                 } else {
-                    self.state.experiments.remove(name);
+                    self.state.disabled_experiments.insert(name.to_string());
                 }
                 self.save_task()
             }
@@ -3589,6 +3589,16 @@ impl PrimeApp {
         }
 
         Ok(self.state.clone())
+    }
+
+    /// Experiments are for beta: other builds don't show them and run without them.
+    pub(super) fn experiments_shown(&self) -> bool {
+        self.update_channel.as_deref() == Some(crate::updater::BETA_CHANNEL)
+    }
+
+    /// Beta starts with every experiment on; testers can switch each off in Settings.
+    pub(super) fn experiment(&self, name: &str) -> bool {
+        self.experiments_shown() && !self.state.disabled_experiments.contains(name)
     }
 
     pub(super) fn save_task(&self) -> Task<Message> {
