@@ -47,6 +47,9 @@ const TOAST_RISE: f32 = 8.0;
 
 impl PrimeApp {
     pub(super) fn view(&self) -> Element<'_, Message> {
+        if self.aim_fullscreen() {
+            return super::screens::aim_trainer_fullscreen(self);
+        }
         let content = row![
             self.sidebar(),
             container(self.main_panel())

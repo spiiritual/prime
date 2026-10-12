@@ -7385,19 +7385,41 @@ fn aim_app(dir: &Path) -> PrimeApp {
     let mut app = test_app(dir);
     let _ = app.update(Message::TabSelected(Tab::AimTrainer));
     let _ = app.update(aim(AimMessage::MonitorMeasured(Some(1920.0))));
-    let _ = app.update(aim(AimMessage::ArenaResized(iced::Size::new(976.0, 664.0))));
+    let _ = app.update(aim(AimMessage::ArenaResized(iced::Rectangle::new(
+        iced::Point::ORIGIN,
+        iced::Size::new(976.0, 664.0),
+    ))));
     let _ = app.update(aim(AimMessage::SensitivityChanged("0.34".into())));
+    // Hard's pace, which the timings below were written for.
+    app.state.aim_trainer.difficulty = crate::aim_trainer::Difficulty::Hard;
     app
 }
 
 /// Sends frames `ms` apart in 100 ms steps, the way `window::frames` would.
 fn aim_frames(app: &mut PrimeApp, ms: u64) {
     let mut at = app.aim.last_frame.unwrap_or_else(iced::time::Instant::now);
-    let _ = app.update(aim(AimMessage::Frame(at)));
+    let _ = app.update(aim(AimMessage::Frame {
+        now: at,
+        input: Default::default(),
+    }));
     for _ in 0..ms / 100 {
         at += Duration::from_millis(100);
-        let _ = app.update(aim(AimMessage::Frame(at)));
+        let _ = app.update(aim(AimMessage::Frame {
+            now: at,
+            input: Default::default(),
+        }));
     }
+}
+
+/// A frame with one raw click, after `moved` counts, and no time passing.
+fn aim_click(app: &mut PrimeApp, moved: (i32, i32)) {
+    let _ = app.update(aim(AimMessage::Frame {
+        now: app.aim.last_frame.unwrap_or_else(iced::time::Instant::now),
+        input: crate::raw_mouse::Input {
+            clicks: vec![moved],
+            moved: (0, 0),
+        },
+    }));
 }
 
 /// Moves the crosshair onto the newest dot in whole counts and clicks it.
@@ -7405,13 +7427,12 @@ fn aim_hit_newest(app: &mut PrimeApp) {
     let AimPhase::Playing(game) = &app.aim.phase else {
         panic!("not playing");
     };
-    let (dot, _) = game.dots().last().expect("a dot");
-    let (yaw, pitch) = game.aim();
-    let per_count = crate::aim_trainer::DEGREES_PER_COUNT * game.sensitivity();
-    let dx = ((dot.yaw - yaw) / per_count).round() as i32;
-    let dy = ((dot.pitch - pitch) / per_count).round() as i32;
-    let _ = app.update(aim(AimMessage::MouseMoved(dx, dy)));
-    let _ = app.update(aim(AimMessage::Clicked));
+    let (yaw, pitch) = game.dots().last().expect("a dot").angles();
+    let camera = game.camera();
+    let per_count = game.degrees_per_count().expect("aims with counts");
+    let dx = ((yaw - camera.yaw) / per_count).round() as i32;
+    let dy = ((pitch - camera.pitch) / per_count).round() as i32;
+    aim_click(app, (dx, dy));
 }
 
 #[test]
@@ -7445,7 +7466,11 @@ fn aim_sensitivity_is_saved_only_when_valid() {
             "the field keeps what was typed"
         );
         assert_eq!(app.state.aim_trainer.sensitivity, Some(0.35));
-        assert!(!app.aim.can_start(), "{bad} can't start a run");
+        assert!(
+            !app.aim
+                .can_start(crate::aim_trainer::SensitivityMode::Valorant),
+            "{bad} can't start a run"
+        );
         let _ = app.update(aim(AimMessage::Start));
         assert!(matches!(app.aim.phase, AimPhase::Ready));
     }
@@ -7470,7 +7495,7 @@ fn aim_run_starts_once_and_esc_ends_it_with_results() {
     let dir = tempdir().expect("temp dir");
     let mut app = aim_app(dir.path());
 
-    let _ = app.update(aim(AimMessage::Clicked));
+    aim_click(&mut app, (0, 0));
     assert!(
         matches!(app.aim.phase, AimPhase::Ready),
         "clicks before Start do nothing"
@@ -7498,6 +7523,100 @@ fn aim_run_starts_once_and_esc_ends_it_with_results() {
 }
 
 #[test]
+fn aim_with_the_windows_cursor_in_2d_needs_no_sensitivity_and_shoots_where_clicked() {
+    use crate::aim_trainer::{SensitivityMode, ViewMode};
+
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+    let _ = app.update(aim(AimMessage::SensitivityChanged(String::new())));
+    assert!(!app.aim.can_start(SensitivityMode::Valorant));
+
+    let task = app.update(aim(AimMessage::SensitivityModeChanged(
+        SensitivityMode::Windows,
+    )));
+    assert!(task.units() > 0, "saved");
+    let task = app.update(aim(AimMessage::ViewModeChanged(ViewMode::TwoD)));
+    assert!(task.units() > 0, "saved");
+    assert_eq!(
+        (
+            app.state.aim_trainer.sensitivity_mode,
+            app.state.aim_trainer.view_mode
+        ),
+        (SensitivityMode::Windows, ViewMode::TwoD)
+    );
+    let _ = app.update(aim(AimMessage::Start));
+    aim_frames(&mut app, 0);
+    let AimPhase::Playing(game) = &app.aim.phase else {
+        panic!("playing");
+    };
+    let dot = game.drawn_dots().last().expect("a dot");
+    let (x, y) = (dot.x, dot.y);
+    let _ = app.update(aim(AimMessage::ClickedAt(iced::Point::new(
+        x as f32, y as f32,
+    ))));
+    // A raw-count click is ignored when the cursor aims itself.
+    aim_click(&mut app, (0, 0));
+
+    let _ = app.update(aim(AimMessage::Stop));
+    let AimPhase::Over { run, .. } = &app.aim.phase else {
+        panic!("over");
+    };
+    assert_eq!((run.score, run.misses), (1, 0));
+    assert_eq!((run.sensitivity, run.dpi), (None, None));
+}
+
+#[test]
+fn aim_with_the_windows_cursor_in_3d_turns_the_view_and_shoots_the_centre() {
+    use crate::aim_trainer::SensitivityMode;
+
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+    let _ = app.update(aim(AimMessage::SensitivityModeChanged(
+        SensitivityMode::Windows,
+    )));
+    let _ = app.update(aim(AimMessage::Start));
+    aim_frames(&mut app, 0);
+    aim_hit_newest(&mut app);
+
+    let _ = app.update(aim(AimMessage::Stop));
+    let AimPhase::Over { run, .. } = &app.aim.phase else {
+        panic!("over");
+    };
+    assert_eq!((run.score, run.misses), (1, 0));
+    assert_eq!(run.sensitivity, None);
+}
+
+#[test]
+fn aim_fullscreen_lasts_only_while_a_run_plays() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+    let _ = app.update(aim(AimMessage::FullscreenToggled(true)));
+    assert!(app.state.aim_trainer.fullscreen);
+    assert!(!app.aim_fullscreen());
+
+    let _ = app.update(aim(AimMessage::Start));
+    assert!(app.aim_fullscreen());
+    // Settings stay as the run started.
+    let _ = app.update(aim(AimMessage::FullscreenToggled(false)));
+    assert!(app.state.aim_trainer.fullscreen);
+
+    let task = app.update(aim(AimMessage::FocusLost));
+    assert!(!app.aim_fullscreen());
+    assert!(task.units() > 0, "the window leaves fullscreen");
+    let _ = app.update(aim(AimMessage::Start));
+    assert!(app.aim_fullscreen());
+    let _ = app.update(aim(AimMessage::Stop));
+    assert!(!app.aim_fullscreen());
+
+    let _ = app.update(aim(AimMessage::Done));
+    let _ = app.update(aim(AimMessage::FullscreenToggled(false)));
+    let _ = app.update(aim(AimMessage::Start));
+    assert!(!app.aim_fullscreen());
+    let task = app.update(aim(AimMessage::FocusLost));
+    assert_eq!(task.units(), 0, "a windowed run leaves the window alone");
+}
+
+#[test]
 fn aim_best_run_is_replaced_only_by_a_higher_score() {
     let dir = tempdir().expect("temp dir");
     let mut app = aim_app(dir.path());
@@ -7507,8 +7626,8 @@ fn aim_best_run_is_replaced_only_by_a_higher_score() {
         bursts: 0,
         avg_reaction_ms: None,
         duration_ms: 0,
-        sensitivity: 0.34,
-        dpi: 800,
+        sensitivity: Some(0.34),
+        dpi: Some(800),
         finished_at_unix: 0,
     };
     app.state.aim_trainer.best = Some(best(1));
@@ -7539,6 +7658,24 @@ fn aim_best_run_is_replaced_only_by_a_higher_score() {
         panic!("over");
     };
     assert!(!*new_best);
+    assert_eq!(app.state.aim_trainer.best.map(|run| run.score), Some(5));
+
+    // Each difficulty keeps its own best.
+    let _ = app.update(aim(AimMessage::DifficultyChanged(
+        crate::aim_trainer::Difficulty::Easy,
+    )));
+    let _ = app.update(aim(AimMessage::Start));
+    aim_frames(&mut app, 0);
+    aim_hit_newest(&mut app);
+    let _ = app.update(aim(AimMessage::Stop));
+    let AimPhase::Over { new_best, .. } = &app.aim.phase else {
+        panic!("over");
+    };
+    assert!(*new_best);
+    assert_eq!(
+        app.state.aim_trainer.best_easy.map(|run| run.score),
+        Some(1)
+    );
     assert_eq!(app.state.aim_trainer.best.map(|run| run.score), Some(5));
 }
 
@@ -7584,18 +7721,42 @@ fn aim_run_ends_when_leaving_the_tab_and_pauses_when_closing() {
 }
 
 #[test]
+fn aim_frames_keep_the_part_of_a_millisecond_they_leave_over() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+    let _ = app.update(aim(AimMessage::Start));
+    let mut at = iced::time::Instant::now();
+    // 144 Hz for a second.
+    for _ in 0..=144 {
+        let _ = app.update(aim(AimMessage::Frame {
+            now: at,
+            input: Default::default(),
+        }));
+        at += Duration::from_micros(6_944);
+    }
+    let AimPhase::Playing(game) = &app.aim.phase else {
+        panic!("playing");
+    };
+    assert_eq!(game.results().duration_ms, 999);
+}
+
+#[test]
 fn aim_arena_of_zero_size_is_ignored() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
     let _ = app.update(Message::TabSelected(Tab::AimTrainer));
     let _ = app.update(aim(AimMessage::SensitivityChanged("0.34".into())));
-    let _ = app.update(aim(AimMessage::ArenaResized(iced::Size::ZERO)));
-    assert!(!app.aim.can_start(), "no arena to play in yet");
+    let _ = app.update(aim(AimMessage::ArenaResized(iced::Rectangle::default())));
+    assert!(
+        !app.aim
+            .can_start(crate::aim_trainer::SensitivityMode::Valorant),
+        "no arena to play in yet"
+    );
 
     let mut app = aim_app(dir.path());
     let _ = app.update(aim(AimMessage::Start));
     let before = app.aim.phase.game().expect("game").view();
-    let _ = app.update(aim(AimMessage::ArenaResized(iced::Size::ZERO)));
+    let _ = app.update(aim(AimMessage::ArenaResized(iced::Rectangle::default())));
     assert_eq!(app.aim.phase.game().expect("game").view(), before);
 }
 

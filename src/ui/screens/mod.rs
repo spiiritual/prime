@@ -15,6 +15,7 @@ pub(super) use accounts::header_actions as accounts_header_actions;
 #[cfg(test)]
 pub(super) use accounts::missing_rank_label;
 pub(super) use accounts::{captured_on_label, save_settings_on_add_checkbox};
+pub(super) use aim_trainer::fullscreen as aim_trainer_fullscreen;
 pub(super) use game_settings::original_settings;
 #[cfg(test)]
 pub(super) use game_settings::selected_preset;

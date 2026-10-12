@@ -1,15 +1,16 @@
 //! The Aim Trainer tab: score, accuracy, best and health over a fixed-size arena, with the setup
 //! and results as modals inside it.
 
-use iced::widget::{canvas, column, container, row, space, stack};
+use iced::widget::{canvas, checkbox, column, container, row, space, stack};
 use iced::{
     Border, Color, Element, Length, Point, Rectangle, Renderer, Shadow, Size, Theme, Vector,
     alignment, mouse,
 };
 use time::{OffsetDateTime, UtcOffset};
 
-use crate::aim_trainer::{self, AimRun};
+use crate::aim_trainer::{self, AimRun, Difficulty, Game, SensitivityMode, ViewMode};
 use crate::ui::aim::{AimMessage, AimPhase, AimTrainerTab};
+use crate::ui::components::{mono, segmented};
 use crate::ui::theme::{self, Icon, text};
 use crate::ui::{Message, PrimeApp};
 
@@ -19,12 +20,33 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
     column![hud(app), arena(app)].spacing(20).into()
 }
 
+/// The running run's settings, which it keeps until it ends, or the ones the next run starts with.
+fn run_settings(app: &PrimeApp) -> (SensitivityMode, ViewMode, Difficulty) {
+    match app.aim.phase.game() {
+        Some(game) if app.aim.phase.is_running() => {
+            (game.sensitivity_mode(), game.mode(), game.difficulty())
+        }
+        _ => {
+            let settings = &app.state.aim_trainer;
+            (
+                settings.sensitivity_mode,
+                settings.view_mode,
+                settings.difficulty,
+            )
+        }
+    }
+}
+
 fn hud(app: &PrimeApp) -> Element<'_, Message> {
     let game = app.aim.phase.game();
     let score = game.map_or(0, |game| game.score());
     let accuracy = game.and_then(|game| game.results().accuracy());
     let health = game.map_or(100, |game| game.health());
-    let best = app.state.aim_trainer.best.map(|run| run.score);
+    let best = app
+        .state
+        .aim_trainer
+        .best(run_settings(app).2)
+        .map(|run| run.score);
 
     let health_bar = column![
         row![
@@ -84,25 +106,36 @@ fn stat<'a>(label: &'a str, value: String, color: Color) -> Element<'a, Message>
     .into()
 }
 
+/// A fullscreen run: the arena fills the monitor, with the scores over it.
+pub(in crate::ui) fn fullscreen(app: &PrimeApp) -> Element<'_, Message> {
+    container(stack![
+        arena_canvas(app),
+        column![hud(app), space().height(Length::Fill), esc_hint()].padding(32),
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(|_| container::Style {
+        background: Some(theme::SURFACE.into()),
+        ..container::Style::default()
+    })
+    .into()
+}
+
+fn arena_canvas(app: &PrimeApp) -> Element<'_, Message> {
+    canvas(Arena { tab: &app.aim })
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+fn esc_hint<'a>() -> Element<'a, Message> {
+    mono("Esc to stop", 11).color(theme::FAINT).into()
+}
+
 fn arena(app: &PrimeApp) -> Element<'_, Message> {
-    let mut layers = stack![
-        canvas(Arena { tab: &app.aim })
-            .width(Length::Fill)
-            .height(Length::Fill)
-    ];
+    let mut layers = stack![arena_canvas(app)];
     match &app.aim.phase {
-        AimPhase::Playing(_) => {
-            layers = layers.push(
-                container(
-                    text("Esc to stop")
-                        .size(11)
-                        .font(theme::MONO_FONT)
-                        .line_height(theme::MONO_LINE_HEIGHT)
-                        .color(theme::FAINT),
-                )
-                .padding(16),
-            );
-        }
+        AimPhase::Playing(_) => layers = layers.push(container(esc_hint()).padding(16)),
         AimPhase::Ready => layers = layers.push(modal(setup_card(app, false))),
         AimPhase::Paused(_) => layers = layers.push(modal(setup_card(app, true))),
         AimPhase::Over {
@@ -165,32 +198,38 @@ fn card_style(_: &Theme) -> container::Style {
 
 fn setup_card(app: &PrimeApp, paused: bool) -> Element<'_, Message> {
     let tab = &app.aim;
-    let sensitivity = tab.sensitivity();
-    let dpi = aim_trainer::parse_dpi(&tab.dpi_input);
-
-    let mut sensitivity_input =
-        theme::text_input("e.g. 0.35", &tab.sensitivity_input).font(theme::MONO_FONT);
-    let mut dpi_input = theme::text_input("800", &tab.dpi_input).font(theme::MONO_FONT);
-    // A run keeps the sensitivity it started with, so the fields are read-only while paused.
-    if !paused {
-        sensitivity_input =
-            sensitivity_input.on_input(|value| Message::Aim(AimMessage::SensitivityChanged(value)));
-        dpi_input = dpi_input.on_input(|value| Message::Aim(AimMessage::DpiChanged(value)));
-    }
-
-    let (edpi, cm) = match (sensitivity, dpi) {
-        (Some(sensitivity), Some(dpi)) => (
-            format!("{}", (sensitivity * f64::from(dpi)).round()),
-            format!("{:.1} cm", aim_trainer::cm_per_360(sensitivity, dpi)),
-        ),
-        _ => ("—".to_string(), "—".to_string()),
-    };
+    let settings = &app.state.aim_trainer;
+    // A run keeps the settings it started with, so they're read-only while paused.
+    let (sensitivity_mode, view_mode, difficulty) = run_settings(app);
 
     let start_label = if paused { "Resume" } else { "Start" };
     let start = theme::button(theme::icon_label(Icon::Play, start_label, theme::BG))
         .style(theme::danger_button_style)
         .padding([9, 16])
-        .on_press_maybe(tab.can_start().then_some(Message::Aim(AimMessage::Start)));
+        .on_press_maybe(
+            tab.can_start(sensitivity_mode)
+                .then_some(Message::Aim(AimMessage::Start)),
+        );
+
+    let (sensitivity_hint, input_note) = match sensitivity_mode {
+        SensitivityMode::Valorant => (
+            "Raw mouse counts at your in-game sensitivity, as in VALORANT.",
+            "Raw input · Esc to stop",
+        ),
+        SensitivityMode::Windows => (
+            "Moves as your Windows cursor does, pointer speed and acceleration included.",
+            "Windows pointer speed · Esc to stop",
+        ),
+    };
+    let difficulty_hint = match difficulty {
+        Difficulty::Easy => "Dots come slowly, up to 4 at once.",
+        Difficulty::Normal => "Up to 6 dots at once.",
+        Difficulty::Hard => "Up to 11 dots at once.",
+    };
+    let view_hint = match view_mode {
+        ViewMode::ThreeD => "The crosshair stays in the centre and the view turns, as in game.",
+        ViewMode::TwoD => "The view stays still and the crosshair moves across it.",
+    };
 
     let mut card = column![
         column![
@@ -198,32 +237,60 @@ fn setup_card(app: &PrimeApp, paused: bool) -> Element<'_, Message> {
                 .size(20)
                 .font(theme::DISPLAY_FONT)
                 .line_height(theme::DISPLAY_LINE_HEIGHT),
-            text(
-                "Pop the dots before they grow. Your crosshair moves at your VALORANT sensitivity."
-            )
-            .size(13)
-            .color(theme::MUTED),
+            text("Pop the dots before they grow.")
+                .size(13)
+                .color(theme::MUTED),
         ]
         .spacing(4),
-        row![
-            field(
-                "VALORANT sensitivity",
-                sensitivity_input.into(),
-                Length::Fill
-            ),
-            field("Mouse DPI", dpi_input.into(), Length::Fixed(130.0)),
-        ]
-        .spacing(12),
-        row![
-            tile("eDPI", edpi),
-            tile("cm / 360°", cm),
-            tile("FOV", format!("{}°", aim_trainer::HORIZONTAL_FOV_DEGREES)),
-        ]
-        .spacing(8),
+        choice(
+            "Sensitivity",
+            [
+                (SensitivityMode::Valorant, "VALORANT"),
+                (SensitivityMode::Windows, "Windows"),
+            ],
+            sensitivity_mode,
+            sensitivity_hint,
+            paused,
+            AimMessage::SensitivityModeChanged,
+        ),
     ]
-    .spacing(18);
+    .spacing(14);
 
-    if let Some(best) = &app.state.aim_trainer.best {
+    if sensitivity_mode == SensitivityMode::Valorant {
+        card = card.push(sensitivity_fields(tab, paused));
+    }
+
+    card = card.push(choice(
+        "View",
+        [(ViewMode::ThreeD, "3D"), (ViewMode::TwoD, "2D")],
+        view_mode,
+        view_hint,
+        paused,
+        AimMessage::ViewModeChanged,
+    ));
+
+    card = card.push(choice(
+        "Difficulty",
+        [
+            (Difficulty::Easy, "Easy"),
+            (Difficulty::Normal, "Normal"),
+            (Difficulty::Hard, "Hard"),
+        ],
+        difficulty,
+        difficulty_hint,
+        paused,
+        AimMessage::DifficultyChanged,
+    ));
+
+    let mut fullscreen = checkbox(settings.fullscreen)
+        .label("Play fullscreen")
+        .text_size(13);
+    if !paused {
+        fullscreen = fullscreen.on_toggle(|on| Message::Aim(AimMessage::FullscreenToggled(on)));
+    }
+    card = card.push(fullscreen);
+
+    if let Some(best) = &app.state.aim_trainer.best(difficulty) {
         card = card.push(
             container(
                 row![
@@ -253,7 +320,7 @@ fn setup_card(app: &PrimeApp, paused: bool) -> Element<'_, Message> {
         row![
             row![
                 theme::icon(Icon::Mouse, 13.0, theme::FAINT),
-                text("Raw input · Esc to stop").size(11).color(theme::FAINT),
+                text(input_note).size(11).color(theme::FAINT),
             ]
             .spacing(6)
             .align_y(alignment::Vertical::Center),
@@ -268,6 +335,72 @@ fn setup_card(app: &PrimeApp, paused: bool) -> Element<'_, Message> {
         .padding(24)
         .style(card_style)
         .into()
+}
+
+/// A labelled pick of a few, with a line on what the picked one does.
+fn choice<T: Copy + PartialEq + 'static, const N: usize>(
+    label: &'static str,
+    options: [(T, &'static str); N],
+    selected: T,
+    hint: &'static str,
+    paused: bool,
+    on_pick: fn(T) -> AimMessage,
+) -> Element<'static, Message> {
+    let picker = segmented(
+        options.map(|(value, name)| (value, name.to_string())),
+        selected,
+        Length::Fill,
+        move |value| (!paused).then(|| Message::Aim(on_pick(value))),
+    );
+    column![
+        field(label, picker, Length::Fill),
+        text(hint).size(11).color(theme::FAINT),
+    ]
+    .spacing(6)
+    .into()
+}
+
+/// The sensitivity and DPI, with what they come to.
+fn sensitivity_fields(tab: &AimTrainerTab, paused: bool) -> Element<'_, Message> {
+    let sensitivity = tab.sensitivity();
+    let dpi = aim_trainer::parse_dpi(&tab.dpi_input);
+
+    let mut sensitivity_input =
+        theme::text_input("e.g. 0.35", &tab.sensitivity_input).font(theme::MONO_FONT);
+    let mut dpi_input = theme::text_input("800", &tab.dpi_input).font(theme::MONO_FONT);
+    if !paused {
+        sensitivity_input =
+            sensitivity_input.on_input(|value| Message::Aim(AimMessage::SensitivityChanged(value)));
+        dpi_input = dpi_input.on_input(|value| Message::Aim(AimMessage::DpiChanged(value)));
+    }
+
+    let (edpi, cm) = match (sensitivity, dpi) {
+        (Some(sensitivity), Some(dpi)) => (
+            format!("{}", (sensitivity * f64::from(dpi)).round()),
+            format!("{:.1} cm", aim_trainer::cm_per_360(sensitivity, dpi)),
+        ),
+        _ => ("—".to_string(), "—".to_string()),
+    };
+
+    column![
+        row![
+            field(
+                "VALORANT sensitivity",
+                sensitivity_input.into(),
+                Length::Fill
+            ),
+            field("Mouse DPI", dpi_input.into(), Length::Fixed(130.0)),
+        ]
+        .spacing(12),
+        row![
+            tile("eDPI", edpi),
+            tile("cm / 360°", cm),
+            tile("FOV", format!("{}°", aim_trainer::HORIZONTAL_FOV_DEGREES)),
+        ]
+        .spacing(8),
+    ]
+    .spacing(12)
+    .into()
 }
 
 fn results_card<'a>(
@@ -315,12 +448,13 @@ fn results_card<'a>(
         None => "dots".to_string(),
     };
 
-    let note = format!(
-        "At {} sens · {} DPI ({:.1} cm/360°)",
-        run.sensitivity,
-        run.dpi,
-        aim_trainer::cm_per_360(run.sensitivity, run.dpi)
-    );
+    let note = match (run.sensitivity, run.dpi) {
+        (Some(sensitivity), Some(dpi)) => format!(
+            "At {sensitivity} sens · {dpi} DPI ({:.1} cm/360°)",
+            aim_trainer::cm_per_360(sensitivity, dpi)
+        ),
+        _ => "With the Windows cursor".to_string(),
+    };
 
     let actions = row![
         space().width(Length::Fill),
@@ -446,21 +580,53 @@ struct Arena<'a> {
     tab: &'a AimTrainerTab,
 }
 
+impl Arena<'_> {
+    /// The run playing, not paused or over.
+    fn playing(&self) -> Option<&Game> {
+        match &self.tab.phase {
+            AimPhase::Playing(game) => Some(game),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct ArenaState {
+    bounds: Option<Rectangle>,
+    /// Where the cursor was after the last movement handled. iced hands every event in a batch
+    /// the cursor from the batch's end, so a click followed by movement would land late.
+    cursor: Option<Point>,
+}
+
 impl canvas::Program<Message> for Arena<'_> {
-    type State = Option<Size>;
+    type State = ArenaState;
 
     fn update(
         &self,
         state: &mut Self::State,
-        _event: &iced::Event,
+        event: &iced::Event,
         bounds: Rectangle,
-        _cursor: mouse::Cursor,
+        cursor: mouse::Cursor,
     ) -> Option<canvas::Action<Message>> {
-        let size = bounds.size();
-        (*state != Some(size)).then(|| {
-            *state = Some(size);
-            canvas::Action::publish(Message::Aim(AimMessage::ArenaResized(size)))
-        })
+        if let iced::Event::Mouse(mouse::Event::CursorMoved { position }) = event {
+            state.cursor = Some(*position);
+        }
+        if state.bounds != Some(bounds) {
+            state.bounds = Some(bounds);
+            return Some(canvas::Action::publish(Message::Aim(
+                AimMessage::ArenaResized(bounds),
+            )));
+        }
+        // Raw-count clicks come from anywhere, the cursor being held; cursor clicks land here.
+        let iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event else {
+            return None;
+        };
+        let at = state.cursor.or(cursor.position())?;
+        if !self.playing().is_some_and(Game::aims_with_cursor) || !bounds.contains(at) {
+            return None;
+        }
+        let point = Point::new(at.x - bounds.x, at.y - bounds.y);
+        Some(canvas::Action::publish(Message::Aim(AimMessage::ClickedAt(point))).and_capture())
     }
 
     fn draw(
@@ -475,27 +641,56 @@ impl canvas::Program<Message> for Arena<'_> {
         let Some(game) = self.tab.phase.game() else {
             return vec![frame.into_geometry()];
         };
-        let view = game.view();
-        let playing = matches!(self.tab.phase, AimPhase::Playing(_));
+        let playing = self.playing().is_some();
         // Behind a modal the run's last dots stay, faded.
-        let color = if playing {
-            theme::ACCENT
-        } else {
-            Color {
-                a: 0.25,
-                ..theme::ACCENT
-            }
+        let alpha = if playing { 1.0 } else { 0.25 };
+        let color = Color {
+            a: alpha,
+            ..theme::ACCENT
         };
-        for (dot, diameter) in game.dots() {
-            let (x, y) = view.to_px(dot.yaw, dot.pitch);
-            let radius = view.radius_px(dot.yaw, dot.pitch, diameter);
-            frame.fill(
-                &canvas::Path::circle(Point::new(x as f32, y as f32), radius as f32),
-                color,
+        // A still room around the view, so turning doesn't feel like floating in a void.
+        let mut walls = canvas::path::Builder::new();
+        let mut floor = canvas::path::Builder::new();
+        for line in game.room_lines() {
+            let path = if line.floor { &mut floor } else { &mut walls };
+            path.move_to(Point::new(line.from.0 as f32, line.from.1 as f32));
+            path.line_to(Point::new(line.to.0 as f32, line.to.1 as f32));
+        }
+        for (path, strength) in [(walls, 0.07), (floor, 0.16)] {
+            frame.stroke(
+                &path.build(),
+                canvas::Stroke::default().with_width(1.0).with_color(Color {
+                    a: strength * alpha,
+                    ..Color::WHITE
+                }),
             );
         }
-        if playing {
-            let (x, y) = view.to_px(game.aim().0, game.aim().1);
+        // Where dots appear, on the front wall.
+        let mut zone = canvas::path::Builder::new();
+        for (from, to) in game.spawn_zone_lines() {
+            zone.move_to(Point::new(from.0 as f32, from.1 as f32));
+            zone.line_to(Point::new(to.0 as f32, to.1 as f32));
+        }
+        frame.stroke(
+            &zone.build(),
+            canvas::Stroke::default().with_width(1.0).with_color(Color {
+                a: 0.3 * alpha,
+                ..theme::ACCENT
+            }),
+        );
+        // Each dot's burst size shows as a faint ring, so the gap tells how long it has left.
+        let ring = canvas::Stroke::default().with_width(1.0).with_color(Color {
+            a: 0.35 * alpha,
+            ..theme::ACCENT
+        });
+        for dot in game.drawn_dots() {
+            let center = Point::new(dot.x as f32, dot.y as f32);
+            frame.stroke(&canvas::Path::circle(center, dot.burst_radius as f32), ring);
+            frame.fill(&canvas::Path::circle(center, dot.radius as f32), color);
+        }
+        // The Windows cursor aiming a 2D view is its own crosshair: drawing one here would trail
+        // it by frames.
+        if playing && let Some((x, y)) = game.crosshair() {
             draw_crosshair(&mut frame, Point::new(x as f32, y as f32));
         }
         vec![frame.into_geometry()]
@@ -507,10 +702,10 @@ impl canvas::Program<Message> for Arena<'_> {
         _bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> mouse::Interaction {
-        if matches!(self.tab.phase, AimPhase::Playing(_)) {
-            mouse::Interaction::Hidden
-        } else {
-            mouse::Interaction::default()
+        match self.playing().map(Game::aims_with_cursor) {
+            Some(true) => mouse::Interaction::Crosshair,
+            Some(false) => mouse::Interaction::Hidden,
+            None => mouse::Interaction::default(),
         }
     }
 }

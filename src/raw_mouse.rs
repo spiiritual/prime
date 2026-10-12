@@ -2,65 +2,101 @@
 //! before Windows pointer speed and acceleration. iced 0.14 drops winit's raw device events, so a
 //! thread with its own message-only window reads them. Windows sends a process's raw mouse input
 //! to one window, so this takes it from winit while a run plays; iced ignores it anyway.
+//!
+//! When the Windows cursor turns a 3D view, each packet instead reads how far the cursor moved
+//! from the arena's centre and puts it back, so its movement counts with Windows' pointer speed
+//! and acceleration.
+//!
+//! Counts and clicks are gathered here and taken once per frame: a message per packet rebuilt
+//! the whole UI up to a thousand times a second, which starved the repaints. Each click keeps the
+//! counts read before it, so it shoots where the crosshair was when the button went down.
 
-use std::cell::RefCell;
 use std::ptr::{null, null_mut};
 use std::sync::Mutex;
 
+use iced::Rectangle;
 use iced::futures::{SinkExt, Stream};
-use tokio::sync::mpsc::UnboundedSender;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow;
 use windows_sys::Win32::UI::Input::{
     GetRawInputData, HRAWINPUT, MOUSE_MOVE_ABSOLUTE, RAWINPUT, RAWINPUTDEVICE, RAWINPUTHEADER,
     RID_INPUT, RIDEV_INPUTSINK, RIDEV_REMOVE, RIM_TYPEMOUSE, RegisterRawInputDevices,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     ClipCursor, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClipCursor,
-    GetCursorPos, GetMessageW, HWND_MESSAGE, MSG, PostMessageW, PostQuitMessage, RegisterClassW, WM_CLOSE,
-    WM_DESTROY, WM_INPUT, WNDCLASSW,
+    GetCursorPos, GetMessageW, HWND_MESSAGE, MSG, PostMessageW, PostQuitMessage, RegisterClassW,
+    SetCursorPos, WM_CLOSE, WM_DESTROY, WM_INPUT, WNDCLASSW,
 };
 
 const GENERIC_DESKTOP: u16 = 0x01;
 const MOUSE: u16 = 0x02;
+/// `RI_MOUSE_LEFT_BUTTON_DOWN`.
+const LEFT_BUTTON_DOWN: u16 = 0x0001;
 
-/// The pixel the cursor is held on while a run plays. winit clears any clip it didn't set itself
-/// (when iced hides the cursor, and when the cursor enters or leaves the window), so the reader
-/// puts it back on each movement.
-static HELD: Mutex<Option<RECT>> = Mutex::new(None);
+/// How the cursor is held while a run plays.
+static GRAB: Mutex<Option<Grab>> = Mutex::new(None);
 
-thread_local! {
-    static SENDER: RefCell<Option<UnboundedSender<(i32, i32)>>> = const { RefCell::new(None) };
+#[derive(Clone, Copy)]
+struct Grab {
+    /// Where the cursor is kept. winit clears any clip it didn't set itself (when iced hides the
+    /// cursor, and when the cursor enters or leaves the window), so the reader puts it back on
+    /// each movement.
+    clip: RECT,
+    /// Where the cursor is put back after each packet while the Windows cursor turns a 3D view.
+    centre: Option<POINT>,
 }
 
-/// What the reader reports.
+static INPUT: Mutex<Input> = Mutex::new(Input {
+    clicks: Vec::new(),
+    moved: (0, 0),
+});
+
+/// Mouse input read since the last frame took it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Input {
+    /// Each left click, oldest first, with the counts read between it and the click or take
+    /// before it.
+    pub clicks: Vec<(i32, i32)>,
+    /// The counts read since the last click or take.
+    pub moved: (i32, i32),
+}
+
+impl Input {
+    /// One packet; its movement comes before its button.
+    fn read(&mut self, (dx, dy): (i32, i32), left_down: bool) {
+        self.moved = (
+            self.moved.0.saturating_add(dx),
+            self.moved.1.saturating_add(dy),
+        );
+        if left_down {
+            self.clicks.push(std::mem::take(&mut self.moved));
+        }
+    }
+}
+
+/// The reader couldn't start.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RawMouse {
-    Moved(i32, i32),
-    /// The reader couldn't start; sent once, then the stream ends.
-    Unavailable,
-}
+pub struct Unavailable;
 
-/// Relative mouse counts while subscribed. Ending the subscription closes the reader's window,
-/// which gives the raw mouse input back.
-pub fn movements() -> impl Stream<Item = RawMouse> {
-    iced::stream::channel(64, async |mut output| {
-        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
-        let Some(_reader) = Reader::start(sender) else {
-            let _ = output.send(RawMouse::Unavailable).await;
+/// Reads raw mouse input for `take_input` and keeps the cursor held while subscribed. Yields
+/// only if the reader couldn't start. Ending the subscription closes the reader's window, which
+/// gives the raw mouse input back.
+pub fn reader() -> impl Stream<Item = Unavailable> {
+    iced::stream::channel(1, async |mut output| {
+        let Some(_reader) = Reader::start() else {
+            let _ = output.send(Unavailable).await;
             return;
         };
-        // A 1000 Hz mouse sends a message every millisecond; one per wake-up is plenty.
-        while let Some((mut dx, mut dy)) = receiver.recv().await {
-            while let Ok((x, y)) = receiver.try_recv() {
-                dx += x;
-                dy += y;
-            }
-            if output.send(RawMouse::Moved(dx, dy)).await.is_err() {
-                break;
-            }
-        }
+        std::future::pending::<()>().await;
     })
+}
+
+/// The input read since the last take.
+pub fn take_input() -> Input {
+    std::mem::take(&mut *INPUT.lock().unwrap_or_else(|e| e.into_inner()))
 }
 
 /// Holds the cursor on its current pixel, inside Prime, so a fast flick can't click elsewhere.
@@ -70,39 +106,123 @@ pub fn hold_cursor() {
         return;
     }
     let mut point = POINT::default();
-    // SAFETY: both calls only read or write the local values passed to them.
-    unsafe {
-        if GetCursorPos(&mut point) != 0 {
-            let rect = RECT {
+    // SAFETY: only writes the local value passed to it.
+    if unsafe { GetCursorPos(&mut point) } != 0 {
+        grab(Grab {
+            clip: RECT {
                 left: point.x,
                 top: point.y,
                 right: point.x + 1,
                 bottom: point.y + 1,
-            };
-            let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
-            *held = Some(rect);
-            ClipCursor(&rect);
+            },
+            centre: None,
+        });
+    }
+}
+
+/// Keeps the cursor inside `area` of Prime's window, in iced's logical pixels, so it can't click
+/// beside the arena. Called from `update`, on the window's thread, while Prime is active.
+pub fn confine_cursor(area: Rectangle) {
+    // Tests must never clip the real cursor.
+    if cfg!(test) {
+        return;
+    }
+    if let Some((clip, _)) = on_screen(area) {
+        grab(Grab { clip, centre: None });
+    }
+}
+
+/// Confines the cursor to `area` and puts it back at its centre after each packet, reading how
+/// far it moved as counts. Returns the window's physical pixels per logical one, or `None` if the
+/// window couldn't be found. Called like `confine_cursor`.
+pub fn recentre_cursor(area: Rectangle) -> Option<f64> {
+    // Tests must never move the real cursor.
+    if cfg!(test) {
+        return None;
+    }
+    let (clip, scale) = on_screen(area)?;
+    let centre = POINT {
+        x: (clip.left + clip.right) / 2,
+        y: (clip.top + clip.bottom) / 2,
+    };
+    grab(Grab {
+        clip,
+        centre: Some(centre),
+    });
+    Some(scale.into())
+}
+
+/// `area` of the active window, in iced's logical pixels, on screen and rounded inwards so the
+/// cursor never sits on its border, with the window's scale.
+fn on_screen(area: Rectangle) -> Option<(RECT, f32)> {
+    // SAFETY: the calls only read the window and write the local values passed to them.
+    unsafe {
+        let window = GetActiveWindow();
+        if window.is_null() {
+            return None;
+        }
+        let dpi = GetDpiForWindow(window);
+        let mut origin = POINT::default();
+        if dpi == 0 || ClientToScreen(window, &mut origin) == 0 {
+            return None;
+        }
+        let scale = dpi as f32 / 96.0;
+        Some((
+            RECT {
+                left: origin.x + (area.x * scale).ceil() as i32,
+                top: origin.y + (area.y * scale).ceil() as i32,
+                right: origin.x + ((area.x + area.width) * scale).floor() as i32,
+                bottom: origin.y + ((area.y + area.height) * scale).floor() as i32,
+            },
+            scale,
+        ))
+    }
+}
+
+fn grab(grab: Grab) {
+    // The lock stays held so a packet can't read the cursor before it's centred.
+    let mut held = GRAB.lock().unwrap_or_else(|e| e.into_inner());
+    *held = Some(grab);
+    // SAFETY: only reads the local rectangle, or moves the cursor.
+    unsafe {
+        ClipCursor(&grab.clip);
+        if let Some(centre) = grab.centre {
+            SetCursorPos(centre.x, centre.y);
         }
     }
 }
 
-/// Puts the hold back if something cleared it. Only clips on a change, since each clip sends
-/// the window a WM_MOUSEMOVE.
-fn keep_cursor_held() {
-    // The lock stays held while clipping so a release can't slip in between.
-    let guard = HELD.lock().unwrap_or_else(|e| e.into_inner());
-    let Some(held) = *guard else {
-        return;
+/// Keeps the grab up for one packet and returns the counts it stands for: the raw ones, or how
+/// far the cursor moved from the centre when recentring, putting it back. The clip is only put
+/// back on a change, since each clip sends the window a WM_MOUSEMOVE.
+fn keep_grab(counts: (i32, i32)) -> (i32, i32) {
+    // The lock stays held so a release can't slip in between.
+    let guard = GRAB.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(Grab { clip, centre }) = *guard else {
+        return counts;
     };
-    let mut active = RECT::default();
-    // SAFETY: both calls only read or write the local values passed to them.
+    // SAFETY: the calls only read or write the local values passed to them, or move the cursor.
     unsafe {
-        if GetClipCursor(&mut active) != 0
+        let mut active = RECT::default();
+        if counts != (0, 0)
+            && GetClipCursor(&mut active) != 0
             && (active.left, active.top, active.right, active.bottom)
-                != (held.left, held.top, held.right, held.bottom)
+                != (clip.left, clip.top, clip.right, clip.bottom)
         {
-            ClipCursor(&held);
+            ClipCursor(&clip);
         }
+        let Some(centre) = centre else {
+            return counts;
+        };
+        let mut at = POINT::default();
+        if GetCursorPos(&mut at) == 0 {
+            return (0, 0);
+        }
+        let moved = (at.x - centre.x, at.y - centre.y);
+        if moved != (0, 0) {
+            SetCursorPos(centre.x, centre.y);
+        }
+        moved
     }
 }
 
@@ -111,7 +231,7 @@ pub fn release_cursor() {
     if cfg!(test) {
         return;
     }
-    let mut held = HELD.lock().unwrap_or_else(|e| e.into_inner());
+    let mut held = GRAB.lock().unwrap_or_else(|e| e.into_inner());
     *held = None;
     // SAFETY: a null rectangle frees the cursor.
     unsafe {
@@ -126,9 +246,11 @@ struct Reader {
 }
 
 impl Reader {
-    fn start(sender: UnboundedSender<(i32, i32)>) -> Option<Self> {
+    fn start() -> Option<Self> {
+        // Input left from before would jump the crosshair.
+        take_input();
         let (ready, started) = std::sync::mpsc::channel();
-        std::thread::spawn(move || read_on_this_thread(sender, ready));
+        std::thread::spawn(move || read_on_this_thread(ready));
         started.recv().ok().flatten().map(|window| Self { window })
     }
 }
@@ -142,11 +264,7 @@ impl Drop for Reader {
     }
 }
 
-fn read_on_this_thread(
-    sender: UnboundedSender<(i32, i32)>,
-    ready: std::sync::mpsc::Sender<Option<usize>>,
-) {
-    SENDER.with_borrow_mut(|slot| *slot = Some(sender));
+fn read_on_this_thread(ready: std::sync::mpsc::Sender<Option<usize>>) {
     let class_name: Vec<u16> = "PrimeRawMouse".encode_utf16().chain([0]).collect();
 
     // SAFETY: `class_name` outlives the window; the window and its messages stay on this thread.
@@ -209,13 +327,13 @@ unsafe extern "system" fn window_proc(
     match message {
         WM_INPUT => {
             // SAFETY: Windows passes the raw input handle in `lparam` for WM_INPUT.
-            if let Some(movement) = unsafe { read_movement(lparam) } {
-                keep_cursor_held();
-                SENDER.with_borrow(|sender| {
-                    if let Some(sender) = sender {
-                        let _ = sender.send(movement);
-                    }
-                });
+            if let Some((counts, left_down)) = unsafe { read_packet(lparam) } {
+                // Every packet recentres, so a click's counts include the cursor's last move.
+                let moved = keep_grab(counts);
+                INPUT
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .read(moved, left_down);
             }
             // SAFETY: WM_INPUT must reach DefWindowProc so Windows can clean up.
             unsafe { DefWindowProcW(window, message, wparam, lparam) }
@@ -239,13 +357,14 @@ unsafe extern "system" fn window_proc(
     }
 }
 
-/// Relative movement from one WM_INPUT; absolute devices (tablets, remote desktop) are ignored.
+/// Relative movement from one WM_INPUT, and whether the left button went down. Absolute devices
+/// (tablets, remote desktop) give no counts, but their packets still recentre the cursor.
 ///
 /// # Safety
 ///
 /// `lparam` must be the `lParam` of a WM_INPUT message being handled, so it is a valid raw input
 /// handle.
-unsafe fn read_movement(lparam: LPARAM) -> Option<(i32, i32)> {
+unsafe fn read_packet(lparam: LPARAM) -> Option<((i32, i32), bool)> {
     let mut input = RAWINPUT::default();
     let mut size = size_of::<RAWINPUT>() as u32;
     // SAFETY: `input` is large enough for a mouse packet and `size` says so.
@@ -263,6 +382,34 @@ unsafe fn read_movement(lparam: LPARAM) -> Option<(i32, i32)> {
     }
     // SAFETY: the header says this packet is a mouse's.
     let mouse = unsafe { input.data.mouse };
-    let relative = mouse.usFlags & MOUSE_MOVE_ABSOLUTE == 0;
-    (relative && (mouse.lLastX != 0 || mouse.lLastY != 0)).then_some((mouse.lLastX, mouse.lLastY))
+    // SAFETY: both halves of the union are plain integers.
+    let left_down = unsafe { mouse.Anonymous.Anonymous.usButtonFlags } & LEFT_BUTTON_DOWN != 0;
+    let counts = if mouse.usFlags & MOUSE_MOVE_ABSOLUTE == 0 {
+        (mouse.lLastX, mouse.lLastY)
+    } else {
+        (0, 0)
+    };
+    Some((counts, left_down))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_click_keeps_the_counts_read_before_it() {
+        let mut input = Input::default();
+        input.read((10, 0), false);
+        input.read((5, 1), true);
+        input.read((20, 0), false);
+        input.read((0, 0), true);
+        input.read((3, 3), false);
+        assert_eq!(
+            input,
+            Input {
+                clicks: vec![(15, 1), (20, 0)],
+                moved: (3, 3),
+            }
+        );
+    }
 }
