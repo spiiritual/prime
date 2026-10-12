@@ -340,7 +340,8 @@ impl PrimeApp {
         )
     }
 
-    /// What friends see, and the menu to change it, while the selected account plays here.
+    /// What friends see, and the menu to change it. Before a launch it picks the status the launch
+    /// starts with.
     fn status_control(&self) -> Option<Element<'_, Message>> {
         if !self.status_control_visible() {
             return None;
@@ -398,10 +399,14 @@ impl PrimeApp {
             )
             .push(
                 container(
-                    text("Applies right away. Your next launch starts the same way.")
-                        .size(12)
-                        .color(theme::FAINT)
-                        .line_height(iced::widget::text::LineHeight::Absolute(17.0.into())),
+                    text(if self.chat_proxy.is_some() {
+                        "Applies right away. Your next launch starts the same way."
+                    } else {
+                        "Your next launch starts this way."
+                    })
+                    .size(12)
+                    .color(theme::FAINT)
+                    .line_height(iced::widget::text::LineHeight::Absolute(17.0.into())),
                 )
                 .padding([8, 10])
                 .width(Length::Fill),

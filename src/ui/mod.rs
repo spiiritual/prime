@@ -33,9 +33,7 @@ use data::game_settings::{
 };
 use data::image_assets::PlayerCardArt;
 use data::launch_flow::CapturedAccountDraft;
-use data::launch_flow::{
-    LaunchAccountResult, LoadedAccounts, LocalGame, SHOP_RESET_CHECK_INTERVAL,
-};
+use data::launch_flow::{LaunchAccountResult, LoadedAccounts, SHOP_RESET_CHECK_INTERVAL};
 use data::live_match::{LiveMatch, LiveMatchError, LiveMatchResult};
 use data::loadout::{LoadoutResult, LoadoutSummary};
 use data::shop::{StoreSummary, StorefrontResult};
@@ -43,7 +41,7 @@ use data::shop::{StoreSummary, StorefrontResult};
 const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
 const LAUNCH_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const ACCOUNT_AVAILABILITY_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
-const LOCAL_GAME_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+const RIOT_CLIENT_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 /// While minimized with "minimize on close" on, a slow poll keeps every account's session in use
 /// so its refresh token doesn't sit idle. Access tokens last an hour, so each poll re-signs in.
 const BACKGROUND_SESSION_REFRESH_INTERVAL: Duration = Duration::from_secs(30 * 60);
@@ -163,11 +161,10 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
         }
     }
 
-    // Only a launch through the chat proxy can have its status changed, so only then is the game
-    // watched. Nobody sees the control while minimized.
+    // A running proxy is dropped once Riot Client closes. While minimized that can wait.
     if app.chat_proxy.is_some() && !app.window_minimized {
         subscriptions
-            .push(iced::time::every(LOCAL_GAME_CHECK_INTERVAL).map(|_| Message::LocalGameTick));
+            .push(iced::time::every(RIOT_CLIENT_CHECK_INTERVAL).map(|_| Message::RiotClientTick));
     }
 
     if let Some(aim) = aim::subscription(app) {
@@ -447,10 +444,8 @@ struct PrimeApp {
     /// Riot Client's window is up and the launch waits for VALORANT's.
     launch_client_open: bool,
     /// The chat proxy the last launch went through. Dropping it stops the proxy.
-    chat_proxy: Option<LaunchedChatProxy>,
-    /// The last check of what runs on this PC, made while a chat proxy runs.
-    local_game: Option<LocalGame>,
-    local_game_checking: bool,
+    chat_proxy: Option<ChatProxy>,
+    riot_client_checking: bool,
     status_launch_failure: Option<StatusLaunchFailure>,
     /// A quit waiting on the user, because it would drop Riot Client's chat.
     confirm_quit: Option<QuitAction>,
@@ -579,13 +574,6 @@ struct UnavailableLaunchWarning {
     account_id: AccountId,
     display_name: String,
     reason: String,
-}
-
-/// The chat proxy a launch went through, and for which account. Dropping it stops the proxy.
-#[derive(Clone, Debug)]
-struct LaunchedChatProxy {
-    account_id: AccountId,
-    proxy: ChatProxy,
 }
 
 /// A launch stopped because the chat proxy couldn't start while the saved status isn't Online.
@@ -1150,8 +1138,8 @@ enum Message {
     /// Quits anyway, from the dialog that warns it drops Riot Client's chat.
     ConfirmQuit,
     CancelQuit,
-    LocalGameTick,
-    LocalGameChecked(LocalGame),
+    RiotClientTick,
+    RiotClientChecked(bool),
     ToggleStatusMenu,
     PresenceStatusPicked(crate::riot::chat_proxy::PresenceStatus),
     CheckForAppUpdate,
