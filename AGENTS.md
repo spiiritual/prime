@@ -239,7 +239,10 @@ written.
 
 ## Tests
 
-- UI behaviour tests live in `src/ui/tests.rs`. Other modules have their own unit tests.
+- Tests that drive `PrimeApp` through messages live in `src/ui/tests/`, one file per area, with shared
+  helpers such as `test_app` in `mod.rs`. Tests of one module's functions live with that module: in an
+  inline `mod tests` block, or in a sibling `<module>/tests.rs` (`#[cfg(test)] mod tests;`) once they're
+  about half the file. Fixtures for a type live with its tests, `pub(in crate::ui)` when the UI tests use them.
 - `app.update` returns lazy `Task`s. Tests assert on state and `task.units()` and never run a task.
 - Build apps with `test_app(tempdir)`, and point `app.image_cache` at a tempdir when a test could touch
   it, so tests never touch the real `accounts.json`, Riot Client data or image cache.

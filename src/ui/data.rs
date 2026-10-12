@@ -122,3 +122,6 @@ pub(super) fn cache_account_api_context(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

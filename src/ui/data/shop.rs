@@ -926,8 +926,14 @@ pub(in crate::ui) async fn fetch_storefront(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{AccessoryKind, format_countdown, format_time_left};
+pub(in crate::ui) mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    use crate::riot::content::{
+        AccessoryCatalog, Buddy, BuddyLevel, BundleCatalog, CurrencyCatalog, SkinCatalog,
+    };
+    use crate::riot::models::{StorefrontResponse, WalletResponse};
 
     #[test]
     fn countdowns_read_as_a_clock_with_days_in_front() {
@@ -954,5 +960,681 @@ mod tests {
             Some(AccessoryKind::Buddy)
         );
         assert_eq!(AccessoryKind::from_item_type_id("unknown"), None);
+    }
+
+    #[test]
+    fn store_summary_counts_night_market() {
+        let response: StorefrontResponse = serde_json::from_value(serde_json::json!({
+            "FeaturedBundle": {
+                "Bundle": {
+                    "ID": "bundle",
+                    "DataAssetID": "asset",
+                    "CurrencyID": "vp",
+                    "Items": [{
+                        "Item": {
+                            "ItemTypeID": "skin-type",
+                            "ItemID": "a",
+                            "Amount": 1
+                        },
+                        "BasePrice": 1775,
+                        "CurrencyID": "vp",
+                        "DiscountPercent": 20,
+                        "DiscountedPrice": 1420,
+                        "IsPromoItem": false
+                    }],
+                    "DurationRemainingInSeconds": 10
+                },
+                "Bundles": [],
+                "BundleRemainingDurationInSeconds": 20
+            },
+            "SkinsPanelLayout": {
+                "SingleItemOffers": ["a", "b"],
+                "SingleItemStoreOffers": [{
+                    "OfferID": "a",
+                    "IsDirectPurchase": true,
+                    "StartDate": "2026-05-25T00:00:00Z",
+                    "Cost": {"vp": 1775},
+                    "Rewards": [{
+                        "ItemTypeID": "skin-type",
+                        "ItemID": "a",
+                        "Quantity": 1
+                    }]
+                }],
+                "SingleItemOffersRemainingDurationInSeconds": 30
+            },
+            "BonusStore": {
+                "BonusStoreOffers": [{
+                    "BonusOfferID": "bonus",
+                    "Offer": {
+                        "OfferID": "offer",
+                        "IsDirectPurchase": true,
+                        "StartDate": "2026-05-25T00:00:00Z",
+                        "Cost": {"vp": 1775},
+                        "Rewards": [{
+                            "ItemTypeID": "skin-type",
+                            "ItemID": "a",
+                            "Quantity": 1
+                        }]
+                    },
+                    "DiscountPercent": 10,
+                    "DiscountCosts": {"vp": 1200},
+                    "IsSeen": false
+                }],
+                "BonusStoreRemainingDurationInSeconds": 40
+            }
+        }))
+        .expect("response");
+
+        let catalog = SkinCatalog::from_skins(vec![crate::riot::content::WeaponSkin {
+            uuid: "skin-a".to_string(),
+            display_name: "Prime Vandal".to_string(),
+            display_icon: None,
+            content_tier_uuid: None,
+            levels: vec![crate::riot::content::WeaponSkinLevel {
+                uuid: "a".to_string(),
+                display_name: "Prime Vandal Level 1".to_string(),
+                display_icon: None,
+            }],
+            chromas: vec![],
+        }]);
+        let currencies = CurrencyCatalog::from_currencies(vec![crate::riot::content::Currency {
+            uuid: "vp".to_string(),
+            display_name: "VALORANT Points".to_string(),
+            display_icon: None,
+        }]);
+        let bundles = BundleCatalog::from_bundles(vec![crate::riot::content::Bundle {
+            uuid: "asset".to_string(),
+            display_name: "Give Back Bundle".to_string(),
+            display_icon: Some("bundle-icon".to_string()),
+            display_icon2: None,
+            vertical_promo_image: None,
+        }]);
+        let summary = StoreSummary::from_response(
+            response,
+            &catalog,
+            &bundles,
+            &currencies,
+            &AccessoryCatalog::default(),
+        );
+
+        assert_eq!(
+            summary
+                .featured_bundles
+                .iter()
+                .map(StoreBundleDisplay::label)
+                .collect::<Vec<_>>(),
+            ["Give Back Bundle (1,420 VP), 1 item"]
+        );
+        assert_eq!(
+            summary
+                .daily_offers
+                .iter()
+                .map(StoreOfferDisplay::label)
+                .collect::<Vec<_>>(),
+            ["Prime Vandal Level 1 (1,775 VP)", "b"]
+        );
+        assert_eq!(summary.daily_remaining_seconds, 30);
+        assert_eq!(summary.bundle_remaining_seconds, 20);
+        assert_eq!(summary.night_market_remaining_seconds, Some(40));
+        assert_eq!(
+            summary
+                .night_market_offers
+                .iter()
+                .map(StoreOfferDisplay::label)
+                .collect::<Vec<_>>(),
+            ["Prime Vandal Level 1 (1,775 VP -> 1,200 VP), 10% off"]
+        );
+    }
+
+    #[test]
+    fn store_summary_orders_currency_balances() {
+        let wallet: WalletResponse = serde_json::from_value(serde_json::json!({
+            "Balances": {
+                "85ca954a-41f2-ce94-9b45-8ca3dd39a00d": 9000,
+                "85ad13f7-3d1b-5128-9eb2-7cd8ee0b5741": 1250,
+                "e59aa87c-4cbf-517a-5983-6e81511be9b7": 40
+            }
+        }))
+        .expect("wallet");
+
+        assert_eq!(
+            currency_balances_from_wallet(&wallet, &CurrencyCatalog::default())
+                .iter()
+                .map(|balance| (balance.amount, balance.currency.display_name.as_str()))
+                .collect::<Vec<_>>(),
+            [(1250, "VP"), (40, "Radianite"), (9000, "Kingdom Credits")]
+        );
+    }
+
+    #[test]
+    fn store_summary_includes_accessory_store_offers() {
+        let response: StorefrontResponse = serde_json::from_value(serde_json::json!({
+            "FeaturedBundle": {
+                "Bundle": {
+                    "ID": "bundle",
+                    "DataAssetID": "asset",
+                    "CurrencyID": "vp",
+                    "Items": [],
+                    "DurationRemainingInSeconds": 10
+                },
+                "Bundles": [],
+                "BundleRemainingDurationInSeconds": 20
+            },
+            "SkinsPanelLayout": {
+                "SingleItemOffers": [],
+                "SingleItemStoreOffers": [],
+                "SingleItemOffersRemainingDurationInSeconds": 30
+            },
+            "AccessoryStore": {
+                "AccessoryStoreOffers": [{
+                    "ContractID": "contract",
+                    "Offer": {
+                        "OfferID": "offer",
+                        "IsDirectPurchase": true,
+                        "StartDate": "2026-05-25T00:00:00Z",
+                        "Cost": {"kc": 2500},
+                        "Rewards": [{
+                            "ItemTypeID": "dd3bf334-87f3-40bd-b043-682a57a8dc3a",
+                            "ItemID": "buddy-level",
+                            "Quantity": 1
+                        }]
+                    }
+                }],
+                "AccessoryStoreRemainingDurationInSeconds": 50,
+                "StorefrontID": "storefront"
+            }
+        }))
+        .expect("response");
+        let accessories = AccessoryCatalog::from_parts(
+            vec![Buddy {
+                uuid: "buddy".to_string(),
+                display_name: "Penguin Buddy".to_string(),
+                display_icon: None,
+                levels: vec![BuddyLevel {
+                    uuid: "buddy-level".to_string(),
+                    display_name: "Penguin Buddy Level 1".to_string(),
+                    display_icon: Some("buddy-icon".to_string()),
+                }],
+            }],
+            vec![],
+            vec![],
+            vec![],
+        );
+
+        let summary = StoreSummary::from_response(
+            response,
+            &SkinCatalog::default(),
+            &BundleCatalog::default(),
+            &CurrencyCatalog::default(),
+            &accessories,
+        );
+
+        assert_eq!(summary.accessory_remaining_seconds, Some(50));
+        assert_eq!(
+            summary
+                .accessory_offers
+                .iter()
+                .map(StoreAccessoryDisplay::label)
+                .collect::<Vec<_>>(),
+            ["Penguin Buddy Level 1 (2,500 Kingdom Credits)"]
+        );
+    }
+
+    pub(in crate::ui) fn featured_bundle_json(
+        id: &str,
+        remaining_seconds: i64,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "ID": id,
+            "DataAssetID": id,
+            "CurrencyID": "vp",
+            "Items": [],
+            "DurationRemainingInSeconds": remaining_seconds
+        })
+    }
+
+    pub(in crate::ui) fn summary_with_bundles(
+        bundles: Vec<serde_json::Value>,
+        top_level_seconds: i64,
+        loaded_at: iced::time::Instant,
+    ) -> StoreSummary {
+        let response: StorefrontResponse = serde_json::from_value(serde_json::json!({
+            "FeaturedBundle": {
+                "Bundle": bundles[0].clone(),
+                "Bundles": bundles,
+                "BundleRemainingDurationInSeconds": top_level_seconds
+            },
+            "SkinsPanelLayout": {
+                "SingleItemOffers": [],
+                "SingleItemStoreOffers": [],
+                "SingleItemOffersRemainingDurationInSeconds": 86_400
+            }
+        }))
+        .expect("response");
+
+        StoreSummary::from_response_at(
+            response,
+            &SkinCatalog::default(),
+            &BundleCatalog::default(),
+            &CurrencyCatalog::default(),
+            &AccessoryCatalog::default(),
+            loaded_at,
+        )
+    }
+
+    #[test]
+    fn each_featured_bundle_counts_down_on_its_own() {
+        let loaded_at = iced::time::Instant::now();
+        let summary = summary_with_bundles(
+            vec![
+                featured_bundle_json("short", 3_600),
+                featured_bundle_json("long", 86_400),
+            ],
+            86_400,
+            loaded_at,
+        );
+        let later = loaded_at + Duration::from_secs(600);
+
+        let remaining = summary
+            .featured_bundles
+            .iter()
+            .map(|bundle| summary.featured_bundle_remaining_seconds_at(bundle, later))
+            .collect::<Vec<_>>();
+
+        assert_eq!(remaining, vec![3_000, 85_800]);
+    }
+
+    #[test]
+    fn a_featured_bundle_without_its_own_time_uses_the_shared_one() {
+        let loaded_at = iced::time::Instant::now();
+        let summary = summary_with_bundles(vec![featured_bundle_json("only", 0)], 7_200, loaded_at);
+
+        assert_eq!(
+            summary.featured_bundle_remaining_seconds_at(&summary.featured_bundles[0], loaded_at),
+            7_200
+        );
+    }
+
+    #[test]
+    fn the_shop_expires_when_any_featured_bundle_does() {
+        let loaded_at = iced::time::Instant::now();
+        let summary = summary_with_bundles(
+            vec![
+                featured_bundle_json("short", 60),
+                featured_bundle_json("long", 86_400),
+            ],
+            86_400,
+            loaded_at,
+        );
+
+        assert!(!summary.is_expired_at(loaded_at + Duration::from_secs(30)));
+        assert!(summary.is_expired_at(loaded_at + Duration::from_secs(61)));
+    }
+
+    #[test]
+    fn store_summary_keeps_distinct_featured_bundle_entries_with_shared_asset() {
+        let response: StorefrontResponse = serde_json::from_value(serde_json::json!({
+            "FeaturedBundle": {
+                "Bundle": {
+                    "ID": "bundle-a",
+                    "DataAssetID": "asset-a",
+                    "CurrencyID": "vp",
+                    "Items": [{
+                        "Item": {
+                            "ItemTypeID": "skin-type",
+                            "ItemID": "skin-a",
+                            "Amount": 99
+                        },
+                        "BasePrice": 0,
+                        "CurrencyID": "vp",
+                        "DiscountPercent": 0,
+                        "DiscountedPrice": 0,
+                        "IsPromoItem": false
+                    }],
+                    "DurationRemainingInSeconds": 10
+                },
+                "Bundles": [
+                    {
+                        "ID": "bundle-a",
+                        "DataAssetID": "asset-a",
+                        "CurrencyID": "vp",
+                        "Items": [{
+                            "Item": {
+                                "ItemTypeID": "skin-type",
+                                "ItemID": "skin-a",
+                                "Amount": 1
+                            },
+                            "BasePrice": 0,
+                            "CurrencyID": "vp",
+                            "DiscountPercent": 0,
+                            "DiscountedPrice": 0,
+                            "IsPromoItem": false
+                        }],
+                        "DurationRemainingInSeconds": 10
+                    },
+                    {
+                        "ID": "bundle-b",
+                        "DataAssetID": "asset-a",
+                        "CurrencyID": "vp",
+                        "Items": [{
+                            "Item": {
+                                "ItemTypeID": "skin-type",
+                                "ItemID": "skin-b",
+                                "Amount": 2
+                            },
+                            "BasePrice": 0,
+                            "CurrencyID": "vp",
+                            "DiscountPercent": 0,
+                            "DiscountedPrice": 0,
+                            "IsPromoItem": false
+                        }, {
+                            "Item": {
+                                "ItemTypeID": "buddy-type",
+                                "ItemID": "buddy-b",
+                                "Amount": 1
+                            },
+                            "BasePrice": 0,
+                            "CurrencyID": "vp",
+                            "DiscountPercent": 0,
+                            "DiscountedPrice": 0,
+                            "IsPromoItem": false
+                        }],
+                        "DurationRemainingInSeconds": 10
+                    }
+                ],
+                "BundleRemainingDurationInSeconds": 20
+            },
+            "SkinsPanelLayout": {
+                "SingleItemOffers": [],
+                "SingleItemStoreOffers": [],
+                "SingleItemOffersRemainingDurationInSeconds": 30
+            }
+        }))
+        .expect("response");
+        let bundles = BundleCatalog::from_bundles(vec![crate::riot::content::Bundle {
+            uuid: "asset-a".to_string(),
+            display_name: "Shared Test Bundle".to_string(),
+            display_icon: None,
+            display_icon2: None,
+            vertical_promo_image: None,
+        }]);
+
+        let summary = StoreSummary::from_response(
+            response,
+            &SkinCatalog::default(),
+            &bundles,
+            &CurrencyCatalog::default(),
+            &AccessoryCatalog::default(),
+        );
+
+        assert_eq!(summary.featured_bundles.len(), 2);
+        assert!(
+            summary
+                .featured_bundles
+                .iter()
+                .all(|bundle| bundle.bundle.display_name == "Shared Test Bundle")
+        );
+        assert_eq!(
+            summary
+                .featured_bundles
+                .iter()
+                .map(StoreBundleDisplay::item_count_label)
+                .collect::<Vec<_>>(),
+            ["1 item", "2 items"]
+        );
+    }
+
+    #[test]
+    fn store_summary_expires_at_earliest_shop_section_reset() {
+        let loaded_at = iced::time::Instant::now();
+        let summary = StoreSummary {
+            currency_balances: vec![],
+            currency_balance_error: None,
+            featured_bundles: vec![],
+            daily_offers: vec![],
+            daily_remaining_seconds: 30,
+            bundle_remaining_seconds: 20,
+            night_market_remaining_seconds: None,
+            loaded_at,
+            night_market_offers: vec![],
+            accessory_remaining_seconds: None,
+            accessory_offers: vec![],
+        };
+
+        assert!(!summary.is_expired_at(loaded_at + Duration::from_secs(19)));
+        assert!(summary.is_expired_at(loaded_at + Duration::from_secs(20)));
+    }
+
+    #[test]
+    fn store_summary_expires_when_a_tick_skips_past_the_reset() {
+        let loaded_at = iced::time::Instant::now();
+        let summary = StoreSummary {
+            currency_balances: vec![],
+            currency_balance_error: None,
+            featured_bundles: vec![],
+            daily_offers: vec![],
+            daily_remaining_seconds: 30,
+            bundle_remaining_seconds: 20,
+            night_market_remaining_seconds: Some(10),
+            loaded_at,
+            night_market_offers: vec![],
+            accessory_remaining_seconds: None,
+            accessory_offers: vec![],
+        };
+        let late = loaded_at + Duration::from_secs(45);
+
+        assert!(summary.is_expired_at(late));
+        assert_eq!(summary.night_market_remaining_seconds_at(late), 0);
+    }
+
+    #[test]
+    fn store_summary_ignores_sections_the_server_reports_as_zero() {
+        let loaded_at = iced::time::Instant::now();
+        let summary = StoreSummary {
+            currency_balances: vec![],
+            currency_balance_error: None,
+            featured_bundles: vec![],
+            daily_offers: vec![],
+            daily_remaining_seconds: 30,
+            bundle_remaining_seconds: 0,
+            night_market_remaining_seconds: Some(0),
+            loaded_at,
+            night_market_offers: vec![],
+            accessory_remaining_seconds: Some(-5),
+            accessory_offers: vec![],
+        };
+
+        assert!(!summary.is_expired_at(loaded_at));
+        assert!(!summary.is_expired_at(loaded_at + Duration::from_secs(29)));
+        assert!(summary.is_expired_at(loaded_at + Duration::from_secs(30)));
+        assert_eq!(summary.accessory_remaining_seconds_at(loaded_at), 0);
+    }
+
+    #[test]
+    fn format_whole_number_groups_thousands() {
+        assert_eq!(format_whole_number(0), "0");
+        assert_eq!(format_whole_number(1000), "1,000");
+        assert_eq!(format_whole_number(-1250000), "-1,250,000");
+    }
+
+    pub(in crate::ui) fn priced_bundle_json(
+        base_cost: Option<i64>,
+        discounted_cost: Option<i64>,
+        items: serde_json::Value,
+    ) -> serde_json::Value {
+        let mut bundle = featured_bundle_json("bundle", 3_600);
+        bundle["Items"] = items;
+        if let Some(cost) = base_cost {
+            bundle["TotalBaseCost"] = serde_json::json!({ "vp": cost });
+        }
+        if let Some(cost) = discounted_cost {
+            bundle["TotalDiscountedCost"] = serde_json::json!({ "vp": cost });
+        }
+        bundle
+    }
+
+    pub(in crate::ui) fn bundle_item_json(
+        base_price: i64,
+        discount_percent: i64,
+        discounted_price: i64,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "Item": { "ItemTypeID": "skin", "ItemID": "item", "Amount": 1 },
+            "BasePrice": base_price,
+            "CurrencyID": "vp",
+            "DiscountPercent": discount_percent,
+            "DiscountedPrice": discounted_price,
+            "IsPromoItem": false
+        })
+    }
+
+    #[test]
+    fn offer_prices_use_thousands_separators() {
+        let summary = summary_with_bundles(
+            vec![priced_bundle_json(
+                Some(7_100),
+                Some(7_100),
+                serde_json::json!([]),
+            )],
+            3_600,
+            iced::time::Instant::now(),
+        );
+
+        let price = summary.featured_bundles[0].price.as_ref().expect("price");
+
+        assert!(price.label().starts_with("7,100 "), "{}", price.label());
+    }
+
+    #[test]
+    fn a_discounted_bundle_shows_its_original_price_and_discount() {
+        let summary = summary_with_bundles(
+            vec![priced_bundle_json(
+                Some(8_000),
+                Some(6_000),
+                serde_json::json!([]),
+            )],
+            3_600,
+            iced::time::Instant::now(),
+        );
+        let bundle = &summary.featured_bundles[0];
+
+        assert_eq!(bundle.price.as_ref().map(|price| price.amount), Some(6_000));
+        assert_eq!(
+            bundle.original_price.as_ref().map(|price| price.amount),
+            Some(8_000)
+        );
+        assert_eq!(bundle.discount_percent, 25);
+    }
+
+    #[test]
+    fn a_bundle_at_full_price_shows_no_discount() {
+        let summary = summary_with_bundles(
+            vec![priced_bundle_json(
+                Some(8_000),
+                Some(8_000),
+                serde_json::json!([]),
+            )],
+            3_600,
+            iced::time::Instant::now(),
+        );
+        let bundle = &summary.featured_bundles[0];
+
+        assert_eq!(bundle.original_price, None);
+        assert_eq!(bundle.discount_percent, 0);
+    }
+
+    #[test]
+    fn a_bundles_items_keep_their_own_prices_and_say_what_they_are() {
+        let title = serde_json::json!({
+            "Item": {
+                "ItemTypeID": "de7caa6b-adf7-4588-bbd1-143831e786c6",
+                "ItemID": "title",
+                "Amount": 1
+            },
+            "BasePrice": 0,
+            "CurrencyID": "vp",
+            "DiscountPercent": 0,
+            "DiscountedPrice": 0,
+            "IsPromoItem": false
+        });
+        let summary = summary_with_bundles(
+            vec![priced_bundle_json(
+                Some(2_175),
+                Some(1_740),
+                serde_json::json!([bundle_item_json(2_175, 20, 1_740), title]),
+            )],
+            3_600,
+            iced::time::Instant::now(),
+        );
+        let items = &summary.featured_bundles[0].items;
+
+        assert!(matches!(items[0].item, BundleItem::Skin(_)));
+        assert_eq!(
+            items[0].price.as_ref().map(|price| price.amount),
+            Some(2_175)
+        );
+        assert!(matches!(
+            items[1].item,
+            BundleItem::Accessory {
+                kind: Some(AccessoryKind::Title),
+                ..
+            }
+        ));
+        // A title only comes with the bundle.
+        assert_eq!(items[1].price, None);
+    }
+
+    #[test]
+    fn a_free_bundle_item_is_not_counted_at_full_price() {
+        let summary = summary_with_bundles(
+            vec![priced_bundle_json(
+                None,
+                None,
+                serde_json::json!([
+                    bundle_item_json(1_000, 100, 0),
+                    bundle_item_json(500, 0, 500)
+                ]),
+            )],
+            3_600,
+            iced::time::Instant::now(),
+        );
+
+        assert_eq!(
+            summary.featured_bundles[0]
+                .price
+                .as_ref()
+                .map(|price| price.amount),
+            Some(500)
+        );
+    }
+
+    #[test]
+    fn rarity_ranks_match_the_game() {
+        use super::rarity_rank;
+
+        let ranks = [
+            "Select Edition",
+            "Deluxe Edition",
+            "Premium Edition",
+            "Exclusive Edition",
+            "Ultra Edition",
+        ]
+        .map(rarity_rank);
+
+        assert!(
+            ranks.is_sorted_by(|lower, higher| lower < higher),
+            "{ranks:?}"
+        );
+    }
+
+    #[test]
+    fn rarity_colors_match_the_game() {
+        use super::RarityTier;
+
+        assert_eq!(RarityTier::Select.highlight_rgb(), [0x5a, 0x9f, 0xe2]);
+        assert_eq!(RarityTier::Deluxe.highlight_rgb(), [0x00, 0x95, 0x87]);
+        assert_eq!(RarityTier::Premium.highlight_rgb(), [0xd1, 0x54, 0x8d]);
+        assert_eq!(RarityTier::Exclusive.highlight_rgb(), [0xf5, 0x95, 0x5b]);
+        assert_eq!(RarityTier::Ultra.highlight_rgb(), [0xfa, 0xd6, 0x63]);
     }
 }
