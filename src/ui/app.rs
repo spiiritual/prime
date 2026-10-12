@@ -3082,6 +3082,8 @@ impl PrimeApp {
     /// Clears Shop and Loadout, and stops treating loads already in flight as current; their
     /// replies only cache the session they obtained.
     fn clear_selected_account_views(&mut self) {
+        // Their loads won't report back, so their progress would never end.
+        self.clear_progress_status();
         self.store_summary = None;
         self.bundle_details = None;
         self.loadout_summary = None;

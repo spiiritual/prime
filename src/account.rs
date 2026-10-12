@@ -475,10 +475,12 @@ impl AccountProfile {
     }
 
     pub fn summary(&self) -> String {
+        // Regions read in capitals, as everywhere else on screen.
+        let region = self.shard.to_string().to_uppercase();
         if let Some(riot_id) = self.riot_id() {
-            format!("{} ({riot_id}, {})", self.display_name, self.shard)
+            format!("{} ({riot_id}, {region})", self.display_name)
         } else {
-            format!("{} ({})", self.display_name, self.shard)
+            format!("{} ({region})", self.display_name)
         }
     }
 

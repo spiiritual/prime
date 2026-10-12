@@ -277,7 +277,12 @@ impl Status {
         Self::new(StatusKind::Info, text)
     }
 
+    /// Work still running reads as unfinished: it ends in an ellipsis unless it ends a sentence.
     fn progress(text: impl Into<String>) -> Self {
+        let mut text = text.into();
+        if !text.ends_with(['.', '\u{2026}', '!', '?']) {
+            text.push('\u{2026}');
+        }
         Self::new(StatusKind::Progress, text)
     }
 
@@ -301,8 +306,8 @@ fn status_spinner_active(app: &PrimeApp) -> bool {
             && (app.launching_account.is_some() || app.launcher_capture_in_progress)
 }
 
-/// Errors stay on screen; other updates show briefly so actions still get feedback without
-/// cluttering the window, and launch or login capture progress stays visible while it runs.
+/// Errors stay on screen, and progress stays until its result replaces it; other updates show
+/// briefly so actions still get feedback without cluttering the window.
 fn status_bar_visible(app: &PrimeApp) -> bool {
     // The sign-in dialog shows its own progress.
     if app.refreshed() && app.login_capture.is_some() && app.status.kind == StatusKind::Progress {
@@ -319,7 +324,7 @@ fn status_visible_at(
     now: iced::time::Instant,
 ) -> bool {
     !status.text.trim().is_empty()
-        && (status.kind == StatusKind::Error
+        && (matches!(status.kind, StatusKind::Error | StatusKind::Progress)
             || now.saturating_duration_since(changed_at) < STATUS_FLASH_DURATION)
 }
 

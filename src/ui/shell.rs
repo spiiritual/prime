@@ -2353,7 +2353,7 @@ fn image_viewer_overlay(
             } else {
                 loading_indicator(loading_frame)
             },
-            text("Loading full image").size(13)
+            text("Loading full image\u{2026}").size(13)
         ]
         .spacing(8)
         .align_y(alignment::Vertical::Center)

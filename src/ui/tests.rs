@@ -1242,13 +1242,13 @@ fn loadout_weapon_categories_come_from_the_catalog() {
 }
 
 #[test]
-fn status_bar_keeps_only_errors_on_screen() {
+fn status_bar_keeps_errors_and_running_progress_on_screen() {
     let changed_at = iced::time::Instant::now();
     let later = changed_at + Duration::from_secs(10);
     let visible_later = |status: Status| status_visible_at(&status, changed_at, later);
 
     assert!(!visible_later(Status::info("Loaded 2 account profile(s)")));
-    assert!(!visible_later(Status::progress("Loading shop")));
+    assert!(visible_later(Status::progress("Loading shop")));
     assert!(!visible_later(Status::success("Saved settings")));
     assert!(!visible_later(Status::warning(
         "Loaded account details for 2 account(s); 1 partial"
@@ -5278,7 +5278,7 @@ fn adding_an_account_saves_its_settings_when_asked() {
     assert!(
         app.status
             .text
-            .ends_with("Saving its VALORANT settings as a preset")
+            .ends_with("Saving its VALORANT settings as a preset\u{2026}")
     );
 }
 
@@ -7384,8 +7384,10 @@ fn the_spinner_ticks_only_while_one_is_on_screen() {
     app.status_changed_at = app.now;
     assert!(super::loading_indicator_active(&app));
 
-    // A progress toast that has timed out is no longer on screen.
+    // Progress stays until its result replaces it, and the result has no spinner.
     app.now = app.status_changed_at + Duration::from_secs(60);
+    assert!(super::loading_indicator_active(&app));
+    app.status = Status::success("Loaded");
     assert!(!super::loading_indicator_active(&app));
 }
 
@@ -7891,10 +7893,39 @@ fn export_account_runs_once_at_a_time() {
     let dir = tempdir().expect("temp dir");
     let (mut app, first, _) = two_account_app(dir.path());
 
-    assert_eq!(app.update(Message::RequestExportAccount(first.id)).units(), 1);
+    assert_eq!(
+        app.update(Message::RequestExportAccount(first.id)).units(),
+        1
+    );
     assert!(app.account_export_in_progress);
-    assert_eq!(app.update(Message::RequestExportAccount(first.id)).units(), 0);
+    assert_eq!(
+        app.update(Message::RequestExportAccount(first.id)).units(),
+        0
+    );
 
     let _ = app.update(Message::AccountExportPrepared(Err("failed".to_string())));
     assert!(!app.account_export_in_progress);
+}
+
+#[test]
+fn progress_reads_as_unfinished_and_regions_read_in_capitals() {
+    assert_eq!(
+        Status::progress("Loading accounts").text,
+        "Loading accounts\u{2026}"
+    );
+    assert_eq!(Status::progress("Loading\u{2026}").text, "Loading\u{2026}");
+    assert_eq!(Status::progress("Sign in.").text, "Sign in.");
+
+    let account = AccountProfile::new("Main", Shard::Na).expect("account");
+    assert_eq!(account.summary(), "Main (NA)");
+}
+
+#[test]
+fn switching_accounts_ends_the_progress_of_loads_it_drops() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, alt) = two_account_app(dir.path());
+    app.set_status(Status::progress("Shop reset reached; loading updated shop"));
+
+    let _ = app.update(Message::SelectAccount(alt.id));
+    assert_ne!(app.status.kind, StatusKind::Progress);
 }
