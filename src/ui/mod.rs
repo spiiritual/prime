@@ -42,6 +42,11 @@ const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
 const LAUNCH_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const ACCOUNT_AVAILABILITY_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 const RIOT_CLIENT_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+/// While a login capture waits, how often Prime asks Riot Client whether someone signed in.
+const LOGIN_CAPTURE_SIGN_IN_CHECK_INTERVAL: Duration = Duration::from_secs(3);
+/// Signed in for this many checks in a row with no remembered login yet means "Stay signed in"
+/// wasn't ticked: the capture itself looks every 2 seconds, so a remembered login would be found.
+const LOGIN_CAPTURE_UNTICKED_CHECKS: u8 = 3;
 /// While minimized with "minimize on close" on, a slow poll keeps every account's session in use
 /// so its refresh token doesn't sit idle. Access tokens last an hour, so each poll re-signs in.
 const BACKGROUND_SESSION_REFRESH_INTERVAL: Duration = Duration::from_secs(30 * 60);
@@ -167,6 +172,18 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
             .push(iced::time::every(RIOT_CLIENT_CHECK_INTERVAL).map(|_| Message::RiotClientTick));
     }
 
+    if app.refreshed()
+        && app
+            .login_capture
+            .as_ref()
+            .is_some_and(|capture| capture.wait.is_some())
+    {
+        subscriptions.push(
+            iced::time::every(LOGIN_CAPTURE_SIGN_IN_CHECK_INTERVAL)
+                .map(|_| Message::LoginCaptureSignInTick),
+        );
+    }
+
     if let Some(aim) = aim::subscription(app) {
         subscriptions.push(aim);
     }
@@ -180,8 +197,15 @@ fn background_refresh_active(app: &PrimeApp) -> bool {
 
 /// Whether a spinner is on screen. Loads that show skeletons or nothing, such as Shop, Loadout and
 /// account details, don't count, since each tick rebuilds the whole window.
+/// Live Match is fetching the names players hide, after "Show hidden details" or on a poll.
+fn hidden_names_loading(app: &PrimeApp) -> bool {
+    // Stable, without the interface refresh, shows "Name unavailable" while they load.
+    app.refreshed() && app.show_hidden_details && app.live_match_request.is_some()
+}
+
 fn loading_indicator_active(app: &PrimeApp) -> bool {
     !app.profile_identity_refreshing.is_empty()
+        || app.active_tab == Tab::LiveMatch && hidden_names_loading(app)
         || app.launcher_capture_in_progress
         || app.launch_preflight_account.is_some()
         || app.launching_account.is_some()
@@ -260,7 +284,12 @@ impl Status {
         Self::new(StatusKind::Info, text)
     }
 
+    /// Work still running reads as unfinished: it ends in an ellipsis unless it ends a sentence.
     fn progress(text: impl Into<String>) -> Self {
+        let mut text = text.into();
+        if !text.ends_with(['.', '\u{2026}', '!', '?']) {
+            text.push('\u{2026}');
+        }
         Self::new(StatusKind::Progress, text)
     }
 
@@ -284,9 +313,19 @@ fn status_spinner_active(app: &PrimeApp) -> bool {
             && (app.launching_account.is_some() || app.launcher_capture_in_progress)
 }
 
-/// Errors stay on screen; other updates show briefly so actions still get feedback without
-/// cluttering the window, and launch or login capture progress stays visible while it runs.
+/// Errors stay on screen, and progress stays until its result replaces it; other updates show
+/// briefly so actions still get feedback without cluttering the window.
 fn status_bar_visible(app: &PrimeApp) -> bool {
+    // The sign-in dialog shows its own progress; only warnings and errors show over it.
+    if app.refreshed()
+        && app.login_capture.is_some()
+        && matches!(
+            app.status.kind,
+            StatusKind::Progress | StatusKind::Info | StatusKind::Success
+        )
+    {
+        return false;
+    }
     status_visible_at(&app.status, app.status_changed_at, app.now)
         || (!app.status.text.trim().is_empty()
             && (app.launching_account.is_some() || app.launcher_capture_in_progress))
@@ -298,7 +337,7 @@ fn status_visible_at(
     now: iced::time::Instant,
 ) -> bool {
     !status.text.trim().is_empty()
-        && (status.kind == StatusKind::Error
+        && (matches!(status.kind, StatusKind::Error | StatusKind::Progress)
             || now.saturating_duration_since(changed_at) < STATUS_FLASH_DURATION)
 }
 
@@ -464,6 +503,13 @@ struct PrimeApp {
     update_channel: Option<String>,
     image_cache_usage: CacheUsage,
     image_cache_clearing: bool,
+    /// A Settings "Fetch latest" or Shop "Try again" client version lookup is running.
+    client_version_fetching: bool,
+    account_export_in_progress: bool,
+    /// Whether `image_cache_usage` has been measured yet.
+    image_cache_measured: bool,
+    /// The bundle whose details are open while their item art downloads.
+    bundle_art_loading: Option<String>,
     loading_frame: usize,
     now: iced::time::Instant,
 }
@@ -570,6 +616,23 @@ struct LoginCapture {
     /// Set once Riot Client is open and the wait for a sign-in has started; only then can the
     /// capture be cancelled.
     wait: Option<iced::task::Handle>,
+    /// How many checks in a row found Riot Client signed in while the capture kept waiting.
+    signed_in_checks: u8,
+}
+
+impl LoginCapture {
+    fn new(target: LoginCaptureTarget) -> Self {
+        Self {
+            target,
+            wait: None,
+            signed_in_checks: 0,
+        }
+    }
+
+    /// Riot Client is signed in but kept no login, so "Stay signed in" wasn't ticked.
+    fn unticked(&self) -> bool {
+        self.signed_in_checks >= LOGIN_CAPTURE_UNTICKED_CHECKS
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1147,6 +1210,8 @@ enum Message {
     CancelQuit,
     RiotClientTick,
     RiotClientChecked(bool),
+    LoginCaptureSignInTick,
+    LoginCaptureSignInChecked(bool),
     ToggleStatusMenu,
     PresenceStatusPicked(crate::riot::chat_proxy::PresenceStatus),
     CheckForAppUpdate,

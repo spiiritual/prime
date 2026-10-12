@@ -15,7 +15,7 @@ use crate::game_settings::{
     GameSettingsProfileSummary, Rgba,
 };
 use crate::ui::components::{
-    account_avatar, anchored_popover, card_style, compact_loading_indicator, mono, outlined,
+    account_avatar, anchored_popover, card_style, mono, outlined, spinner,
 };
 use crate::ui::shell::popover_style;
 use crate::ui::theme::{self, Icon, button, text};
@@ -598,7 +598,7 @@ fn small_button(
 
 fn progress(app: &PrimeApp, label: String, size: u32) -> Element<'static, Message> {
     row![
-        compact_loading_indicator(app.loading_frame),
+        spinner(app.refreshed(), app.loading_frame, 14.0, theme::MUTED),
         text(label).size(size).color(theme::MUTED)
     ]
     .spacing(6)

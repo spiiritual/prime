@@ -6,8 +6,8 @@ use iced::widget::operation::{AbsoluteOffset, scroll_to};
 use iced::widget::{checkbox, column, container, row, space, stack};
 use iced::{Color, Element, Length, Padding, Rectangle, Task, Theme, Vector, alignment};
 
-use crate::storage::AIM_MODES_EXPERIMENT;
-use crate::ui::components::{anchored_popover, card_style};
+use crate::storage::{AIM_MODES_EXPERIMENT, INTERFACE_REFRESH_EXPERIMENT};
+use crate::ui::components::{anchored_popover, card_style, spinner};
 use crate::ui::data::live_match::{LIVE_MATCH_WEAPON_GROUPS, shown_weapons, weapon_name};
 use crate::ui::data::{format_bytes, typed_riot_client_path};
 use crate::ui::shell::popover_style;
@@ -85,12 +85,20 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         if app.experiments_shown() {
             section(
                 SettingsSection::Experiments,
-                "Beta features still being worked on, on until you switch them off. Each can                  change or go away.",
-                checkbox(app.experiment(AIM_MODES_EXPERIMENT))
-                    .label("Aim Trainer: 3D view and Windows sensitivity")
-                    .on_toggle(|on| Message::ExperimentToggled(AIM_MODES_EXPERIMENT, on))
-                    .text_size(13)
-                    .into(),
+                "Beta features still being worked on, on until you switch them off. Each can \
+                 change or go away.",
+                column![
+                    checkbox(app.experiment(AIM_MODES_EXPERIMENT))
+                        .label("Aim Trainer: 3D view and Windows sensitivity")
+                        .on_toggle(|on| Message::ExperimentToggled(AIM_MODES_EXPERIMENT, on))
+                        .text_size(13),
+                    checkbox(app.refreshed())
+                        .label("Interface refresh: new spinner, sign-in dialog and placeholders")
+                        .on_toggle(|on| Message::ExperimentToggled(INTERFACE_REFRESH_EXPERIMENT, on))
+                        .text_size(13),
+                ]
+                .spacing(12)
+                .into(),
             )
         } else {
             space().into()
@@ -259,6 +267,26 @@ fn field_label(label: &str) -> Element<'_, Message> {
 /// The design's plain secondary button.
 fn plain_button(label: &str) -> iced::widget::Button<'_, Message> {
     button(text(label).size(13).font(theme::SEMIBOLD_FONT)).padding([8, 14])
+}
+
+/// A button's label, or the spinner and `busy` while its work runs. Without the interface
+/// refresh, `busy` alone.
+fn busy_label<'a>(
+    app: &PrimeApp,
+    busy: Option<&'a str>,
+    idle: Element<'a, Message>,
+) -> Element<'a, Message> {
+    match busy {
+        Some(label) if !app.refreshed() => text(label).size(13).font(theme::SEMIBOLD_FONT).into(),
+        Some(label) => row![
+            spinner(true, app.loading_frame, 14.0, theme::MUTED),
+            text(label).size(13).font(theme::SEMIBOLD_FONT)
+        ]
+        .spacing(8)
+        .align_y(alignment::Vertical::Center)
+        .into(),
+        None => idle,
+    }
 }
 
 fn riot_client_path_controls(app: &PrimeApp) -> Element<'_, Message> {
@@ -564,24 +592,24 @@ fn storage_controls(app: &PrimeApp) -> Element<'_, Message> {
         row![
             text("Image cache").size(13).font(theme::SEMIBOLD_FONT),
             space().width(Length::Fill),
-            text(format!(
-                "{} · {} {images}",
-                format_bytes(usage.bytes),
-                usage.files
-            ))
+            // A made-up zero would show until the cache is measured.
+            text(if app.image_cache_measured {
+                format!("{} · {} {images}", format_bytes(usage.bytes), usage.files)
+            } else {
+                "\u{2014}".to_string()
+            })
             .size(12)
             .font(theme::MONO_FONT)
             .line_height(theme::MONO_LINE_HEIGHT)
             .color(theme::MUTED),
-            button(
-                text(if app.image_cache_clearing {
-                    "Clearing…"
-                } else {
-                    "Clear cache"
-                })
-                .size(13)
-                .font(theme::SEMIBOLD_FONT)
-            )
+            button(busy_label(
+                app,
+                app.image_cache_clearing.then_some("Clearing\u{2026}"),
+                text("Clear cache")
+                    .size(13)
+                    .font(theme::SEMIBOLD_FONT)
+                    .into(),
+            ))
             .padding([8, 14])
             .style(clear_cache_style)
             .on_press_maybe((!app.image_cache_clearing).then_some(Message::ClearImageCache))
@@ -728,9 +756,17 @@ fn update_controls(app: &PrimeApp) -> Element<'_, Message> {
         text(format!("Version {current} — {status}"))
             .size(13)
             .width(Length::Fill),
-        plain_button("Check for updates").on_press_maybe(
-            (!app.app_update_status.is_busy()).then_some(Message::CheckForAppUpdate)
-        )
+        button(busy_label(
+            app,
+            matches!(app.app_update_status, AppUpdateStatus::Checking)
+                .then_some("Checking\u{2026}"),
+            text("Check for updates")
+                .size(13)
+                .font(theme::SEMIBOLD_FONT)
+                .into(),
+        ))
+        .padding([8, 14])
+        .on_press_maybe((!app.app_update_status.is_busy()).then_some(Message::CheckForAppUpdate))
     ]
     .spacing(12)
     .align_y(alignment::Vertical::Center)
@@ -880,13 +916,15 @@ fn token_import_controls(app: &PrimeApp) -> Element<'_, Message> {
                 column![field_label("Client version"), client_version]
                     .spacing(6)
                     .width(Length::Fill),
-                button(theme::icon_label(
-                    Icon::RefreshCw,
-                    "Fetch latest",
-                    theme::TEXT
+                button(busy_label(
+                    app,
+                    app.client_version_fetching.then_some("Fetching\u{2026}"),
+                    theme::icon_label(Icon::RefreshCw, "Fetch latest", theme::TEXT),
                 ))
                 .padding([9, 12])
-                .on_press(Message::RefreshClientVersion)
+                .on_press_maybe(
+                    (!app.client_version_fetching).then_some(Message::RefreshClientVersion)
+                )
             ]
             .spacing(10)
             .align_y(alignment::Vertical::Bottom),

@@ -1242,13 +1242,13 @@ fn loadout_weapon_categories_come_from_the_catalog() {
 }
 
 #[test]
-fn status_bar_keeps_only_errors_on_screen() {
+fn status_bar_keeps_errors_and_running_progress_on_screen() {
     let changed_at = iced::time::Instant::now();
     let later = changed_at + Duration::from_secs(10);
     let visible_later = |status: Status| status_visible_at(&status, changed_at, later);
 
     assert!(!visible_later(Status::info("Loaded 2 account profile(s)")));
-    assert!(!visible_later(Status::progress("Loading shop")));
+    assert!(visible_later(Status::progress("Loading shop")));
     assert!(!visible_later(Status::success("Saved settings")));
     assert!(!visible_later(Status::warning(
         "Loaded account details for 2 account(s); 1 partial"
@@ -2038,8 +2038,8 @@ fn waiting_login_capture(
     app.launcher_capture_in_progress = true;
     app.launcher_capture_kind = Some(target.kind());
     app.login_capture = Some(super::LoginCapture {
-        target,
         wait: Some(handle.clone()),
+        ..super::LoginCapture::new(target)
     });
     handle
 }
@@ -2048,7 +2048,7 @@ fn waiting_login_capture(
 fn preparing_login_capture(app: &mut PrimeApp, target: super::LoginCaptureTarget) {
     app.launcher_capture_in_progress = true;
     app.launcher_capture_kind = Some(target.kind());
-    app.login_capture = Some(super::LoginCapture { target, wait: None });
+    app.login_capture = Some(super::LoginCapture::new(target));
 }
 
 #[test]
@@ -3176,13 +3176,59 @@ fn loading_accounts_removes_legacy_launcher_sessions() {
 }
 
 #[test]
-fn only_missing_private_settings_is_pending_login_capture() {
+fn a_login_capture_waits_while_riot_client_kept_no_login() {
     assert!(is_pending_launcher_capture_error(
         &LauncherSessionError::PrivateSettingsNotFound
     ));
-    assert!(!is_pending_launcher_capture_error(
+    assert!(is_pending_launcher_capture_error(
         &LauncherSessionError::MissingRefreshToken
     ));
+    assert!(!is_pending_launcher_capture_error(
+        &LauncherSessionError::DifferentAccountSignedIn
+    ));
+}
+
+#[test]
+fn a_sign_in_without_stay_signed_in_is_noticed_and_the_capture_keeps_waiting() {
+    let dir = tempdir().unwrap();
+    let mut app = test_app(dir.path());
+    let target = super::LoginCaptureTarget::NewAccount(AccountId::new());
+
+    // Nothing is asked of Riot Client until it has been reopened.
+    preparing_login_capture(&mut app, target);
+    assert_eq!(app.update(Message::LoginCaptureSignInTick).units(), 0);
+
+    waiting_login_capture(&mut app, target);
+    assert_eq!(app.update(Message::LoginCaptureSignInTick).units(), 1);
+    for _ in 0..super::LOGIN_CAPTURE_UNTICKED_CHECKS - 1 {
+        let _ = app.update(Message::LoginCaptureSignInChecked(true));
+    }
+    assert!(!app.login_capture.as_ref().unwrap().unticked());
+    let _ = app.update(Message::LoginCaptureSignInChecked(true));
+    assert!(app.login_capture.as_ref().unwrap().unticked());
+    assert!(app.login_capture.as_ref().unwrap().wait.is_some());
+
+    // Signing out to try again goes back to waiting.
+    let _ = app.update(Message::LoginCaptureSignInChecked(false));
+    assert!(!app.login_capture.as_ref().unwrap().unticked());
+}
+
+#[test]
+fn the_sign_in_dialog_hides_the_progress_toast_but_not_errors() {
+    let dir = tempdir().unwrap();
+    let mut app = test_app(dir.path());
+    waiting_login_capture(
+        &mut app,
+        super::LoginCaptureTarget::NewAccount(AccountId::new()),
+    );
+
+    app.set_status(Status::progress("Opening Riot Client"));
+    // Stable, without the interface refresh, keeps the toast over its dialog.
+    assert!(status_bar_visible(&app));
+    app.update_channel = Some(crate::updater::BETA_CHANNEL.to_string());
+    assert!(!status_bar_visible(&app));
+    app.set_status(Status::error("Could not save the previous login"));
+    assert!(status_bar_visible(&app));
 }
 
 #[test]
@@ -5232,7 +5278,7 @@ fn adding_an_account_saves_its_settings_when_asked() {
     assert!(
         app.status
             .text
-            .ends_with("Saving its VALORANT settings as a preset")
+            .ends_with("Saving its VALORANT settings as a preset\u{2026}")
     );
 }
 
@@ -6513,6 +6559,8 @@ fn a_bundles_item_art_loads_when_its_details_open_and_a_shop_reset_closes_them()
 
     let task = app.update(Message::ShowBundleDetails("bundle".to_string()));
     assert_eq!(task.units(), 1);
+    // Its art shows as grey blocks until it arrives.
+    assert_eq!(app.bundle_art_loading.as_deref(), Some("bundle"));
 
     let mut items = app.open_bundle_details().expect("open").items.clone();
     let art = dir.path().join("art.png");
@@ -6520,6 +6568,7 @@ fn a_bundles_item_art_loads_when_its_details_open_and_a_shop_reset_closes_them()
         skin.cached_icon = Some(art.clone());
     }
     let _ = app.update(Message::BundleItemArtLoaded("bundle".to_string(), items));
+    assert_eq!(app.bundle_art_loading, None);
     assert_eq!(
         app.open_bundle_details().expect("open").items[0].cached_icon(),
         Some(&art)
@@ -7338,8 +7387,10 @@ fn the_spinner_ticks_only_while_one_is_on_screen() {
     app.status_changed_at = app.now;
     assert!(super::loading_indicator_active(&app));
 
-    // A progress toast that has timed out is no longer on screen.
+    // Progress stays until its result replaces it, and the result has no spinner.
     app.now = app.status_changed_at + Duration::from_secs(60);
+    assert!(super::loading_indicator_active(&app));
+    app.status = Status::success("Loaded");
     assert!(!super::loading_indicator_active(&app));
 }
 
@@ -7817,4 +7868,92 @@ fn aim_esc_closes_a_dialog_before_stopping_a_paused_run() {
 
     let _ = app.update(Message::EscapePressed);
     assert!(matches!(app.aim.phase, AimPhase::Over { .. }));
+}
+
+#[test]
+fn fetch_latest_waits_for_its_lookup_and_the_shop_fills_the_page_without_a_version() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, _) = two_account_app(dir.path());
+    app.client_version_input.clear();
+    // Stable, without the interface refresh, keeps its line of text on the scrolling page.
+    assert!(!super::screens::fills_page(&app, super::Tab::Shop));
+    app.update_channel = Some(crate::updater::BETA_CHANNEL.to_string());
+    assert!(super::screens::fills_page(&app, super::Tab::Shop));
+
+    assert_eq!(app.update(Message::RefreshClientVersion).units(), 1);
+    assert!(app.client_version_fetching);
+    assert_eq!(app.update(Message::RefreshClientVersion).units(), 0);
+
+    let _ = app.update(Message::ClientVersionLoaded {
+        user_requested: true,
+        result: Err("offline".to_string()),
+    });
+    assert!(!app.client_version_fetching);
+}
+
+#[test]
+fn export_account_runs_once_at_a_time() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, first, _) = two_account_app(dir.path());
+
+    assert_eq!(
+        app.update(Message::RequestExportAccount(first.id)).units(),
+        1
+    );
+    assert!(app.account_export_in_progress);
+    assert_eq!(
+        app.update(Message::RequestExportAccount(first.id)).units(),
+        0
+    );
+
+    let _ = app.update(Message::AccountExportPrepared(Err("failed".to_string())));
+    assert!(!app.account_export_in_progress);
+}
+
+#[test]
+fn progress_reads_as_unfinished_and_regions_read_in_capitals() {
+    assert_eq!(
+        Status::progress("Loading accounts").text,
+        "Loading accounts\u{2026}"
+    );
+    assert_eq!(Status::progress("Loading\u{2026}").text, "Loading\u{2026}");
+    assert_eq!(Status::progress("Sign in.").text, "Sign in.");
+
+    let account = AccountProfile::new("Main", Shard::Na).expect("account");
+    assert_eq!(account.summary(), "Main (NA)");
+}
+
+#[test]
+fn switching_accounts_ends_the_progress_of_loads_it_drops() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, _, alt) = two_account_app(dir.path());
+    app.set_status(Status::progress("Shop reset reached; loading updated shop"));
+
+    let _ = app.update(Message::SelectAccount(alt.id));
+    assert_ne!(app.status.kind, StatusKind::Progress);
+}
+
+#[test]
+fn a_dialog_that_opens_is_its_own_feedback_without_a_toast() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, first, _) = two_account_app(dir.path());
+
+    // Stable, without the interface refresh, still posts the toast.
+    let _ = app.update(Message::AddAccount);
+    assert!(status_bar_visible(&app));
+    let _ = app.update(Message::CancelAddAccountCapture);
+    app.status = Status::default();
+
+    app.update_channel = Some(crate::updater::BETA_CHANNEL.to_string());
+    let _ = app.update(Message::AddAccount);
+    assert!(app.show_add_account_prompt);
+    assert!(!status_bar_visible(&app));
+    let _ = app.update(Message::CancelAddAccountCapture);
+
+    let _ = app.update(Message::RequestExportAccount(first.id));
+    let _ = app.update(Message::AccountExportPrepared(Ok(
+        super::AccountExportOutput::new(first.id, "Main".to_string(), "payload".to_string()),
+    )));
+    assert!(app.exported_account.is_some());
+    assert!(!status_bar_visible(&app));
 }

@@ -333,6 +333,7 @@ fn discount_badge<'a>(percent: i64) -> Element<'a, Message> {
 pub(in crate::ui) fn bundle_details<'a>(
     summary: &StoreSummary,
     bundle: &'a StoreBundleDisplay,
+    art_loading: bool,
     now: iced::time::Instant,
 ) -> Element<'a, Message> {
     let close = container(
@@ -361,7 +362,9 @@ pub(in crate::ui) fn bundle_details<'a>(
     .align_x(alignment::Horizontal::Right);
 
     let rows = bundle.items.chunks(DETAILS_COLUMNS).map(|chunk| {
-        let mut cards = Row::with_children(chunk.iter().map(bundle_item_card)).spacing(12);
+        let mut cards =
+            Row::with_children(chunk.iter().map(|item| bundle_item_card(item, art_loading)))
+                .spacing(12);
         // A short last row keeps the other rows' card width.
         for _ in chunk.len()..DETAILS_COLUMNS {
             cards = cards.push(space().width(Length::Fill));
@@ -414,7 +417,16 @@ pub(in crate::ui) fn bundle_details<'a>(
 /// One of a bundle's items, like a daily offer: a skin glows in its tier colour and names its
 /// weapon; an accessory glows gold and says what it is. Titles have no picture, so their text
 /// stands in for one.
-fn bundle_item_card(item: &BundleItemDisplay) -> Element<'_, Message> {
+/// `art_loading` while the bundle's item art downloads: art not here yet shows a grey block.
+fn bundle_item_card(item: &BundleItemDisplay, art_loading: bool) -> Element<'_, Message> {
+    let title = matches!(
+        item.item,
+        BundleItem::Accessory {
+            kind: Some(AccessoryKind::Title),
+            ..
+        }
+    );
+    let art_pending = art_loading && item.cached_icon().is_none() && !title;
     let (name, art, glow, bar, kind): (
         &str,
         Element<'_, Message>,
@@ -492,7 +504,13 @@ fn bundle_item_card(item: &BundleItemDisplay) -> Element<'_, Message> {
             (1.3, 1.6),
             [9.0, 9.0, 0.0, 0.0]
         ),
-        container(art).padding([12, 14]).center(Length::Fill),
+        container(if art_pending {
+            skeleton(Length::Fill, DETAILS_ART_HEIGHT - 25.0, 6.0, 1.0)
+        } else {
+            art
+        })
+        .padding([12, 14])
+        .center(Length::Fill),
     ]
     .width(Length::Fill)
     .height(DETAILS_ART_HEIGHT - 1.0);

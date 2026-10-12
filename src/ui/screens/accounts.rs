@@ -10,7 +10,7 @@ use time::{OffsetDateTime, UtcOffset};
 use crate::account::{AccountId, AccountProfile, CompetitiveRank};
 
 use crate::ui::components::{
-    account_avatar, anchored_popover, card_style, compact_loading_indicator, mono, skeleton,
+    account_avatar, anchored_popover, card_style, mono, skeleton, spinner,
 };
 use crate::ui::data::account_details::AccountAvailability;
 use crate::ui::shell::popover_style;
@@ -92,14 +92,16 @@ pub(in crate::ui) fn header_actions(app: &PrimeApp) -> Element<'_, Message> {
         header_button(
             Icon::LogIn,
             "Add current",
-            capturing(LauncherCaptureKind::Current).then_some(app.loading_frame),
+            capturing(LauncherCaptureKind::Current).then_some((app.refreshed(), app.loading_frame)),
             capture_idle.then_some(Message::AddCurrentAccount),
             false,
         ),
         header_button(
             Icon::Plus,
             "Add account",
-            capturing(LauncherCaptureKind::New).then_some(app.loading_frame),
+            // Its sign-in dialog shows the progress.
+            (!app.refreshed() && capturing(LauncherCaptureKind::New))
+                .then_some((false, app.loading_frame)),
             capture_idle.then_some(Message::AddAccount),
             true,
         ),
@@ -112,7 +114,8 @@ pub(in crate::ui) fn header_actions(app: &PrimeApp) -> Element<'_, Message> {
 fn header_button(
     icon: Icon,
     label: &'static str,
-    capturing: Option<usize>,
+    // The interface refresh experiment and the loading frame while its capture runs.
+    capturing: Option<(bool, usize)>,
     on_press: Option<Message>,
     primary: bool,
 ) -> Element<'static, Message> {
@@ -126,7 +129,7 @@ fn header_button(
         (false, false) => theme::FAINT,
     };
     let lead = match capturing {
-        Some(frame) => compact_loading_indicator(frame),
+        Some((refresh, frame)) => spinner(refresh, frame, 15.0, color),
         None => theme::icon(icon, 15.0, color),
     };
 
@@ -391,7 +394,7 @@ fn launch_button<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<
 
     let busy = busy_label.is_some();
     let lead = if busy {
-        compact_loading_indicator(app.loading_frame)
+        spinner(app.refreshed(), app.loading_frame, 18.0, theme::BG)
     } else {
         let alpha = if blocked { 0.4 } else { 1.0 };
         theme::icon(
@@ -866,13 +869,15 @@ fn with_rank_error<'a>(
     tooltip(content, tip, tooltip::Position::Top).into()
 }
 
-fn rank_icon(path: Option<&std::path::PathBuf>, size: f32) -> Option<Element<'static, Message>> {
-    path.map(|path| {
-        image(Handle::from_path(path.clone()))
+/// The rank's icon, or its empty slot while the icon downloads, so the label doesn't move.
+fn rank_icon(path: Option<&std::path::PathBuf>, size: f32) -> Element<'static, Message> {
+    match path {
+        Some(path) => image(Handle::from_path(path.clone()))
             .width(size)
             .height(size)
-            .into()
-    })
+            .into(),
+        None => space().width(size).height(size).into(),
+    }
 }
 
 fn level_cell(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Message> {
@@ -899,7 +904,7 @@ fn status_cell<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a
 
     if app.profile_identity_refreshing.contains(&account.id) {
         return line(
-            compact_loading_indicator(app.loading_frame),
+            spinner(app.refreshed(), app.loading_frame, 14.0, theme::MUTED),
             "Refreshing…".to_string(),
             theme::MUTED,
         );
@@ -1043,7 +1048,7 @@ fn account_menu(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Me
             Icon::Upload,
             "Export account",
             false,
-            Some(Message::RequestExportAccount(account_id)),
+            (!app.account_export_in_progress).then_some(Message::RequestExportAccount(account_id)),
         ))
         .push(menu_item(
             Icon::Trash,
@@ -1107,6 +1112,8 @@ fn menu_divider() -> Element<'static, Message> {
 /// The page with no accounts yet: the three ways to add one.
 fn first_account(app: &PrimeApp) -> Element<'_, Message> {
     let capture_idle = !app.launcher_capture_in_progress && !app.launch_in_progress();
+    let capturing_current =
+        app.refreshed() && app.launcher_capture_kind == Some(LauncherCaptureKind::Current);
 
     let intro = column![
         text("Add your first account")
@@ -1132,13 +1139,19 @@ fn first_account(app: &PrimeApp) -> Element<'_, Message> {
             "Add account",
             "Sign in fresh in Riot Client. prime captures the login once you tick “Stay signed in”.",
             true,
+            None,
             capture_idle.then_some(Message::AddAccount),
         ),
         first_account_option(
             Icon::LogIn,
             "Add current account",
-            "Use whoever is already signed in to Riot Client right now.",
+            if capturing_current {
+                "Capturing who\u{2019}s signed in\u{2026}"
+            } else {
+                "Use whoever is already signed in to Riot Client right now."
+            },
             false,
+            capturing_current.then_some(app.loading_frame),
             capture_idle.then_some(Message::AddCurrentAccount),
         ),
         first_account_option(
@@ -1146,6 +1159,7 @@ fn first_account(app: &PrimeApp) -> Element<'_, Message> {
             "Import account",
             "Paste an export from another prime install.",
             false,
+            None,
             (!app.import_account_in_progress && capture_idle)
                 .then_some(Message::OpenImportAccount),
         ),
@@ -1175,6 +1189,8 @@ fn first_account_option(
     title: &'static str,
     body: &'static str,
     primary: bool,
+    // The loading frame while this option's capture runs; its icon turns into the spinner.
+    busy: Option<usize>,
     on_press: Option<Message>,
 ) -> Element<'static, Message> {
     let (badge, icon_color) = if primary {
@@ -1182,17 +1198,18 @@ fn first_account_option(
     } else {
         (theme::RAISED, theme::TEXT)
     };
+    let icon = match busy {
+        Some(frame) => spinner(true, frame, 17.0, icon_color),
+        None => theme::icon(icon, 17.0, icon_color),
+    };
 
     iced::widget::button(
         column![
-            container(theme::icon(icon, 17.0, icon_color))
-                .center_x(34)
-                .center_y(34)
-                .style(move |_| {
-                    container::Style::default()
-                        .background(badge)
-                        .border(iced::border::rounded(9))
-                }),
+            container(icon).center_x(34).center_y(34).style(move |_| {
+                container::Style::default()
+                    .background(badge)
+                    .border(iced::border::rounded(9))
+            }),
             text(title)
                 .size(14)
                 .font(theme::SEMIBOLD_FONT)

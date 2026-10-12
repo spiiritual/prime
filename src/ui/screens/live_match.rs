@@ -7,7 +7,7 @@ use iced::widget::{Column, Row, Stack, column, container, image, row, space, sta
 use iced::{Color, ContentFit, Element, Length, Padding, Radians, alignment};
 
 use crate::ui::components::{
-    account_avatar, card_style, empty_state, radial_glow, skeleton, unavailable_state,
+    account_avatar, card_style, empty_state, radial_glow, skeleton, spinner, unavailable_state,
 };
 use crate::ui::data::account_details::{AccountAvailability, Busy};
 use crate::ui::data::live_match::{
@@ -418,19 +418,33 @@ fn player_row<'a>(
             name: None,
             streamer,
         } => {
+            let error = app
+                .live_match
+                .as_ref()
+                .and_then(|live| live.hidden_names_error.clone())
+                .filter(|_| streamer);
             let unavailable = text("Name unavailable")
                 .size(13)
                 .font(theme::SEMIBOLD_FONT)
                 .color(theme::MUTED);
-            // A hidden name that didn't load says why, such as the Riot Client not running.
-            match app
-                .live_match
-                .as_ref()
-                .and_then(|live| live.hidden_names_error.clone())
-                .filter(|_| streamer)
-            {
-                Some(reason) => name_row.push(with_tip(unavailable.into(), reason)),
-                None => name_row.push(unavailable),
+            if streamer && error.is_none() && super::super::hidden_names_loading(app) {
+                name_row.push(
+                    row![
+                        spinner(true, app.loading_frame, 14.0, theme::MUTED),
+                        text("Looking up name\u{2026}")
+                            .size(13)
+                            .font(theme::SEMIBOLD_FONT)
+                            .color(theme::MUTED)
+                    ]
+                    .spacing(6)
+                    .align_y(alignment::Vertical::Center),
+                )
+            } else {
+                // A hidden name that didn't load says why, such as the Riot Client not running.
+                match error {
+                    Some(reason) => name_row.push(with_tip(unavailable.into(), reason)),
+                    None => name_row.push(unavailable),
+                }
             }
         }
     };
@@ -552,9 +566,14 @@ fn rank_cell<'a>(app: &'a PrimeApp, rank: &'a RankState) -> Element<'a, Message>
         RankState::Unranked => (Some(0), "Unranked", theme::FAINT),
         RankState::Unavailable(_) => (None, "Rank unavailable", theme::FAINT),
     };
-    let icon = tier
-        .and_then(|tier| app.rank_icons.get(&tier))
-        .map(|path| image(Handle::from_path(path.clone())).width(24).height(24));
+    // An empty slot while the icon downloads, so the label doesn't move.
+    let icon: Element<_> = match tier.and_then(|tier| app.rank_icons.get(&tier)) {
+        Some(path) => image(Handle::from_path(path.clone()))
+            .width(24)
+            .height(24)
+            .into(),
+        None => space().width(24).height(24).into(),
+    };
     let cell = row![]
         .push(icon)
         .push(

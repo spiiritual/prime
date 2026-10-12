@@ -66,6 +66,10 @@ impl std::fmt::Debug for UnknownFields {
 /// runs use VALORANT sensitivity and the 2D crosshair, as the trainer first shipped.
 pub const AIM_MODES_EXPERIMENT: &str = "aim-trainer-modes";
 
+/// The interface refresh: one spinner, the reworked sign-in dialog, busy buttons, placeholders
+/// that look like what they stand in for. Off, as in stable, Prime looks as it did before.
+pub const INTERFACE_REFRESH_EXPERIMENT: &str = "interface-refresh";
+
 fn minimize_on_close_default() -> bool {
     true
 }

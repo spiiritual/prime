@@ -25,7 +25,9 @@ Accounts tab:
 
 - Keeps account profiles (display name, Riot ID, PUUID, region and shard) in `accounts.json`.
 - Adds accounts by capturing Riot Client's remembered login. "Add new account" clears the live login,
-  waits for the sign-in, then asks for a display name. "Add current account" captures whoever is signed in
+  waits for the sign-in, then asks for a display name. In beta (`interface-refresh`), while it waits, it asks the local Riot Client
+  every 3 seconds whether anyone is signed in; signed in for 3 checks with no remembered login means
+  "Stay signed in" wasn't ticked, and the dialog says so and keeps waiting. "Add current account" captures whoever is signed in
   now. "Re-capture login" replaces a saved account's captured login.
 - Launches VALORANT for the selected account: closes Riot Client and VALORANT, restores that account's
   saved Riot Client `Data`, then runs `RiotClientServices.exe --launch-product=valorant --launch-patchline=live`.
@@ -114,6 +116,14 @@ Experiments: features still being tried, for beta only. Stable builds don't show
 Experiments and run without them; beta starts with each on and a switch turns it off.
 `accounts.json` keeps the names switched off (`disabled_experiments`), so a name a build doesn't
 know is ignored and kept. Each name is a constant in `storage.rs`; `PrimeApp::experiment` checks one.
+
+- `aim-trainer-modes`: the Aim Trainer's Sensitivity and View choices.
+- `interface-refresh` (`PrimeApp::refreshed`): Lucide's loader as the one spinner (stable keeps the
+  dot grid); the sign-in dialog's "Stay signed in" callout, numbered steps and unticked check, with
+  no progress toast over it; spinners on busy buttons, and centred states when Shop or
+  Loadout can't load yet; themed placeholders for missing art, the loading wallet and bundle
+  items, and "Looking up name…" in Live Match; and no toasts that repeat Add account's, the
+  sign-in's or Export account's dialog. Add account's prompt shows "Stay signed in" in bold gold.
 
 One instance: starting Prime while it runs, even from the tray, brings the running window forward
 and the new start exits (`single_instance.rs`). Debug builds use their own name, so `cargo run`
@@ -233,3 +243,8 @@ written.
   VALORANT and replace the live login.
 - Apply settings profile writes VALORANT settings to a Riot account.
 - Delete account, Delete image cache and Download and restart can't be undone.
+
+To see the add-account sign-in dialog without any of that, start a debug build with
+`PRIME_PREVIEW_LOGIN_CAPTURE=1` (its first step) or `=2` (its second). Nothing runs behind it;
+Cancel works on step 2, and step 1 stays until Prime closes. With Riot Client signed in, step 2
+turns to the "Stay signed in" warning after about 9 seconds.

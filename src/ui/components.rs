@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget::Tree,
@@ -415,14 +416,42 @@ pub(super) fn asset_background_image<'a>(
     }
 }
 
+/// Whether the window being drawn has the interface refresh experiment, for placeholders drawn
+/// too deep to be handed the app. `PrimeApp::view` sets it each frame.
+// ponytail: one flag for the one window; pass `refresh` down instead if a second window draws.
+static REFRESHED: AtomicBool = AtomicBool::new(false);
+
+pub(super) fn set_refreshed(refreshed: bool) {
+    REFRESHED.store(refreshed, Ordering::Relaxed);
+}
+
+fn refreshed() -> bool {
+    REFRESHED.load(Ordering::Relaxed)
+}
+
+/// Art that doesn't exist, or that couldn't be downloaded.
 fn no_image_placeholder<'a>(height: impl Into<Length>) -> Element<'a, Message> {
-    container(text("No image").size(13))
-        .width(Length::Fill)
-        .height(height)
-        .align_x(alignment::Horizontal::Center)
-        .align_y(alignment::Vertical::Center)
-        .style(iced::widget::container::rounded_box)
-        .into()
+    if !refreshed() {
+        return container(text("No image").size(13))
+            .width(Length::Fill)
+            .height(height)
+            .align_x(alignment::Horizontal::Center)
+            .align_y(alignment::Vertical::Center)
+            .style(iced::widget::container::rounded_box)
+            .into();
+    }
+    container(
+        column![
+            theme::icon(theme::Icon::ImageOff, 18.0, theme::FAINT),
+            text("No image").size(12).color(theme::FAINT),
+        ]
+        .spacing(6)
+        .align_x(alignment::Horizontal::Center),
+    )
+    .center_x(Length::Fill)
+    .center_y(height)
+    .style(|_| card_style(8.0))
+    .into()
 }
 
 fn preview_image_button<'a>(
@@ -566,11 +595,11 @@ pub(super) fn unavailable_state<'a>(
 pub(super) fn empty_state<'a>(
     icon: theme::Icon,
     title: &'a str,
-    body: &'a str,
+    body: impl Into<String>,
 ) -> Element<'a, Message> {
     let badge = container(theme::icon(icon, 24.0, theme::MUTED)).style(|_| card_style(14.0));
 
-    centred_state(badge, title, body.to_string(), [None, None])
+    centred_state(badge, title, body.into(), [None, None])
 }
 
 fn centred_state<'a>(
@@ -732,6 +761,60 @@ gradientTransform="translate({center_x} {center_y}) scale({scale_x} {scale_y}) t
     .into()
 }
 
+/// The one loading spinner: Lucide's `loader`, its spokes fading in turn on each loading tick.
+/// Rotating the icon instead wouldn't show, since a 45° turn of eight spokes looks the same.
+/// Without the interface refresh (`refresh`), it's stable's compact dot grid.
+pub(super) fn spinner(
+    refresh: bool,
+    frame: usize,
+    size: f32,
+    color: Color,
+) -> Element<'static, Message> {
+    if !refresh {
+        return compact_loading_indicator(frame);
+    }
+    const SPOKES: [&str; 8] = [
+        "M12 2v4",
+        "m16.2 7.8 2.9-2.9",
+        "M18 12h4",
+        "m16.2 16.2 2.9 2.9",
+        "M12 18v4",
+        "m4.9 19.1 2.9-2.9",
+        "M2 12h4",
+        "m4.9 4.9 2.9 2.9",
+    ];
+    let active = frame % SPOKES.len();
+    let paths: String = SPOKES
+        .iter()
+        .enumerate()
+        .map(|(index, path)| {
+            let opacity = spoke_opacity(active, index, SPOKES.len());
+            format!(r#"<path d="{path}" stroke-opacity="{opacity}"/>"#)
+        })
+        .collect();
+    let source = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">{paths}</svg>"#
+    );
+
+    iced::widget::svg(iced::widget::svg::Handle::from_memory(source.into_bytes()))
+        .width(size)
+        .height(size)
+        .style(move |_, _| iced::widget::svg::Style { color: Some(color) })
+        .into()
+}
+
+/// How strongly a spoke shows: the active spoke fully, the ones behind it fading out. Iced fades
+/// a translucent SVG pixel twice (see `radial_glow`), so these sit higher than they look.
+fn spoke_opacity(active: usize, index: usize, count: usize) -> f32 {
+    match (active + count - index) % count {
+        0 => 1.0,
+        1 => 0.85,
+        2 => 0.7,
+        _ => 0.55,
+    }
+}
+
+/// Stable's spinner, a grid of white dots; `spinner` replaces it with the interface refresh.
 pub(super) fn loading_indicator(frame: usize) -> Element<'static, Message> {
     loading_orbit(frame, 5.0, 7.0, 2)
 }
@@ -832,15 +915,24 @@ pub(super) fn balances_unavailable<'a>() -> Element<'a, Message> {
         .into()
 }
 
-/// Skeleton pills in the wallet's place while the shop loads.
+/// The wallet's box while it loads, with a block for each balance chip. Without the interface
+/// refresh, skeleton pills in the wallet's place.
 pub(super) fn wallet_skeleton<'a>() -> Element<'a, Message> {
-    row![
-        skeleton(92, 34.0, 8.0, 1.0),
-        skeleton(64, 34.0, 8.0, 1.0),
-        skeleton(84, 34.0, 8.0, 1.0),
-    ]
-    .spacing(8)
-    .into()
+    if !refreshed() {
+        return row![
+            skeleton(92, 34.0, 8.0, 1.0),
+            skeleton(64, 34.0, 8.0, 1.0),
+            skeleton(84, 34.0, 8.0, 1.0),
+        ]
+        .spacing(8)
+        .into();
+    }
+    let chip = |width| container(skeleton(width, 13.0, 4.0, 1.0)).padding([8, 12]);
+
+    container(row![chip(56), chip(44), chip(60)].spacing(4))
+        .padding(4)
+        .style(|_| card_style(10.0))
+        .into()
 }
 
 fn currency_balance_row<'a>(balances: &'a [CurrencyBalanceDisplay]) -> Element<'a, Message> {
@@ -853,6 +945,9 @@ fn currency_balance_row<'a>(balances: &'a [CurrencyBalanceDisplay]) -> Element<'
     container(row)
         .padding(4)
         .style(|theme| {
+            if refreshed() {
+                return card_style(10.0);
+            }
             let mut style = iced::widget::container::bordered_box(theme);
             style.border.radius = 10.0.into();
             style

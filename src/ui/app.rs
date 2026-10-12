@@ -55,7 +55,8 @@ impl PrimeApp {
         let cache_for_size = image_cache.clone();
         let image_cache_for_ranks = image_cache.clone();
 
-        (
+        #[cfg_attr(not(debug_assertions), allow(unused_mut))]
+        let (mut app, task) = (
             Self {
                 repo,
                 image_cache,
@@ -145,6 +146,10 @@ impl PrimeApp {
                 update_channel: crate::updater::current_channel(),
                 image_cache_usage: CacheUsage::default(),
                 image_cache_clearing: false,
+                client_version_fetching: false,
+                account_export_in_progress: false,
+                image_cache_measured: false,
+                bundle_art_loading: None,
                 loading_frame: 0,
                 now: iced::time::Instant::now(),
             },
@@ -166,7 +171,30 @@ impl PrimeApp {
                     Message::ImageCacheSizeLoaded,
                 ),
             ]),
-        )
+        );
+        #[cfg(debug_assertions)]
+        app.preview_login_capture();
+        (app, task)
+    }
+
+    /// Debug builds only: `PRIME_PREVIEW_LOGIN_CAPTURE=1` opens the add-account dialog at its first
+    /// step and `=2` at its second, with nothing running, so its look can be checked without
+    /// touching Riot Client.
+    #[cfg(debug_assertions)]
+    fn preview_login_capture(&mut self) {
+        let wait = match std::env::var("PRIME_PREVIEW_LOGIN_CAPTURE").as_deref() {
+            Ok("1") => None,
+            // Nothing runs behind the handle, so Cancel only closes the dialog.
+            Ok("2") => Some(Task::<Message>::none().abortable().1),
+            _ => return,
+        };
+        let target = LoginCaptureTarget::NewAccount(AccountId::new());
+        self.launcher_capture_in_progress = true;
+        self.launcher_capture_kind = Some(target.kind());
+        self.login_capture = Some(LoginCapture {
+            wait,
+            ..LoginCapture::new(target)
+        });
     }
 
     pub(super) fn update(&mut self, message: Message) -> Task<Message> {
@@ -477,9 +505,12 @@ impl PrimeApp {
 
                 self.close_account_surfaces();
                 self.show_add_account_prompt = true;
-                self.set_status(Status::info(
-                    "Before Riot Client opens, confirm that you will tick Stay signed in.",
-                ));
+                // Stable, without the interface refresh, repeats its dialog in a toast.
+                if !self.refreshed() {
+                    self.set_status(Status::info(
+                        "Before Riot Client opens, confirm that you will tick \u{201c}Stay signed in\u{201d}.",
+                    ));
+                }
 
                 check_capture_prompt_game_task()
             }
@@ -511,17 +542,22 @@ impl PrimeApp {
                     return Task::none();
                 }
 
+                // The sign-in dialog shows what's happening, so the only toast is for a loss.
                 let discarded = self.discard_pending_account();
+                if !self.refreshed() {
+                    self.set_status(Status::progress(format!(
+                        "{}Opening Riot Client. When it appears, sign in with \u{201c}Stay signed in\u{201d} ticked.",
+                        if discarded {
+                            "Discarded the unsaved captured account. "
+                        } else {
+                            ""
+                        }
+                    )));
+                } else if discarded {
+                    self.set_status(Status::warning("Discarded the unsaved captured account"));
+                }
                 self.close_account_surfaces();
                 self.new_display_name.clear();
-                self.set_status(Status::progress(format!(
-                    "{}Opening Riot Client. When it appears, sign in normally with \"Stay signed in\" ticked.",
-                    if discarded {
-                        "Discarded the unsaved captured account. "
-                    } else {
-                        ""
-                    }
-                )));
                 self.start_login_capture(LoginCaptureTarget::NewAccount(AccountId::new()))
             }
             Message::LoginCapturePrepared { target, result } => {
@@ -646,6 +682,9 @@ impl PrimeApp {
                 Task::none()
             }
             Message::RequestExportAccount(id) => {
+                if self.account_export_in_progress {
+                    return Task::none();
+                }
                 let Some(account) = self
                     .state
                     .accounts
@@ -664,6 +703,7 @@ impl PrimeApp {
                 let summary = account.summary();
                 self.close_account_surfaces();
                 self.set_status(Status::progress(format!("Exporting {summary}")));
+                self.account_export_in_progress = true;
 
                 Task::perform(
                     async move {
@@ -677,12 +717,18 @@ impl PrimeApp {
                 )
             }
             Message::AccountExportPrepared(result) => {
+                self.account_export_in_progress = false;
                 match result {
                     Ok(export) => {
-                        self.set_status(Status::success(format!(
-                            "Prepared account export for {}",
-                            export.display_name
-                        )));
+                        // The export dialog is the result.
+                        if self.refreshed() {
+                            self.clear_progress_status();
+                        } else {
+                            self.set_status(Status::success(format!(
+                                "Prepared account export for {}",
+                                export.display_name
+                            )));
+                        }
                         self.exported_account = Some(export);
                     }
                     Err(error) => {
@@ -890,6 +936,10 @@ impl PrimeApp {
                 Task::none()
             }
             Message::RefreshClientVersion => {
+                if self.client_version_fetching {
+                    return Task::none();
+                }
+                self.client_version_fetching = true;
                 self.set_status(Status::progress("Refreshing Riot client version"));
                 fetch_client_version_task(true)
             }
@@ -903,37 +953,44 @@ impl PrimeApp {
             Message::ClientVersionLoaded {
                 user_requested,
                 result,
-            } => match result {
-                Ok(version) => {
-                    // The automatic lookup only fills an empty field; a manual refresh replaces it.
-                    if user_requested || self.client_version_input.trim().is_empty() {
-                        self.client_version_input = version.clone();
-                    }
-                    // The field shows the version.
-                    if user_requested {
-                        self.clear_progress_status();
-                    }
-
-                    self.load_active_tab()
+            } => {
+                if user_requested {
+                    self.client_version_fetching = false;
                 }
-                Err(error) => {
-                    let status =
-                        Status::error(format!("Could not fetch Riot client version: {error}"));
+                match result {
+                    Ok(version) => {
+                        // The automatic lookup only fills an empty field; a manual refresh replaces it.
+                        if user_requested || self.client_version_input.trim().is_empty() {
+                            self.client_version_input = version.clone();
+                        }
+                        // The field shows the version.
+                        if user_requested {
+                            self.clear_progress_status();
+                        }
 
-                    if user_requested {
-                        self.set_status(status);
-                        return Task::none();
+                        self.load_active_tab()
                     }
+                    Err(error) => {
+                        let status =
+                            Status::error(format!("Could not fetch Riot client version: {error}"));
 
-                    // Rank, level, availability, Shop and Loadout all need the version, so keep
-                    // trying in the background.
-                    self.set_background_status(status);
-                    Task::perform(
-                        async { tokio::time::sleep(super::CLIENT_VERSION_RETRY_INTERVAL).await },
-                        |()| Message::RetryClientVersion,
-                    )
+                        if user_requested {
+                            self.set_status(status);
+                            return Task::none();
+                        }
+
+                        // Rank, level, availability, Shop and Loadout all need the version, so keep
+                        // trying in the background.
+                        self.set_background_status(status);
+                        Task::perform(
+                            async {
+                                tokio::time::sleep(super::CLIENT_VERSION_RETRY_INTERVAL).await
+                            },
+                            |()| Message::RetryClientVersion,
+                        )
+                    }
                 }
-            },
+            }
             Message::ImportRedirect => {
                 let Some(account) = self.state.selected_account_mut() else {
                     self.account_switcher_open = false;
@@ -1008,11 +1065,14 @@ impl PrimeApp {
                     return Task::none();
                 };
 
+                // The sign-in dialog shows what's happening, so no toast.
                 let summary = account.summary();
                 self.close_account_surfaces();
-                self.set_status(Status::progress(format!(
-                    "Opening Riot Client and waiting for remembered login capture for {summary}"
-                )));
+                if !self.refreshed() {
+                    self.set_status(Status::progress(format!(
+                        "Opening Riot Client and waiting for remembered login capture for {summary}"
+                    )));
+                }
                 // Capture into a separate slot so the account's working backup is only replaced
                 // after the login is confirmed to belong to this account.
                 self.start_login_capture(LoginCaptureTarget::Existing {
@@ -2162,15 +2222,20 @@ impl PrimeApp {
                 if bundle.items.iter().all(|item| item.cached_icon().is_some()) {
                     return Task::none();
                 }
+                let items = bundle.items.clone();
+                self.bundle_art_loading = Some(store_id.clone());
                 Task::perform(
                     super::data::image_assets::cache_bundle_item_images(
-                        bundle.items.clone(),
+                        items,
                         self.image_cache.clone(),
                     ),
                     move |items| Message::BundleItemArtLoaded(store_id.clone(), items),
                 )
             }
             Message::BundleItemArtLoaded(store_id, items) => {
+                if self.bundle_art_loading.as_ref() == Some(&store_id) {
+                    self.bundle_art_loading = None;
+                }
                 if let Some(bundle) = self.store_summary.as_mut().and_then(|summary| {
                     summary
                         .featured_bundles
@@ -2560,6 +2625,29 @@ impl PrimeApp {
                     Message::RiotClientChecked,
                 )
             }
+            Message::LoginCaptureSignInTick => {
+                if self
+                    .login_capture
+                    .as_ref()
+                    .is_none_or(|capture| capture.wait.is_none())
+                {
+                    return Task::none();
+                }
+                Task::perform(
+                    crate::riot::local_client::riot_client_signed_in(),
+                    Message::LoginCaptureSignInChecked,
+                )
+            }
+            Message::LoginCaptureSignInChecked(signed_in) => {
+                if let Some(capture) = &mut self.login_capture {
+                    capture.signed_in_checks = if signed_in {
+                        capture.signed_in_checks.saturating_add(1)
+                    } else {
+                        0
+                    };
+                }
+                Task::none()
+            }
             Message::RiotClientChecked(riot_client_running) => {
                 self.riot_client_checking = false;
                 // Riot Client closed, so nothing will connect through this proxy again. During a
@@ -2870,6 +2958,7 @@ impl PrimeApp {
         match result {
             Ok(usage) => {
                 self.image_cache_usage = usage;
+                self.image_cache_measured = true;
             }
             Err(error) => {
                 self.set_status(Status::error(format!(
@@ -3013,6 +3102,8 @@ impl PrimeApp {
     /// Clears Shop and Loadout, and stops treating loads already in flight as current; their
     /// replies only cache the session they obtained.
     fn clear_selected_account_views(&mut self) {
+        // Their loads won't report back, so their progress would never end.
+        self.clear_progress_status();
         self.store_summary = None;
         self.bundle_details = None;
         self.loadout_summary = None;
@@ -3601,6 +3692,11 @@ impl PrimeApp {
         self.experiments_shown() && !self.state.disabled_experiments.contains(name)
     }
 
+    /// The interface refresh experiment: beta's new look for spinners, dialogs and placeholders.
+    pub(super) fn refreshed(&self) -> bool {
+        self.experiment(crate::storage::INTERFACE_REFRESH_EXPERIMENT)
+    }
+
     pub(super) fn save_task(&self) -> Task<Message> {
         let repo = self.repo.clone();
         let snapshot = match self.state_to_save() {
@@ -3917,7 +4013,7 @@ impl PrimeApp {
         let saved_sessions = self.saved_launcher_sessions();
         self.launcher_capture_in_progress = true;
         self.launcher_capture_kind = Some(target.kind());
-        self.login_capture = Some(LoginCapture { target, wait: None });
+        self.login_capture = Some(LoginCapture::new(target));
 
         Task::perform(
             prepare_login_capture(riot_client_path, saved_sessions),
@@ -3959,7 +4055,7 @@ impl PrimeApp {
 
         if let Some(warning) = previous_sync_warning {
             self.set_status(Status::error(format!(
-                "Could not save the previously signed-in account's login: {warning}. Sign in to Riot Client with \"Stay signed in\" ticked to continue."
+                "Could not save the previously signed-in account's login: {warning}. Sign in to Riot Client with \u{201c}Stay signed in\u{201d} ticked to continue."
             )));
         }
 

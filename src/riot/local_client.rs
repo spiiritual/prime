@@ -159,6 +159,21 @@ pub async fn player_account_names(
     Ok(namesets(&body))
 }
 
+/// Whether the Riot Client on this PC is signed in to any account, judged by whether its
+/// entitlements token has a subject. Nothing from the token is kept.
+pub async fn riot_client_signed_in() -> bool {
+    let Some(auth) = read_lockfile() else {
+        return false;
+    };
+    local_request(&auth, |client, base| {
+        client.get(format!("{base}/entitlements/v1/token"))
+    })
+    .await
+    .ok()
+    .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+    .is_some_and(|token| token["subject"].as_str().is_some_and(|subject| !subject.is_empty()))
+}
+
 /// Whether the Riot Client is running on this PC, judged by its lockfile.
 pub fn riot_client_running() -> bool {
     read_lockfile().is_some()
