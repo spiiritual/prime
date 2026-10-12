@@ -191,7 +191,10 @@ impl PrimeApp {
         ));
         self.launcher_capture_in_progress = true;
         self.launcher_capture_kind = Some(target.kind());
-        self.login_capture = Some(LoginCapture { target, wait });
+        self.login_capture = Some(LoginCapture {
+            wait,
+            ..LoginCapture::new(target)
+        });
     }
 
     pub(super) fn update(&mut self, message: Message) -> Task<Message> {
@@ -503,7 +506,7 @@ impl PrimeApp {
                 self.close_account_surfaces();
                 self.show_add_account_prompt = true;
                 self.set_status(Status::info(
-                    "Before Riot Client opens, confirm that you will tick Stay signed in.",
+                    "Before Riot Client opens, confirm that you will tick \u{201c}Stay signed in\u{201d}.",
                 ));
 
                 check_capture_prompt_game_task()
@@ -540,7 +543,7 @@ impl PrimeApp {
                 self.close_account_surfaces();
                 self.new_display_name.clear();
                 self.set_status(Status::progress(format!(
-                    "{}Opening Riot Client. When it appears, sign in normally with \"Stay signed in\" ticked.",
+                    "{}Opening Riot Client. When it appears, sign in with \u{201c}Stay signed in\u{201d} ticked.",
                     if discarded {
                         "Discarded the unsaved captured account. "
                     } else {
@@ -2585,6 +2588,29 @@ impl PrimeApp {
                     Message::RiotClientChecked,
                 )
             }
+            Message::LoginCaptureSignInTick => {
+                if self
+                    .login_capture
+                    .as_ref()
+                    .is_none_or(|capture| capture.wait.is_none())
+                {
+                    return Task::none();
+                }
+                Task::perform(
+                    crate::riot::local_client::riot_client_signed_in(),
+                    Message::LoginCaptureSignInChecked,
+                )
+            }
+            Message::LoginCaptureSignInChecked(signed_in) => {
+                if let Some(capture) = &mut self.login_capture {
+                    capture.signed_in_checks = if signed_in {
+                        capture.signed_in_checks.saturating_add(1)
+                    } else {
+                        0
+                    };
+                }
+                Task::none()
+            }
             Message::RiotClientChecked(riot_client_running) => {
                 self.riot_client_checking = false;
                 // Riot Client closed, so nothing will connect through this proxy again. During a
@@ -3947,7 +3973,7 @@ impl PrimeApp {
         let saved_sessions = self.saved_launcher_sessions();
         self.launcher_capture_in_progress = true;
         self.launcher_capture_kind = Some(target.kind());
-        self.login_capture = Some(LoginCapture { target, wait: None });
+        self.login_capture = Some(LoginCapture::new(target));
 
         Task::perform(
             prepare_login_capture(riot_client_path, saved_sessions),
@@ -3989,7 +4015,7 @@ impl PrimeApp {
 
         if let Some(warning) = previous_sync_warning {
             self.set_status(Status::error(format!(
-                "Could not save the previously signed-in account's login: {warning}. Sign in to Riot Client with \"Stay signed in\" ticked to continue."
+                "Could not save the previously signed-in account's login: {warning}. Sign in to Riot Client with \u{201c}Stay signed in\u{201d} ticked to continue."
             )));
         }
 

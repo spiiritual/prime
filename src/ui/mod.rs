@@ -42,6 +42,11 @@ const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
 const LAUNCH_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const ACCOUNT_AVAILABILITY_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 const RIOT_CLIENT_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+/// While a login capture waits, how often Prime asks Riot Client whether someone signed in.
+const LOGIN_CAPTURE_SIGN_IN_CHECK_INTERVAL: Duration = Duration::from_secs(3);
+/// Signed in for this many checks in a row with no remembered login yet means "Stay signed in"
+/// wasn't ticked: the capture itself looks every 2 seconds, so a remembered login would be found.
+const LOGIN_CAPTURE_UNTICKED_CHECKS: u8 = 3;
 /// While minimized with "minimize on close" on, a slow poll keeps every account's session in use
 /// so its refresh token doesn't sit idle. Access tokens last an hour, so each poll re-signs in.
 const BACKGROUND_SESSION_REFRESH_INTERVAL: Duration = Duration::from_secs(30 * 60);
@@ -167,6 +172,17 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
             .push(iced::time::every(RIOT_CLIENT_CHECK_INTERVAL).map(|_| Message::RiotClientTick));
     }
 
+    if app
+        .login_capture
+        .as_ref()
+        .is_some_and(|capture| capture.wait.is_some())
+    {
+        subscriptions.push(
+            iced::time::every(LOGIN_CAPTURE_SIGN_IN_CHECK_INTERVAL)
+                .map(|_| Message::LoginCaptureSignInTick),
+        );
+    }
+
     if let Some(aim) = aim::subscription(app) {
         subscriptions.push(aim);
     }
@@ -287,6 +303,10 @@ fn status_spinner_active(app: &PrimeApp) -> bool {
 /// Errors stay on screen; other updates show briefly so actions still get feedback without
 /// cluttering the window, and launch or login capture progress stays visible while it runs.
 fn status_bar_visible(app: &PrimeApp) -> bool {
+    // The sign-in dialog shows its own progress.
+    if app.login_capture.is_some() && app.status.kind == StatusKind::Progress {
+        return false;
+    }
     status_visible_at(&app.status, app.status_changed_at, app.now)
         || (!app.status.text.trim().is_empty()
             && (app.launching_account.is_some() || app.launcher_capture_in_progress))
@@ -570,6 +590,23 @@ struct LoginCapture {
     /// Set once Riot Client is open and the wait for a sign-in has started; only then can the
     /// capture be cancelled.
     wait: Option<iced::task::Handle>,
+    /// How many checks in a row found Riot Client signed in while the capture kept waiting.
+    signed_in_checks: u8,
+}
+
+impl LoginCapture {
+    fn new(target: LoginCaptureTarget) -> Self {
+        Self {
+            target,
+            wait: None,
+            signed_in_checks: 0,
+        }
+    }
+
+    /// Riot Client is signed in but kept no login, so "Stay signed in" wasn't ticked.
+    fn unticked(&self) -> bool {
+        self.signed_in_checks >= LOGIN_CAPTURE_UNTICKED_CHECKS
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1147,6 +1184,8 @@ enum Message {
     CancelQuit,
     RiotClientTick,
     RiotClientChecked(bool),
+    LoginCaptureSignInTick,
+    LoginCaptureSignInChecked(bool),
     ToggleStatusMenu,
     PresenceStatusPicked(crate::riot::chat_proxy::PresenceStatus),
     CheckForAppUpdate,

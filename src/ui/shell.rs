@@ -1491,29 +1491,34 @@ fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> El
             app,
         )
     };
-    let sign_in_state = if riot_client_open {
-        CaptureStep::Active
+    let sign_in_step = if capture.unticked() {
+        capture_step(
+            CaptureStep::Warning,
+            "You signed in without \u{201c}Stay signed in\u{201d}",
+            "Sign out in Riot Client, then sign in again with the box ticked. Prime is still \
+             waiting.",
+            app,
+        )
+    } else if riot_client_open {
+        capture_step(
+            CaptureStep::Active,
+            "Sign in with \u{201c}Stay signed in\u{201d} ticked",
+            "Waiting for you to sign in\u{2026}",
+            app,
+        )
     } else {
-        CaptureStep::Pending
-    };
-    let sign_in_detail = if riot_client_open {
-        "Waiting for remembered login\u{2026}"
-    } else {
-        "Riot Client opens next"
+        capture_step(
+            CaptureStep::Pending(2),
+            "Sign in with \u{201c}Stay signed in\u{201d} ticked",
+            "Riot Client opens next",
+            app,
+        )
     };
 
-    let mut steps = column![
-        close_step,
-        capture_step(
-            sign_in_state,
-            "Sign in and tick \u{201c}Stay signed in\u{201d}",
-            sign_in_detail,
-            app
-        )
-    ];
+    let mut steps = column![close_step, sign_in_step];
     if existing.is_none() {
         steps = steps.push(capture_step(
-            CaptureStep::Pending,
+            CaptureStep::Pending(3),
             "Name the account",
             "Choose how it shows in Prime",
             app,
@@ -1528,15 +1533,26 @@ fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> El
         ),
     };
 
-    let body = column![
-        steps,
-        dialog_note(
-            theme::Icon::Info,
-            theme::MUTED,
-            "Without \u{201c}Stay signed in\u{201d}, Riot Client won't remember the login and \
-             capture can't finish.",
+    // Above the steps, so it's read before anything else: without the box Riot Client keeps
+    // no login on this PC and there's nothing to capture.
+    let (callout_title, callout_detail) = if capture.unticked() {
+        (
+            "This box, on Riot Client's sign-in screen.",
+            "It sits under the password field. Tick it before you sign in.",
         )
-    ];
+    } else {
+        (
+            "Tick \u{201c}Stay signed in\u{201d} before you sign in.",
+            "Without it Riot Client forgets the login when it closes, and Prime has nothing to \
+             save.",
+        )
+    };
+    let body = column![stay_signed_in_callout(callout_title, callout_detail), steps].spacing(10);
+    let footer_label = if riot_client_open {
+        "Waiting for login"
+    } else {
+        "Closing Riot Client"
+    };
 
     dialog(
         520.0,
@@ -1552,16 +1568,12 @@ fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> El
                 "Cancel",
                 riot_client_open.then_some(Message::CancelLoginCapture),
             ),
+            // The running step already spins, so the footer only says what Prime is doing.
             container(
-                row![
-                    spinner(app.refreshed(), app.loading_frame, 14.0, theme::MUTED),
-                    text("Waiting for login")
-                        .size(13)
-                        .font(theme::BOLD_FONT)
-                        .color(theme::MUTED)
-                ]
-                .spacing(8)
-                .align_y(alignment::Vertical::Center),
+                text(footer_label)
+                    .size(13)
+                    .font(theme::BOLD_FONT)
+                    .color(theme::MUTED),
             )
             .padding([9, 16])
             .style(|_| filled(theme::RAISED).border(iced::border::rounded(8)))
@@ -1574,7 +1586,70 @@ fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> El
 enum CaptureStep {
     Done,
     Active,
-    Pending,
+    /// Its number in the list.
+    Pending(u8),
+    Warning,
+}
+
+/// A copy of Riot Client's "Stay signed in" checkbox, ticked, beside why it matters.
+fn stay_signed_in_callout<'a>(title: &'a str, detail: &'a str) -> Element<'a, Message> {
+    let checkbox = container(
+        row![
+            container(theme::icon(theme::Icon::Check, 11.0, Color::WHITE))
+                .center(15)
+                .style(|_| filled(theme::ACCENT).border(iced::border::rounded(3))),
+            text("Stay signed in")
+                .size(12)
+                .font(theme::SEMIBOLD_FONT)
+                .color(Color::from_rgb8(0x15, 0x17, 0x1C)),
+        ]
+        .spacing(8)
+        .align_y(alignment::Vertical::Center),
+    )
+    .padding([8, 11])
+    .style(|_| {
+        filled(Color::from_rgb8(0xED, 0xEE, 0xF0)).border(iced::Border {
+            color: Color {
+                a: 0.55,
+                ..theme::GOLD
+            },
+            width: 3.0,
+            radius: 7.0.into(),
+        })
+    });
+
+    container(
+        row![
+            checkbox,
+            column![
+                text(title)
+                    .size(13)
+                    .font(theme::SEMIBOLD_FONT)
+                    .color(theme::GOLD),
+                text(detail).size(12).color(theme::MUTED),
+            ]
+            .spacing(2)
+            .width(Length::Fill),
+        ]
+        .spacing(14)
+        .align_y(alignment::Vertical::Center),
+    )
+    .padding([12, 14])
+    .style(|_| {
+        filled(Color {
+            a: 0.1,
+            ..theme::GOLD
+        })
+        .border(iced::Border {
+            color: Color {
+                a: 0.5,
+                ..theme::GOLD
+            },
+            width: 1.0,
+            radius: 10.0.into(),
+        })
+    })
+    .into()
 }
 
 fn capture_step<'a>(
@@ -1609,15 +1684,37 @@ fn capture_step<'a>(
             })
         })
         .into(),
-        CaptureStep::Pending => container(space())
-            .center(24)
-            .style(|_| filled(theme::RAISED).border(iced::border::rounded(12)))
-            .into(),
+        CaptureStep::Pending(number) => container(
+            text(number.to_string())
+                .size(11)
+                .font(theme::BOLD_FONT)
+                .color(theme::FAINT),
+        )
+        .center(24)
+        .style(|_| filled(theme::RAISED).border(iced::border::rounded(12)))
+        .into(),
+        CaptureStep::Warning => {
+            container(theme::icon(theme::Icon::TriangleAlert, 13.0, theme::GOLD))
+                .center(24)
+                .style(|_| {
+                    filled(Color {
+                        a: 0.12,
+                        ..theme::GOLD
+                    })
+                    .border(iced::Border {
+                        color: theme::GOLD,
+                        width: 1.0,
+                        radius: 12.0.into(),
+                    })
+                })
+                .into()
+        }
     };
     let (label_color, detail_color) = match state {
         CaptureStep::Done => (theme::TEXT, theme::FAINT),
         CaptureStep::Active => (theme::TEXT, theme::ACCENT),
-        CaptureStep::Pending => (theme::MUTED, theme::FAINT),
+        CaptureStep::Pending(_) => (theme::MUTED, theme::FAINT),
+        CaptureStep::Warning => (theme::TEXT, theme::GOLD),
     };
 
     row![

@@ -2038,8 +2038,8 @@ fn waiting_login_capture(
     app.launcher_capture_in_progress = true;
     app.launcher_capture_kind = Some(target.kind());
     app.login_capture = Some(super::LoginCapture {
-        target,
         wait: Some(handle.clone()),
+        ..super::LoginCapture::new(target)
     });
     handle
 }
@@ -2048,7 +2048,7 @@ fn waiting_login_capture(
 fn preparing_login_capture(app: &mut PrimeApp, target: super::LoginCaptureTarget) {
     app.launcher_capture_in_progress = true;
     app.launcher_capture_kind = Some(target.kind());
-    app.login_capture = Some(super::LoginCapture { target, wait: None });
+    app.login_capture = Some(super::LoginCapture::new(target));
 }
 
 #[test]
@@ -3176,13 +3176,56 @@ fn loading_accounts_removes_legacy_launcher_sessions() {
 }
 
 #[test]
-fn only_missing_private_settings_is_pending_login_capture() {
+fn a_login_capture_waits_while_riot_client_kept_no_login() {
     assert!(is_pending_launcher_capture_error(
         &LauncherSessionError::PrivateSettingsNotFound
     ));
-    assert!(!is_pending_launcher_capture_error(
+    assert!(is_pending_launcher_capture_error(
         &LauncherSessionError::MissingRefreshToken
     ));
+    assert!(!is_pending_launcher_capture_error(
+        &LauncherSessionError::DifferentAccountSignedIn
+    ));
+}
+
+#[test]
+fn a_sign_in_without_stay_signed_in_is_noticed_and_the_capture_keeps_waiting() {
+    let dir = tempdir().unwrap();
+    let mut app = test_app(dir.path());
+    let target = super::LoginCaptureTarget::NewAccount(AccountId::new());
+
+    // Nothing is asked of Riot Client until it has been reopened.
+    preparing_login_capture(&mut app, target);
+    assert_eq!(app.update(Message::LoginCaptureSignInTick).units(), 0);
+
+    waiting_login_capture(&mut app, target);
+    assert_eq!(app.update(Message::LoginCaptureSignInTick).units(), 1);
+    for _ in 0..super::LOGIN_CAPTURE_UNTICKED_CHECKS - 1 {
+        let _ = app.update(Message::LoginCaptureSignInChecked(true));
+    }
+    assert!(!app.login_capture.as_ref().unwrap().unticked());
+    let _ = app.update(Message::LoginCaptureSignInChecked(true));
+    assert!(app.login_capture.as_ref().unwrap().unticked());
+    assert!(app.login_capture.as_ref().unwrap().wait.is_some());
+
+    // Signing out to try again goes back to waiting.
+    let _ = app.update(Message::LoginCaptureSignInChecked(false));
+    assert!(!app.login_capture.as_ref().unwrap().unticked());
+}
+
+#[test]
+fn the_sign_in_dialog_hides_the_progress_toast_but_not_errors() {
+    let dir = tempdir().unwrap();
+    let mut app = test_app(dir.path());
+    waiting_login_capture(
+        &mut app,
+        super::LoginCaptureTarget::NewAccount(AccountId::new()),
+    );
+
+    app.set_status(Status::progress("Opening Riot Client"));
+    assert!(!status_bar_visible(&app));
+    app.set_status(Status::error("Could not save the previous login"));
+    assert!(status_bar_visible(&app));
 }
 
 #[test]

@@ -360,13 +360,13 @@ pub fn adopt_launcher_session_backup(
 
 #[derive(Debug, Error)]
 pub enum LauncherSessionError {
-    #[error("Riot Client has no remembered login; sign in with \"Stay signed in\" ticked")]
+    #[error("Riot Client has no remembered login; sign in with \u{201c}Stay signed in\u{201d} ticked")]
     PrivateSettingsNotFound,
     #[error("failed to read Riot private settings file at {path}: {source}")]
     ReadPrivateSettings { path: PathBuf, source: io::Error },
     #[error("failed to write Riot private settings file at {path}: {source}")]
     WritePrivateSettings { path: PathBuf, source: io::Error },
-    #[error("Riot Client did not save a remembered login; log in with Stay signed in enabled")]
+    #[error("Riot Client has no remembered login; sign in with \u{201c}Stay signed in\u{201d} ticked")]
     MissingRefreshToken,
     #[error(
         "Riot Client is signed in to a different account, or the account could not be confirmed; the saved login was left unchanged"

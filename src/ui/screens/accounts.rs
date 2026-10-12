@@ -99,7 +99,8 @@ pub(in crate::ui) fn header_actions(app: &PrimeApp) -> Element<'_, Message> {
         header_button(
             Icon::Plus,
             "Add account",
-            capturing(LauncherCaptureKind::New).then_some((app.refreshed(), app.loading_frame)),
+            // Its sign-in dialog shows the progress.
+            None,
             capture_idle.then_some(Message::AddAccount),
             true,
         ),

@@ -279,13 +279,18 @@ pub(in crate::ui) async fn wait_for_launcher_session_capture(
     }
 
     Err(
-        "timed out waiting for the Riot Client login; sign in with \"Stay signed in\" ticked"
+        "timed out waiting for the Riot Client login; sign in with \u{201c}Stay signed in\u{201d} ticked"
             .to_string(),
     )
 }
 
+/// Riot Client has kept no login yet. Signing in without "Stay signed in" leaves either no
+/// settings file or one without a refresh token, and both wait for the user to sign in again.
 pub(in crate::ui) fn is_pending_launcher_capture_error(error: &LauncherSessionError) -> bool {
-    matches!(error, LauncherSessionError::PrivateSettingsNotFound)
+    matches!(
+        error,
+        LauncherSessionError::PrivateSettingsNotFound | LauncherSessionError::MissingRefreshToken
+    )
 }
 
 pub(in crate::ui) async fn resolve_session_shard(
@@ -399,7 +404,7 @@ fn current_account_capture_error(error: LauncherSessionError) -> String {
     match error {
         LauncherSessionError::PrivateSettingsNotFound
         | LauncherSessionError::MissingRefreshToken => {
-            "Riot Client is not signed in with Stay signed in enabled".to_string()
+            "Riot Client is not signed in with \u{201c}Stay signed in\u{201d} ticked".to_string()
         }
         error => error.to_string(),
     }

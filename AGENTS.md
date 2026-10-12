@@ -25,7 +25,9 @@ Accounts tab:
 
 - Keeps account profiles (display name, Riot ID, PUUID, region and shard) in `accounts.json`.
 - Adds accounts by capturing Riot Client's remembered login. "Add new account" clears the live login,
-  waits for the sign-in, then asks for a display name. "Add current account" captures whoever is signed in
+  waits for the sign-in, then asks for a display name. While it waits, it asks the local Riot Client
+  every 3 seconds whether anyone is signed in; signed in for 3 checks with no remembered login means
+  "Stay signed in" wasn't ticked, and the dialog says so and keeps waiting. "Add current account" captures whoever is signed in
   now. "Re-capture login" replaces a saved account's captured login.
 - Launches VALORANT for the selected account: closes Riot Client and VALORANT, restores that account's
   saved Riot Client `Data`, then runs `RiotClientServices.exe --launch-product=valorant --launch-patchline=live`.
@@ -240,4 +242,5 @@ written.
 
 To see the add-account sign-in dialog without any of that, start a debug build with
 `PRIME_PREVIEW_LOGIN_CAPTURE=1` (its first step) or `=2` (its second). Nothing runs behind it;
-Cancel works on step 2, and step 1 stays until Prime closes.
+Cancel works on step 2, and step 1 stays until Prime closes. With Riot Client signed in, step 2
+turns to the "Stay signed in" warning after about 9 seconds.
