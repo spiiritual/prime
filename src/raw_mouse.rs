@@ -15,10 +15,12 @@
 use std::ptr::{null, null_mut};
 use std::sync::Mutex;
 
-use iced::Rectangle;
 use iced::futures::{SinkExt, Stream};
+use iced::{Point, Rectangle};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::ClientToScreen;
+use windows_sys::Win32::Graphics::Gdi::{
+    ClientToScreen, GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
+};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow;
@@ -28,8 +30,8 @@ use windows_sys::Win32::UI::Input::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     ClipCursor, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClipCursor,
-    GetCursorPos, GetMessageW, HWND_MESSAGE, MSG, PostMessageW, PostQuitMessage, RegisterClassW,
-    SetCursorPos, WM_CLOSE, WM_DESTROY, WM_INPUT, WNDCLASSW,
+    GetCursorPos, GetMessageW, GetWindowRect, HWND_MESSAGE, MSG, PostMessageW, PostQuitMessage,
+    RegisterClassW, SetCursorPos, WM_CLOSE, WM_DESTROY, WM_INPUT, WNDCLASSW,
 };
 
 const GENERIC_DESKTOP: u16 = 0x01;
@@ -183,6 +185,45 @@ fn on_screen(area: Rectangle) -> Option<(RECT, f32)> {
                 bottom: origin.y + ((area.y + area.height) * scale).floor() as i32,
             },
             scale,
+        ))
+    }
+}
+
+/// The active window's top-left corner and its monitor's bounds, in the window's logical pixels.
+pub fn window_and_monitor() -> Option<(Point, Rectangle)> {
+    // Tests have no window to move.
+    if cfg!(test) {
+        return None;
+    }
+    // SAFETY: the calls only read the window and monitor and write the local values passed to them.
+    unsafe {
+        let window = GetActiveWindow();
+        if window.is_null() {
+            return None;
+        }
+        let dpi = GetDpiForWindow(window);
+        let mut frame = RECT::default();
+        let mut info = MONITORINFO {
+            cbSize: size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+        if dpi == 0
+            || GetWindowRect(window, &mut frame) == 0
+            || GetMonitorInfoW(monitor, &mut info) == 0
+        {
+            return None;
+        }
+        let scale = dpi as f32 / 96.0;
+        let bounds = info.rcMonitor;
+        Some((
+            Point::new(frame.left as f32 / scale, frame.top as f32 / scale),
+            Rectangle {
+                x: bounds.left as f32 / scale,
+                y: bounds.top as f32 / scale,
+                width: (bounds.right - bounds.left) as f32 / scale,
+                height: (bounds.bottom - bounds.top) as f32 / scale,
+            },
         ))
     }
 }

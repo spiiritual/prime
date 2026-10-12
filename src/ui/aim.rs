@@ -52,6 +52,8 @@ pub(super) struct AimTrainerTab {
     pub(super) last_frame: Option<iced::time::Instant>,
     /// The window went fullscreen for this run.
     pub(super) fullscreen: bool,
+    /// Where the window was before it went fullscreen.
+    pub(super) windowed_at: Option<Point>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -294,11 +296,16 @@ impl PrimeApp {
         self.aim.phase = AimPhase::Playing(game);
         self.aim.last_frame = None;
         self.aim.fullscreen = settings.fullscreen;
-        if settings.fullscreen {
-            Task::batch([set_fullscreen(true), measure_monitor()])
-        } else {
-            measure_monitor()
+        if !settings.fullscreen {
+            return measure_monitor();
         }
+        // Read here, on the window's thread, while Prime is active.
+        let placement = raw_mouse::window_and_monitor();
+        self.aim.windowed_at = placement.map(|(at, _)| at);
+        Task::batch([
+            enter_fullscreen(placement.map(|(_, monitor)| monitor)),
+            measure_monitor(),
+        ])
     }
 
     /// The cursor back, and the window back to its size if the run went fullscreen.
@@ -306,7 +313,7 @@ impl PrimeApp {
         self.aim.last_frame = None;
         raw_mouse::release_cursor();
         if std::mem::take(&mut self.aim.fullscreen) {
-            set_fullscreen(false)
+            leave_fullscreen(self.aim.windowed_at.take())
         } else {
             Task::none()
         }
@@ -410,22 +417,44 @@ fn grab_cursor(game: &mut Game, arena: Rectangle) {
     }
 }
 
-/// Fullscreen on the window's monitor, or back to Prime's fixed size. The size limits would
-/// otherwise hold a fullscreen window at that size.
-fn set_fullscreen(on: bool) -> Task<Message> {
+/// Fullscreen on `monitor`, without the size limits, which would otherwise hold the window at
+/// Prime's size. A borderless window a pixel taller than the monitor takes the place of
+/// `Mode::Fullscreen`, kept for when the monitor can't be read: Windows hands a window covering
+/// the monitor exactly its own flip, and with vsync that ran at about 86 fps with frames of up to
+/// 50 ms on a 144 Hz monitor, against a steady 144 for a window.
+fn enter_fullscreen(monitor: Option<Rectangle>) -> Task<Message> {
     window::latest().then(move |id| {
         let Some(id) = id else {
             return Task::none();
         };
-        if on {
-            window::set_min_size(id, None)
-                .chain(window::set_max_size(id, None))
-                .chain(window::set_mode(id, window::Mode::Fullscreen))
-        } else {
-            window::set_mode(id, window::Mode::Windowed)
-                .chain(window::set_min_size(id, Some(super::WINDOW_SIZE)))
-                .chain(window::set_max_size(id, Some(super::WINDOW_SIZE)))
+        let unlimited = window::set_min_size(id, None).chain(window::set_max_size(id, None));
+        match monitor {
+            Some(monitor) => unlimited
+                .chain(window::toggle_decorations(id))
+                .chain(window::move_to(id, monitor.position()))
+                .chain(window::resize(
+                    id,
+                    iced::Size::new(monitor.width, monitor.height + 1.0),
+                )),
+            None => unlimited.chain(window::set_mode(id, window::Mode::Fullscreen)),
         }
+    })
+}
+
+/// Back to Prime's fixed size, at `windowed_at` if the run went borderless.
+fn leave_fullscreen(windowed_at: Option<Point>) -> Task<Message> {
+    window::latest().then(move |id| {
+        let Some(id) = id else {
+            return Task::none();
+        };
+        let back = match windowed_at {
+            Some(at) => window::toggle_decorations(id)
+                .chain(window::resize(id, super::WINDOW_SIZE))
+                .chain(window::move_to(id, at)),
+            None => window::set_mode(id, window::Mode::Windowed),
+        };
+        back.chain(window::set_min_size(id, Some(super::WINDOW_SIZE)))
+            .chain(window::set_max_size(id, Some(super::WINDOW_SIZE)))
     })
 }
 

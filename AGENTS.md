@@ -68,7 +68,9 @@ the whole UI up to 1000 times a second and starved the repaints. Clicks are test
 happened: each raw click keeps the counts read before it and the frame applies them in order, and
 in 2D with the Windows cursor the arena tracks the cursor through each movement event, because
 iced gives every event in a batch the cursor from the batch's end. "Play
-fullscreen" makes runs borderless fullscreen with only the arena and scores; pausing or ending a
+fullscreen" makes runs borderless fullscreen with only the arena and scores, as a borderless
+window a pixel taller than the monitor: one covering it exactly gets its own flip from Windows, and
+with vsync that dropped a 144 Hz monitor to about 86 fps with 50 ms frames; pausing or ending a
 run puts the window back to its fixed size. Esc, leaving the tab or game over end the run, focus
 loss pauses it. Difficulty sets how fast dots come: Easy, Normal (the default) and Hard keep at
 most 4, 6 and 11 on screen. Sensitivity, DPI, the three choices, fullscreen
