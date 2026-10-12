@@ -1466,6 +1466,8 @@ fn add_account_prompt_overlay(valorant_running: bool) -> Element<'static, Messag
 
 /// Shown while a capture waits for a sign-in in Riot Client.
 fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> Element<'a, Message> {
+    // Without the interface refresh, stable's dialog: no callout, warning or step numbers.
+    let refresh = app.refreshed();
     let riot_client_open = capture.wait.is_some();
     let existing = match capture.target {
         LoginCaptureTarget::NewAccount(_) => None,
@@ -1491,7 +1493,12 @@ fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> El
             app,
         )
     };
-    let sign_in_step = if capture.unticked() {
+    let sign_in_title = if refresh {
+        "Sign in with \u{201c}Stay signed in\u{201d} ticked"
+    } else {
+        "Sign in and tick \u{201c}Stay signed in\u{201d}"
+    };
+    let sign_in_step = if refresh && capture.unticked() {
         capture_step(
             CaptureStep::Warning,
             "You signed in without \u{201c}Stay signed in\u{201d}",
@@ -1502,14 +1509,18 @@ fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> El
     } else if riot_client_open {
         capture_step(
             CaptureStep::Active,
-            "Sign in with \u{201c}Stay signed in\u{201d} ticked",
-            "Waiting for you to sign in\u{2026}",
+            sign_in_title,
+            if refresh {
+                "Waiting for you to sign in\u{2026}"
+            } else {
+                "Waiting for remembered login\u{2026}"
+            },
             app,
         )
     } else {
         capture_step(
             CaptureStep::Pending(2),
-            "Sign in with \u{201c}Stay signed in\u{201d} ticked",
+            sign_in_title,
             "Riot Client opens next",
             app,
         )
@@ -1547,7 +1558,19 @@ fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> El
              save.",
         )
     };
-    let body = column![stay_signed_in_callout(callout_title, callout_detail), steps].spacing(10);
+    let body = if refresh {
+        column![stay_signed_in_callout(callout_title, callout_detail), steps].spacing(10)
+    } else {
+        column![
+            steps,
+            dialog_note(
+                theme::Icon::Info,
+                theme::MUTED,
+                "Without \u{201c}Stay signed in\u{201d}, Riot Client won't remember the login \
+                 and capture can't finish.",
+            )
+        ]
+    };
     let footer_label = if riot_client_open {
         "Waiting for login"
     } else {
@@ -1569,12 +1592,25 @@ fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> El
                 riot_client_open.then_some(Message::CancelLoginCapture),
             ),
             // The running step already spins, so the footer only says what Prime is doing.
-            container(
-                text(footer_label)
-                    .size(13)
-                    .font(theme::BOLD_FONT)
-                    .color(theme::MUTED),
-            )
+            container(if refresh {
+                Element::from(
+                    text(footer_label)
+                        .size(13)
+                        .font(theme::BOLD_FONT)
+                        .color(theme::MUTED),
+                )
+            } else {
+                row![
+                    spinner(false, app.loading_frame, 14.0, theme::MUTED),
+                    text("Waiting for login")
+                        .size(13)
+                        .font(theme::BOLD_FONT)
+                        .color(theme::MUTED)
+                ]
+                .spacing(8)
+                .align_y(alignment::Vertical::Center)
+                .into()
+            })
             .padding([9, 16])
             .style(|_| filled(theme::RAISED).border(iced::border::rounded(8)))
             .into(),
@@ -1684,12 +1720,16 @@ fn capture_step<'a>(
             })
         })
         .into(),
-        CaptureStep::Pending(number) => container(
-            text(number.to_string())
-                .size(11)
-                .font(theme::BOLD_FONT)
-                .color(theme::FAINT),
-        )
+        CaptureStep::Pending(number) => container(if app.refreshed() {
+            Element::from(
+                text(number.to_string())
+                    .size(11)
+                    .font(theme::BOLD_FONT)
+                    .color(theme::FAINT),
+            )
+        } else {
+            space().into()
+        })
         .center(24)
         .style(|_| filled(theme::RAISED).border(iced::border::rounded(12)))
         .into(),

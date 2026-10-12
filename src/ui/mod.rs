@@ -172,10 +172,11 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
             .push(iced::time::every(RIOT_CLIENT_CHECK_INTERVAL).map(|_| Message::RiotClientTick));
     }
 
-    if app
-        .login_capture
-        .as_ref()
-        .is_some_and(|capture| capture.wait.is_some())
+    if app.refreshed()
+        && app
+            .login_capture
+            .as_ref()
+            .is_some_and(|capture| capture.wait.is_some())
     {
         subscriptions.push(
             iced::time::every(LOGIN_CAPTURE_SIGN_IN_CHECK_INTERVAL)
@@ -304,7 +305,7 @@ fn status_spinner_active(app: &PrimeApp) -> bool {
 /// cluttering the window, and launch or login capture progress stays visible while it runs.
 fn status_bar_visible(app: &PrimeApp) -> bool {
     // The sign-in dialog shows its own progress.
-    if app.login_capture.is_some() && app.status.kind == StatusKind::Progress {
+    if app.refreshed() && app.login_capture.is_some() && app.status.kind == StatusKind::Progress {
         return false;
     }
     status_visible_at(&app.status, app.status_changed_at, app.now)

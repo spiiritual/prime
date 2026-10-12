@@ -3223,6 +3223,9 @@ fn the_sign_in_dialog_hides_the_progress_toast_but_not_errors() {
     );
 
     app.set_status(Status::progress("Opening Riot Client"));
+    // Stable, without the interface refresh, keeps the toast over its dialog.
+    assert!(status_bar_visible(&app));
+    app.update_channel = Some(crate::updater::BETA_CHANNEL.to_string());
     assert!(!status_bar_visible(&app));
     app.set_status(Status::error("Could not save the previous login"));
     assert!(status_bar_visible(&app));

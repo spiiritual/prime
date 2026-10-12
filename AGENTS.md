@@ -25,7 +25,7 @@ Accounts tab:
 
 - Keeps account profiles (display name, Riot ID, PUUID, region and shard) in `accounts.json`.
 - Adds accounts by capturing Riot Client's remembered login. "Add new account" clears the live login,
-  waits for the sign-in, then asks for a display name. While it waits, it asks the local Riot Client
+  waits for the sign-in, then asks for a display name. In beta (`interface-refresh`), while it waits, it asks the local Riot Client
   every 3 seconds whether anyone is signed in; signed in for 3 checks with no remembered login means
   "Stay signed in" wasn't ticked, and the dialog says so and keeps waiting. "Add current account" captures whoever is signed in
   now. "Re-capture login" replaces a saved account's captured login.
@@ -119,7 +119,8 @@ know is ignored and kept. Each name is a constant in `storage.rs`; `PrimeApp::ex
 
 - `aim-trainer-modes`: the Aim Trainer's Sensitivity and View choices.
 - `interface-refresh` (`PrimeApp::refreshed`): Lucide's loader as the one spinner (stable keeps the
-  dot grid).
+  dot grid); the sign-in dialog's "Stay signed in" callout, numbered steps and unticked check, with
+  no progress toast over it.
 
 One instance: starting Prime while it runs, even from the tray, brings the running window forward
 and the new start exits (`single_instance.rs`). Debug builds use their own name, so `cargo run`

@@ -100,7 +100,8 @@ pub(in crate::ui) fn header_actions(app: &PrimeApp) -> Element<'_, Message> {
             Icon::Plus,
             "Add account",
             // Its sign-in dialog shows the progress.
-            None,
+            (!app.refreshed() && capturing(LauncherCaptureKind::New))
+                .then_some((false, app.loading_frame)),
             capture_idle.then_some(Message::AddAccount),
             true,
         ),

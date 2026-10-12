@@ -85,7 +85,8 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         if app.experiments_shown() {
             section(
                 SettingsSection::Experiments,
-                "Beta features still being worked on, on until you switch them off. Each can                  change or go away.",
+                "Beta features still being worked on, on until you switch them off. Each can \
+                 change or go away.",
                 column![
                     checkbox(app.experiment(AIM_MODES_EXPERIMENT))
                         .label("Aim Trainer: 3D view and Windows sensitivity")
