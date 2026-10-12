@@ -1,6 +1,8 @@
 use iced::widget::image::Handle;
 use iced::widget::text::Wrapping;
-use iced::widget::{Column, Stack, column, container, image, opaque, row, scrollable, space, stack};
+use iced::widget::{
+    Column, Stack, column, container, image, opaque, rich_text, row, scrollable, space, span, stack,
+};
 use iced::{Color, ContentFit, Element, Length, Padding, Theme, alignment};
 use std::path::PathBuf;
 
@@ -1442,10 +1444,31 @@ fn add_account_prompt_overlay(valorant_running: bool) -> Element<'static, Messag
             theme::Icon::Eraser,
             "The current remembered login is cleared (other saved accounts are untouched)"
         ),
-        dialog_point(
-            theme::Icon::MousePointerClick,
-            "Sign in and tick \u{201c}Stay signed in\u{201d}"
-        ),
+        // The step people miss, so the box's name stands out.
+        row![
+            container(theme::icon(
+                theme::Icon::MousePointerClick,
+                14.0,
+                theme::GOLD
+            ))
+            .center(28)
+            .style(|_| filled(Color {
+                a: 0.15,
+                ..theme::GOLD
+            })
+            .border(iced::border::rounded(8))),
+            rich_text![
+                span::<(), _>("Tick "),
+                span("\u{201c}Stay signed in\u{201d}")
+                    .font(theme::BOLD_FONT)
+                    .color(theme::GOLD),
+                span(" on the sign-in screen, before you sign in"),
+            ]
+            .size(13)
+            .width(Length::Fill),
+        ]
+        .spacing(10)
+        .align_y(alignment::Vertical::Center),
     ];
 
     if valorant_running {
@@ -2171,8 +2194,8 @@ fn recapture_prompt_overlay(
         format!("Re-capture login for {}?", account.display_name),
         Some(format!(
             "Prime will close Riot Client, clear its current login and wait for you to sign in \
-             as {} again. Tick \u{201c}Stay signed in\u{201d}. If you sign in to a different \
-             Riot account, the saved login is left unchanged.",
+             as {} again. Tick \u{201c}Stay signed in\u{201d} before you sign in. If you sign in \
+             to a different Riot account, the saved login is left unchanged.",
             account.display_name
         )),
         Some(body),
