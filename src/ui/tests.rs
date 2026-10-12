@@ -7870,6 +7870,9 @@ fn fetch_latest_waits_for_its_lookup_and_the_shop_fills_the_page_without_a_versi
     let dir = tempdir().expect("temp dir");
     let (mut app, _, _) = two_account_app(dir.path());
     app.client_version_input.clear();
+    // Stable, without the interface refresh, keeps its line of text on the scrolling page.
+    assert!(!super::screens::fills_page(&app, super::Tab::Shop));
+    app.update_channel = Some(crate::updater::BETA_CHANNEL.to_string());
     assert!(super::screens::fills_page(&app, super::Tab::Shop));
 
     assert_eq!(app.update(Message::RefreshClientVersion).units(), 1);

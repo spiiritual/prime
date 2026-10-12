@@ -1110,7 +1110,8 @@ fn menu_divider() -> Element<'static, Message> {
 /// The page with no accounts yet: the three ways to add one.
 fn first_account(app: &PrimeApp) -> Element<'_, Message> {
     let capture_idle = !app.launcher_capture_in_progress && !app.launch_in_progress();
-    let capturing_current = app.launcher_capture_kind == Some(LauncherCaptureKind::Current);
+    let capturing_current =
+        app.refreshed() && app.launcher_capture_kind == Some(LauncherCaptureKind::Current);
 
     let intro = column![
         text("Add your first account")
@@ -1196,7 +1197,7 @@ fn first_account_option(
         (theme::RAISED, theme::TEXT)
     };
     let icon = match busy {
-        Some(frame) => spinner(frame, 17.0, icon_color),
+        Some(frame) => spinner(true, frame, 17.0, icon_color),
         None => theme::icon(icon, 17.0, icon_color),
     };
 

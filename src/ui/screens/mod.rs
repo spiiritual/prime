@@ -67,6 +67,9 @@ pub(super) fn side_nav(app: &PrimeApp, tab: Tab) -> Option<Element<'_, Message>>
 /// What Shop or Loadout shows instead of content it can't load yet: no account to load, or the
 /// Riot client version still missing.
 fn account_view_waiting<'a>(app: &PrimeApp, what: &str) -> Option<Element<'a, Message>> {
+    if !app.refreshed() {
+        return account_view_waiting_line(app, what);
+    }
     if app.state.accounts.is_empty() {
         return Some(empty_state(
             Icon::Users,
@@ -90,7 +93,7 @@ fn account_view_waiting<'a>(app: &PrimeApp, what: &str) -> Option<Element<'a, Me
     let retry = button(
         row![
             if fetching {
-                spinner(app.loading_frame, 14.0, theme::MUTED)
+                spinner(true, app.loading_frame, 14.0, theme::MUTED)
             } else {
                 theme::icon(Icon::RefreshCw, 14.0, theme::TEXT)
             },
@@ -123,8 +126,25 @@ fn account_view_waiting<'a>(app: &PrimeApp, what: &str) -> Option<Element<'a, Me
     ))
 }
 
-/// Shop and Loadout can't load: `account_view_waiting` shows instead, unless they already have
-/// something to show.
+/// Stable's `account_view_waiting`, without the interface refresh: one line of text.
+fn account_view_waiting_line(app: &PrimeApp, what: &str) -> Option<Element<'static, Message>> {
+    let line = if app.state.accounts.is_empty() {
+        format!("Add an account on the Accounts tab to see its {what}.")
+    } else if app.state.selected_account().is_none() {
+        format!("Select an account to see its {what}.")
+    } else if app.client_version_input.trim().is_empty() {
+        "Waiting for the Riot client version. Prime keeps retrying; you can also refresh it in Settings."
+            .to_string()
+    } else {
+        return None;
+    };
+
+    Some(text(line).into())
+}
+
+/// Shop and Loadout can't load: `account_view_waiting` shows a centred state instead, unless
+/// they already have something to show.
 fn account_view_blocked(app: &PrimeApp) -> bool {
-    app.state.selected_account().is_none() || app.client_version_input.trim().is_empty()
+    app.refreshed()
+        && (app.state.selected_account().is_none() || app.client_version_input.trim().is_empty())
 }

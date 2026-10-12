@@ -269,15 +269,17 @@ fn plain_button(label: &str) -> iced::widget::Button<'_, Message> {
     button(text(label).size(13).font(theme::SEMIBOLD_FONT)).padding([8, 14])
 }
 
-/// A button's label, or the spinner and `busy` while its work runs.
+/// A button's label, or the spinner and `busy` while its work runs. Without the interface
+/// refresh, `busy` alone.
 fn busy_label<'a>(
     app: &PrimeApp,
     busy: Option<&'a str>,
     idle: Element<'a, Message>,
 ) -> Element<'a, Message> {
     match busy {
+        Some(label) if !app.refreshed() => text(label).size(13).font(theme::SEMIBOLD_FONT).into(),
         Some(label) => row![
-            spinner(app.loading_frame, 14.0, theme::MUTED),
+            spinner(true, app.loading_frame, 14.0, theme::MUTED),
             text(label).size(13).font(theme::SEMIBOLD_FONT)
         ]
         .spacing(8)
