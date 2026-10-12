@@ -316,8 +316,14 @@ fn status_spinner_active(app: &PrimeApp) -> bool {
 /// Errors stay on screen, and progress stays until its result replaces it; other updates show
 /// briefly so actions still get feedback without cluttering the window.
 fn status_bar_visible(app: &PrimeApp) -> bool {
-    // The sign-in dialog shows its own progress.
-    if app.refreshed() && app.login_capture.is_some() && app.status.kind == StatusKind::Progress {
+    // The sign-in dialog shows its own progress; only warnings and errors show over it.
+    if app.refreshed()
+        && app.login_capture.is_some()
+        && matches!(
+            app.status.kind,
+            StatusKind::Progress | StatusKind::Info | StatusKind::Success
+        )
+    {
         return false;
     }
     status_visible_at(&app.status, app.status_changed_at, app.now)

@@ -7932,3 +7932,21 @@ fn switching_accounts_ends_the_progress_of_loads_it_drops() {
     let _ = app.update(Message::SelectAccount(alt.id));
     assert_ne!(app.status.kind, StatusKind::Progress);
 }
+
+#[test]
+fn a_dialog_that_opens_is_its_own_feedback_without_a_toast() {
+    let dir = tempdir().expect("temp dir");
+    let (mut app, first, _) = two_account_app(dir.path());
+
+    let _ = app.update(Message::AddAccount);
+    assert!(app.show_add_account_prompt);
+    assert!(!status_bar_visible(&app));
+    let _ = app.update(Message::CancelAddAccountCapture);
+
+    let _ = app.update(Message::RequestExportAccount(first.id));
+    let _ = app.update(Message::AccountExportPrepared(Ok(
+        super::AccountExportOutput::new(first.id, "Main".to_string(), "payload".to_string()),
+    )));
+    assert!(app.exported_account.is_some());
+    assert!(!status_bar_visible(&app));
+}
