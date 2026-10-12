@@ -62,6 +62,9 @@ fn image_viewer_enabled() -> bool {
     cfg!(feature = "image-viewer-testing")
 }
 
+/// Prime's one window size; only a fullscreen Aim Trainer run leaves it.
+const WINDOW_SIZE: Size = Size::new(1280.0, 840.0);
+
 pub fn run() -> iced::Result {
     let application = theme::FONTS.into_iter().fold(
         iced::application(PrimeApp::boot, PrimeApp::update, PrimeApp::view),
@@ -74,9 +77,9 @@ pub fn run() -> iced::Result {
         .theme(app_theme)
         .subscription(app_subscription)
         .window(window::Settings {
-            size: Size::new(1280.0, 840.0),
-            min_size: Some(Size::new(1280.0, 840.0)),
-            max_size: Some(Size::new(1280.0, 840.0)),
+            size: WINDOW_SIZE,
+            min_size: Some(WINDOW_SIZE),
+            max_size: Some(WINDOW_SIZE),
             resizable: false,
             exit_on_close_request: false,
             icon: window_icon(),

@@ -44,13 +44,31 @@ Loadout tab: equipped gun skins in the in-game collection order, and a Battle Pa
 the window: the tier reached, the pass's completion and a rail of chapters on top, the open chapter's
 rewards (the current one first; others' art loads when opened), and the next weapon skins ahead.
 
-Aim Trainer tab: WAIUA-style red dots that grow until they burst (health 100, a burst costs 15, a
-miss 5). The crosshair turns `0.07° × sens` per raw mouse count, read with Windows Raw Input
-(`src/raw_mouse.rs`) because iced drops winit's raw device events, so Windows pointer speed and
-acceleration don't matter. Dots sit where they would at VALORANT's 103° FOV on this monitor. During
-a run the cursor is hidden and held on one pixel; Esc, leaving the tab or game over end the run,
-focus loss pauses it. Sensitivity, DPI and one best run for the whole app are saved in
-`accounts.json` (`aim_trainer`).
+Aim Trainer tab: red dots that grow until they burst (health 100, a burst costs 15, a
+miss 5). The setup modal picks two things. Sensitivity: "VALORANT" turns `0.07° × sens` per raw
+mouse count, read with Windows Raw Input (`src/raw_mouse.rs`) because iced drops winit's raw device
+events, so Windows pointer speed and acceleration don't matter; "Windows" moves as the desktop
+cursor does. View: "3D" keeps the crosshair in the arena's centre and turns the view, as in game
+(a crosshair moving over a still view felt wrong at VALORANT's sensitivity); "2D" keeps the view
+still and moves the crosshair. Dots are fixed directions in the world, drawn through VALORANT's
+103° FOV on this monitor with true perspective, inside a faint grid room so turning doesn't feel
+like floating in a void; yaw turns freely and pitch stops at ±89°. In 3D dots appear only in a
+fixed zone straight ahead, half the view each way and outlined on the front wall, so none appears
+out of sight; in 2D they appear anywhere in the view. With raw counts the cursor is
+hidden and held on one pixel. Windows in 3D reads how far the cursor moved from the arena's centre
+on each raw packet and puts it back; a pixel turns the view by a pixel's angle at the centre.
+Windows in 2D is Windows' own crosshair cursor, kept inside the arena; a drawn one trailed it by
+frames. The reader sums counts and clicks and each frame takes them: a message per count rebuilt
+the whole UI up to 1000 times a second and starved the repaints. Clicks are tested where they
+happened: each raw click keeps the counts read before it and the frame applies them in order, and
+in 2D with the Windows cursor the arena tracks the cursor through each movement event, because
+iced gives every event in a batch the cursor from the batch's end. "Play
+fullscreen" makes runs borderless fullscreen with only the arena and scores; pausing or ending a
+run puts the window back to its fixed size. Esc, leaving the tab or game over end the run, focus
+loss pauses it. Difficulty sets how fast dots come: Easy, Normal (the default) and Hard keep at
+most 4, 6 and 11 on screen. Sensitivity, DPI, the three choices, fullscreen
+and one best run per difficulty for the whole app are saved in `accounts.json` (`aim_trainer`;
+`best` is Hard's, since it predates difficulties).
 
 Live Match: while the selected account is in agent select or a match, a sidebar indicator shows the
 map and score and opens the Live Match page (it has no nav item and no Launch button). The page
