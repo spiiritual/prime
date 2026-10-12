@@ -115,6 +115,10 @@ Experiments and run without them; beta starts with each on and a switch turns it
 `accounts.json` keeps the names switched off (`disabled_experiments`), so a name a build doesn't
 know is ignored and kept. Each name is a constant in `storage.rs`; `PrimeApp::experiment` checks one.
 
+- `aim-trainer-modes`: the Aim Trainer's Sensitivity and View choices.
+- `interface-refresh` (`PrimeApp::refreshed`): Lucide's loader as the one spinner (stable keeps the
+  dot grid).
+
 One instance: starting Prime while it runs, even from the tray, brings the running window forward
 and the new start exits (`single_instance.rs`). Debug builds use their own name, so `cargo run`
 works beside an installed Prime.

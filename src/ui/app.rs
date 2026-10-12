@@ -3626,6 +3626,11 @@ impl PrimeApp {
         self.experiments_shown() && !self.state.disabled_experiments.contains(name)
     }
 
+    /// The interface refresh experiment: beta's new look for spinners, dialogs and placeholders.
+    pub(super) fn refreshed(&self) -> bool {
+        self.experiment(crate::storage::INTERFACE_REFRESH_EXPERIMENT)
+    }
+
     pub(super) fn save_task(&self) -> Task<Message> {
         let repo = self.repo.clone();
         let snapshot = match self.state_to_save() {

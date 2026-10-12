@@ -6,7 +6,7 @@ use iced::widget::operation::{AbsoluteOffset, scroll_to};
 use iced::widget::{checkbox, column, container, row, space, stack};
 use iced::{Color, Element, Length, Padding, Rectangle, Task, Theme, Vector, alignment};
 
-use crate::storage::AIM_MODES_EXPERIMENT;
+use crate::storage::{AIM_MODES_EXPERIMENT, INTERFACE_REFRESH_EXPERIMENT};
 use crate::ui::components::{anchored_popover, card_style};
 use crate::ui::data::live_match::{LIVE_MATCH_WEAPON_GROUPS, shown_weapons, weapon_name};
 use crate::ui::data::{format_bytes, typed_riot_client_path};
@@ -86,11 +86,18 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
             section(
                 SettingsSection::Experiments,
                 "Beta features still being worked on, on until you switch them off. Each can                  change or go away.",
-                checkbox(app.experiment(AIM_MODES_EXPERIMENT))
-                    .label("Aim Trainer: 3D view and Windows sensitivity")
-                    .on_toggle(|on| Message::ExperimentToggled(AIM_MODES_EXPERIMENT, on))
-                    .text_size(13)
-                    .into(),
+                column![
+                    checkbox(app.experiment(AIM_MODES_EXPERIMENT))
+                        .label("Aim Trainer: 3D view and Windows sensitivity")
+                        .on_toggle(|on| Message::ExperimentToggled(AIM_MODES_EXPERIMENT, on))
+                        .text_size(13),
+                    checkbox(app.refreshed())
+                        .label("Interface refresh: new spinner, sign-in dialog and placeholders")
+                        .on_toggle(|on| Message::ExperimentToggled(INTERFACE_REFRESH_EXPERIMENT, on))
+                        .text_size(13),
+                ]
+                .spacing(12)
+                .into(),
             )
         } else {
             space().into()

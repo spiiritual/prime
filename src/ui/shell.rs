@@ -10,7 +10,7 @@ use crate::riot::chat_proxy::PresenceStatus;
 
 use super::components::{
     account_avatar, anchored_popover, anchored_popover_above, balances_unavailable,
-    currency_balance_display, spinner, wallet_skeleton,
+    currency_balance_display, loading_indicator, spinner, wallet_skeleton,
 };
 use super::data::account_details::{AccountAvailability, Busy};
 use super::data::live_match::{MatchPhase, indicator_detail};
@@ -163,7 +163,11 @@ impl PrimeApp {
         if super::image_viewer_enabled()
             && let Some(image) = &self.image_viewer
         {
-            layers = layers.push(image_viewer_overlay(image, self.loading_frame));
+            layers = layers.push(image_viewer_overlay(
+                image,
+                self.loading_frame,
+                self.refreshed(),
+            ));
         }
         layers.into()
     }
@@ -627,7 +631,11 @@ impl PrimeApp {
     fn status_toast(&self) -> Element<'_, Message> {
         let kind = self.status.kind;
         let lead = if status_spinner_active(self) {
-            spinner(self.loading_frame, 15.0, theme::MUTED)
+            if self.refreshed() {
+                spinner(true, self.loading_frame, 15.0, theme::MUTED)
+            } else {
+                loading_indicator(self.loading_frame)
+            }
         } else {
             match kind {
                 StatusKind::Error => theme::icon(theme::Icon::TriangleAlert, 15.0, theme::ACCENT),
@@ -1546,7 +1554,7 @@ fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> El
             ),
             container(
                 row![
-                    spinner(app.loading_frame, 14.0, theme::MUTED),
+                    spinner(app.refreshed(), app.loading_frame, 14.0, theme::MUTED),
                     text("Waiting for login")
                         .size(13)
                         .font(theme::BOLD_FONT)
@@ -1586,16 +1594,21 @@ fn capture_step<'a>(
                 .border(iced::border::rounded(12))
             })
             .into(),
-        CaptureStep::Active => container(spinner(app.loading_frame, 13.0, theme::ACCENT))
-            .center(24)
-            .style(|_| {
-                filled(theme::ACCENT_SOFT).border(iced::Border {
-                    color: theme::ACCENT,
-                    width: 1.0,
-                    radius: 12.0.into(),
-                })
+        CaptureStep::Active => container(spinner(
+            app.refreshed(),
+            app.loading_frame,
+            13.0,
+            theme::ACCENT,
+        ))
+        .center(24)
+        .style(|_| {
+            filled(theme::ACCENT_SOFT).border(iced::Border {
+                color: theme::ACCENT,
+                width: 1.0,
+                radius: 12.0.into(),
             })
-            .into(),
+        })
+        .into(),
         CaptureStep::Pending => container(space())
             .center(24)
             .style(|_| filled(theme::RAISED).border(iced::border::rounded(12)))
@@ -2177,10 +2190,15 @@ fn app_update_changelog(changelog: &str) -> Element<'_, Message> {
 fn image_viewer_overlay(
     image_to_view: &ImageViewerImage,
     loading_frame: usize,
+    refresh: bool,
 ) -> Element<'_, Message> {
     let status: Element<_> = if image_to_view.high_res_loading {
         row![
-            spinner(loading_frame, 15.0, theme::MUTED),
+            if refresh {
+                spinner(true, loading_frame, 15.0, theme::MUTED)
+            } else {
+                loading_indicator(loading_frame)
+            },
             text("Loading full image").size(13)
         ]
         .spacing(8)

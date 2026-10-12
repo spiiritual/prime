@@ -92,14 +92,14 @@ pub(in crate::ui) fn header_actions(app: &PrimeApp) -> Element<'_, Message> {
         header_button(
             Icon::LogIn,
             "Add current",
-            capturing(LauncherCaptureKind::Current).then_some(app.loading_frame),
+            capturing(LauncherCaptureKind::Current).then_some((app.refreshed(), app.loading_frame)),
             capture_idle.then_some(Message::AddCurrentAccount),
             false,
         ),
         header_button(
             Icon::Plus,
             "Add account",
-            capturing(LauncherCaptureKind::New).then_some(app.loading_frame),
+            capturing(LauncherCaptureKind::New).then_some((app.refreshed(), app.loading_frame)),
             capture_idle.then_some(Message::AddAccount),
             true,
         ),
@@ -112,7 +112,8 @@ pub(in crate::ui) fn header_actions(app: &PrimeApp) -> Element<'_, Message> {
 fn header_button(
     icon: Icon,
     label: &'static str,
-    capturing: Option<usize>,
+    // The interface refresh experiment and the loading frame while its capture runs.
+    capturing: Option<(bool, usize)>,
     on_press: Option<Message>,
     primary: bool,
 ) -> Element<'static, Message> {
@@ -126,7 +127,7 @@ fn header_button(
         (false, false) => theme::FAINT,
     };
     let lead = match capturing {
-        Some(frame) => spinner(frame, 15.0, color),
+        Some((refresh, frame)) => spinner(refresh, frame, 15.0, color),
         None => theme::icon(icon, 15.0, color),
     };
 
@@ -391,7 +392,7 @@ fn launch_button<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<
 
     let busy = busy_label.is_some();
     let lead = if busy {
-        spinner(app.loading_frame, 18.0, theme::BG)
+        spinner(app.refreshed(), app.loading_frame, 18.0, theme::BG)
     } else {
         let alpha = if blocked { 0.4 } else { 1.0 };
         theme::icon(
@@ -899,7 +900,7 @@ fn status_cell<'a>(app: &'a PrimeApp, account: &'a AccountProfile) -> Element<'a
 
     if app.profile_identity_refreshing.contains(&account.id) {
         return line(
-            spinner(app.loading_frame, 14.0, theme::MUTED),
+            spinner(app.refreshed(), app.loading_frame, 14.0, theme::MUTED),
             "Refreshing…".to_string(),
             theme::MUTED,
         );
