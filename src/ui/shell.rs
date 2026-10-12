@@ -109,11 +109,15 @@ impl PrimeApp {
                     self.app_update_status.prompt_update()?,
                     self.work_blocking_update(),
                 ),
-                Dialog::BundleDetails => super::screens::bundle_details(
-                    self.store_summary.as_ref()?,
-                    self.open_bundle_details()?,
-                    self.now,
-                ),
+                Dialog::BundleDetails => {
+                    let bundle = self.open_bundle_details()?;
+                    super::screens::bundle_details(
+                        self.store_summary.as_ref()?,
+                        bundle,
+                        self.bundle_art_loading.as_ref() == Some(&bundle.store_id),
+                        self.now,
+                    )
+                }
             };
             // Clicking beside bundle details closes them; other dialogs need a choice.
             let backdrop_press =

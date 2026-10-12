@@ -869,13 +869,15 @@ fn with_rank_error<'a>(
     tooltip(content, tip, tooltip::Position::Top).into()
 }
 
-fn rank_icon(path: Option<&std::path::PathBuf>, size: f32) -> Option<Element<'static, Message>> {
-    path.map(|path| {
-        image(Handle::from_path(path.clone()))
+/// The rank's icon, or its empty slot while the icon downloads, so the label doesn't move.
+fn rank_icon(path: Option<&std::path::PathBuf>, size: f32) -> Element<'static, Message> {
+    match path {
+        Some(path) => image(Handle::from_path(path.clone()))
             .width(size)
             .height(size)
-            .into()
-    })
+            .into(),
+        None => space().width(size).height(size).into(),
+    }
 }
 
 fn level_cell(app: &PrimeApp, account: &AccountProfile) -> Element<'static, Message> {

@@ -197,8 +197,14 @@ fn background_refresh_active(app: &PrimeApp) -> bool {
 
 /// Whether a spinner is on screen. Loads that show skeletons or nothing, such as Shop, Loadout and
 /// account details, don't count, since each tick rebuilds the whole window.
+/// Live Match is fetching the names players hide, after "Show hidden details" or on a poll.
+fn hidden_names_loading(app: &PrimeApp) -> bool {
+    app.show_hidden_details && app.live_match_request.is_some()
+}
+
 fn loading_indicator_active(app: &PrimeApp) -> bool {
     !app.profile_identity_refreshing.is_empty()
+        || app.active_tab == Tab::LiveMatch && hidden_names_loading(app)
         || app.launcher_capture_in_progress
         || app.launch_preflight_account.is_some()
         || app.launching_account.is_some()
@@ -493,6 +499,10 @@ struct PrimeApp {
     /// A Settings "Fetch latest" or Shop "Try again" client version lookup is running.
     client_version_fetching: bool,
     account_export_in_progress: bool,
+    /// Whether `image_cache_usage` has been measured yet.
+    image_cache_measured: bool,
+    /// The bundle whose details are open while their item art downloads.
+    bundle_art_loading: Option<String>,
     loading_frame: usize,
     now: iced::time::Instant,
 }

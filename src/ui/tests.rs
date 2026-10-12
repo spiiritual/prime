@@ -6559,6 +6559,8 @@ fn a_bundles_item_art_loads_when_its_details_open_and_a_shop_reset_closes_them()
 
     let task = app.update(Message::ShowBundleDetails("bundle".to_string()));
     assert_eq!(task.units(), 1);
+    // Its art shows as grey blocks until it arrives.
+    assert_eq!(app.bundle_art_loading.as_deref(), Some("bundle"));
 
     let mut items = app.open_bundle_details().expect("open").items.clone();
     let art = dir.path().join("art.png");
@@ -6566,6 +6568,7 @@ fn a_bundles_item_art_loads_when_its_details_open_and_a_shop_reset_closes_them()
         skin.cached_icon = Some(art.clone());
     }
     let _ = app.update(Message::BundleItemArtLoaded("bundle".to_string(), items));
+    assert_eq!(app.bundle_art_loading, None);
     assert_eq!(
         app.open_bundle_details().expect("open").items[0].cached_icon(),
         Some(&art)

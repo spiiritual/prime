@@ -415,14 +415,20 @@ pub(super) fn asset_background_image<'a>(
     }
 }
 
+/// Art that doesn't exist, or that couldn't be downloaded.
 fn no_image_placeholder<'a>(height: impl Into<Length>) -> Element<'a, Message> {
-    container(text("No image").size(13))
-        .width(Length::Fill)
-        .height(height)
-        .align_x(alignment::Horizontal::Center)
-        .align_y(alignment::Vertical::Center)
-        .style(iced::widget::container::rounded_box)
-        .into()
+    container(
+        column![
+            theme::icon(theme::Icon::ImageOff, 18.0, theme::FAINT),
+            text("No image").size(12).color(theme::FAINT),
+        ]
+        .spacing(6)
+        .align_x(alignment::Horizontal::Center),
+    )
+    .center_x(Length::Fill)
+    .center_y(height)
+    .style(|_| card_style(8.0))
+    .into()
 }
 
 fn preview_image_button<'a>(
@@ -887,14 +893,14 @@ pub(super) fn balances_unavailable<'a>() -> Element<'a, Message> {
 }
 
 /// Skeleton pills in the wallet's place while the shop loads.
+/// The wallet's box while it loads, with a block for each balance chip.
 pub(super) fn wallet_skeleton<'a>() -> Element<'a, Message> {
-    row![
-        skeleton(92, 34.0, 8.0, 1.0),
-        skeleton(64, 34.0, 8.0, 1.0),
-        skeleton(84, 34.0, 8.0, 1.0),
-    ]
-    .spacing(8)
-    .into()
+    let chip = |width| container(skeleton(width, 13.0, 4.0, 1.0)).padding([8, 12]);
+
+    container(row![chip(56), chip(44), chip(60)].spacing(4))
+        .padding(4)
+        .style(|_| card_style(10.0))
+        .into()
 }
 
 fn currency_balance_row<'a>(balances: &'a [CurrencyBalanceDisplay]) -> Element<'a, Message> {
@@ -904,14 +910,7 @@ fn currency_balance_row<'a>(balances: &'a [CurrencyBalanceDisplay]) -> Element<'
         row = row.push(currency_balance_chip(balance));
     }
 
-    container(row)
-        .padding(4)
-        .style(|theme| {
-            let mut style = iced::widget::container::bordered_box(theme);
-            style.border.radius = 10.0.into();
-            style
-        })
-        .into()
+    container(row).padding(4).style(|_| card_style(10.0)).into()
 }
 
 /// A currency's short name and colour. The wallet already names its currencies VP, Radianite and

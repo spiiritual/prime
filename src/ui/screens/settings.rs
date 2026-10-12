@@ -592,11 +592,12 @@ fn storage_controls(app: &PrimeApp) -> Element<'_, Message> {
         row![
             text("Image cache").size(13).font(theme::SEMIBOLD_FONT),
             space().width(Length::Fill),
-            text(format!(
-                "{} · {} {images}",
-                format_bytes(usage.bytes),
-                usage.files
-            ))
+            // A made-up zero would show until the cache is measured.
+            text(if app.image_cache_measured {
+                format!("{} · {} {images}", format_bytes(usage.bytes), usage.files)
+            } else {
+                "\u{2014}".to_string()
+            })
             .size(12)
             .font(theme::MONO_FONT)
             .line_height(theme::MONO_LINE_HEIGHT)

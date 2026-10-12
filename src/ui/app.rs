@@ -148,6 +148,8 @@ impl PrimeApp {
                 image_cache_clearing: false,
                 client_version_fetching: false,
                 account_export_in_progress: false,
+                image_cache_measured: false,
+                bundle_art_loading: None,
                 loading_frame: 0,
                 now: iced::time::Instant::now(),
             },
@@ -2208,15 +2210,20 @@ impl PrimeApp {
                 if bundle.items.iter().all(|item| item.cached_icon().is_some()) {
                     return Task::none();
                 }
+                let items = bundle.items.clone();
+                self.bundle_art_loading = Some(store_id.clone());
                 Task::perform(
                     super::data::image_assets::cache_bundle_item_images(
-                        bundle.items.clone(),
+                        items,
                         self.image_cache.clone(),
                     ),
                     move |items| Message::BundleItemArtLoaded(store_id.clone(), items),
                 )
             }
             Message::BundleItemArtLoaded(store_id, items) => {
+                if self.bundle_art_loading.as_ref() == Some(&store_id) {
+                    self.bundle_art_loading = None;
+                }
                 if let Some(bundle) = self.store_summary.as_mut().and_then(|summary| {
                     summary
                         .featured_bundles
@@ -2939,6 +2946,7 @@ impl PrimeApp {
         match result {
             Ok(usage) => {
                 self.image_cache_usage = usage;
+                self.image_cache_measured = true;
             }
             Err(error) => {
                 self.set_status(Status::error(format!(
