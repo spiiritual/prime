@@ -142,6 +142,7 @@ impl PrimeApp {
                 dialog_closed_at: None,
                 app_update_status: AppUpdateStatus::Checking,
                 app_update_checked_at: Some(iced::time::Instant::now()),
+                update_channel: crate::updater::current_channel(),
                 image_cache_usage: CacheUsage::default(),
                 image_cache_clearing: false,
                 loading_frame: 0,
@@ -155,7 +156,7 @@ impl PrimeApp {
                 ),
                 fetch_client_version_task(false),
                 cache_rank_icons_task(&image_cache_for_ranks),
-                update_check_task(false),
+                update_check_task(false, None),
                 Task::perform(
                     async move {
                         cache_for_size
@@ -1308,7 +1309,7 @@ impl PrimeApp {
                 {
                     self.app_update_status = AppUpdateStatus::Checking;
                     self.app_update_checked_at = Some(iced::time::Instant::now());
-                    update_check_task(false)
+                    update_check_task(false, None)
                 } else {
                     Task::none()
                 };
@@ -1364,6 +1365,18 @@ impl PrimeApp {
                 self.state.chat_proxy = enabled;
                 if !self.status_control_visible() {
                     self.status_menu_open = false;
+                }
+                self.save_task()
+            }
+            Message::ExperimentToggled(name, enabled) => {
+                // Loading accounts.json would undo a change made before it arrives.
+                if !self.accounts_loaded {
+                    return Task::none();
+                }
+                if enabled {
+                    self.state.disabled_experiments.remove(name);
+                } else {
+                    self.state.disabled_experiments.insert(name.to_string());
                 }
                 self.save_task()
             }
@@ -2644,7 +2657,8 @@ impl PrimeApp {
                     Task::none()
                 }
             },
-            Message::CheckForAppUpdate => self.check_for_app_update(),
+            Message::CheckForAppUpdate => self.check_for_app_update(None),
+            Message::SwitchUpdateChannel(channel) => self.check_for_app_update(Some(channel)),
             Message::AppUpdateChecked {
                 user_requested,
                 result,
@@ -2666,14 +2680,14 @@ impl PrimeApp {
         }
     }
 
-    fn check_for_app_update(&mut self) -> Task<Message> {
+    fn check_for_app_update(&mut self, switch_to: Option<&'static str>) -> Task<Message> {
         if self.app_update_status.is_busy() {
             return Task::none();
         }
 
         self.app_update_status = AppUpdateStatus::Checking;
         self.set_status(Status::progress("Checking for Prime updates"));
-        update_check_task(true)
+        update_check_task(true, switch_to)
     }
 
     fn handle_app_update_checked(
@@ -2698,6 +2712,17 @@ impl PrimeApp {
                 if user_requested {
                     self.set_status(Status::info(self.app_update_status.label()));
                 }
+            }
+            Ok(UpdateCheckOutcome::ChannelEmpty(channel)) => {
+                self.app_update_status = AppUpdateStatus::UpToDate;
+                let name = if channel == crate::updater::BETA_CHANNEL {
+                    "beta"
+                } else {
+                    "stable"
+                };
+                self.set_status(Status::info(format!(
+                    "No {name} version is out yet, so Prime stays as it is"
+                )));
             }
             Ok(UpdateCheckOutcome::UpToDate) => {
                 self.app_update_status = AppUpdateStatus::UpToDate;
@@ -3566,6 +3591,16 @@ impl PrimeApp {
         Ok(self.state.clone())
     }
 
+    /// Experiments are for beta: other builds don't show them and run without them.
+    pub(super) fn experiments_shown(&self) -> bool {
+        self.update_channel.as_deref() == Some(crate::updater::BETA_CHANNEL)
+    }
+
+    /// Beta starts with every experiment on; testers can switch each off in Settings.
+    pub(super) fn experiment(&self, name: &str) -> bool {
+        self.experiments_shown() && !self.state.disabled_experiments.contains(name)
+    }
+
     pub(super) fn save_task(&self) -> Task<Message> {
         let repo = self.repo.clone();
         let snapshot = match self.state_to_save() {
@@ -4218,8 +4253,8 @@ fn fetch_client_version_task(user_requested: bool) -> Task<Message> {
 /// The least time between update checks when the window comes back.
 const REOPEN_UPDATE_CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
-fn update_check_task(user_requested: bool) -> Task<Message> {
-    Task::perform(check_for_update(), move |result| {
+fn update_check_task(user_requested: bool, switch_to: Option<&'static str>) -> Task<Message> {
+    Task::perform(check_for_update(switch_to), move |result| {
         Message::AppUpdateChecked {
             user_requested,
             result: result.map_err(|error| error.to_string()),

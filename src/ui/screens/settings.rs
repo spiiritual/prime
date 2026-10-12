@@ -6,12 +6,14 @@ use iced::widget::operation::{AbsoluteOffset, scroll_to};
 use iced::widget::{checkbox, column, container, row, space, stack};
 use iced::{Color, Element, Length, Padding, Rectangle, Task, Theme, Vector, alignment};
 
+use crate::storage::AIM_MODES_EXPERIMENT;
 use crate::ui::components::{anchored_popover, card_style};
 use crate::ui::data::live_match::{LIVE_MATCH_WEAPON_GROUPS, shown_weapons, weapon_name};
 use crate::ui::data::{format_bytes, typed_riot_client_path};
 use crate::ui::shell::popover_style;
 use crate::ui::theme::{self, Icon, button, text};
 use crate::ui::{AppUpdateStatus, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, SettingsSection};
+use crate::updater::{BETA_CHANNEL, STABLE_CHANNEL};
 
 const SECTION_NAV_WIDTH: f32 = 170.0;
 const KEY_WIDTH: f32 = 110.0;
@@ -26,6 +28,7 @@ const CURRENT_PILL_BORDER: Color = iced::color!(0xFF4F5E, 0x55 as f32 / 255.0);
 pub(super) fn section_nav(app: &PrimeApp) -> Element<'_, Message> {
     SettingsSection::ALL
         .into_iter()
+        .filter(|section| *section != SettingsSection::Experiments || app.experiments_shown())
         .fold(column![].spacing(2), |nav, section| {
             nav.push(section_nav_item(section, app.settings_section == section))
         })
@@ -75,8 +78,23 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         section(
             SettingsSection::Updates,
             "Prime checks for new releases on startup and when its window is opened again.",
-            update_controls(app),
+            column![update_controls(app), channel_controls(app)]
+                .spacing(12)
+                .into(),
         ),
+        if app.experiments_shown() {
+            section(
+                SettingsSection::Experiments,
+                "Beta features still being worked on, on until you switch them off. Each can                  change or go away.",
+                checkbox(app.experiment(AIM_MODES_EXPERIMENT))
+                    .label("Aim Trainer: 3D view and Windows sensitivity")
+                    .on_toggle(|on| Message::ExperimentToggled(AIM_MODES_EXPERIMENT, on))
+                    .text_size(13)
+                    .into(),
+            )
+        } else {
+            space().into()
+        },
         section(
             SettingsSection::Advanced,
             "Import a Riot web redirect token for API access when a captured launcher session \
@@ -95,6 +113,7 @@ fn section_id(section: SettingsSection) -> Id {
         SettingsSection::LiveMatch => "settings-live-match",
         SettingsSection::Storage => "settings-storage",
         SettingsSection::Updates => "settings-updates",
+        SettingsSection::Experiments => "settings-experiments",
         SettingsSection::Advanced => "settings-advanced",
     })
 }
@@ -711,6 +730,41 @@ fn update_controls(app: &PrimeApp) -> Element<'_, Message> {
             .width(Length::Fill),
         plain_button("Check for updates").on_press_maybe(
             (!app.app_update_status.is_busy()).then_some(Message::CheckForAppUpdate)
+        )
+    ]
+    .spacing(12)
+    .align_y(alignment::Vertical::Center)
+    .into()
+}
+
+/// Beta gets new versions first. Joining or leaving checks the other channel; its latest release
+/// shows as an update to install, older or not. Outside an install, such as `cargo run`, it shows
+/// stable and can't switch.
+fn channel_controls(app: &PrimeApp) -> Element<'_, Message> {
+    let beta = app.update_channel.as_deref() == Some(BETA_CHANNEL);
+    let switching = app
+        .app_update_status
+        .pending_update()
+        .and_then(|update| update.switch_to());
+    let label = match switching {
+        Some(BETA_CHANNEL) => "Download & restart above to finish joining beta.",
+        Some(_) => "Download & restart above to finish going back to stable.",
+        None if beta => "You get beta versions, which have new features first and may have bugs.",
+        None => "Get beta versions to try new features first. They may have bugs.",
+    };
+    let (action, switch_to) = if beta {
+        ("Go back to stable", STABLE_CHANNEL)
+    } else {
+        ("Join beta", BETA_CHANNEL)
+    };
+
+    row![
+        text(label).size(13).color(theme::MUTED).width(Length::Fill),
+        plain_button(action).on_press_maybe(
+            (app.update_channel.is_some()
+                && switching.is_none()
+                && !app.app_update_status.is_busy())
+            .then_some(Message::SwitchUpdateChannel(switch_to))
         )
     ]
     .spacing(12)

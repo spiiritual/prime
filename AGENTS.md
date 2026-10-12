@@ -10,11 +10,12 @@ cargo run                                  # run the app
 cargo test                                 # run the tests
 cargo clippy --all-targets                 # lint; keep it clean
 gh workflow run release.yml -f bump=patch   # release from GitHub Actions (see below)
+gh workflow run release.yml -f channel=beta # a beta, for people who joined beta only
 .\scripts\release.ps1 -UseGeneratedNotes -Publish   # the same release from this PC
 ```
 
 GitHub Actions: `ci.yml` runs clippy (warnings denied) and the tests on pushes to master and on PRs.
-`release.yml` (run by hand; inputs `bump`, `version`, `notes`) downloads the latest release so Velopack
+`release.yml` (run by hand; inputs `channel`, `bump`, `version`, `notes`) downloads the latest release so Velopack
 can build a delta, then runs `scripts/release.ps1 -Publish`, which pushes the release commit and tag to
 master. Pull afterwards. Dependabot opens one grouped Cargo PR weekly and Actions bumps monthly.
 
@@ -45,7 +46,9 @@ the window: the tier reached, the pass's completion and a rail of chapters on to
 rewards (the current one first; others' art loads when opened), and the next weapon skins ahead.
 
 Aim Trainer tab: red dots that grow until they burst (health 100, a burst costs 15, a
-miss 5). The setup modal picks two things. Sensitivity: "VALORANT" turns `0.07° × sens` per raw
+miss 5). The Sensitivity and View choices are a beta experiment (Settings > Experiments);
+without it, as in stable, runs use VALORANT sensitivity and the 2D view, as the trainer first shipped,
+and the saved choices come back when it's switched on. The setup modal picks two things. Sensitivity: "VALORANT" turns `0.07° × sens` per raw
 mouse count, read with Windows Raw Input (`src/raw_mouse.rs`) because iced drops winit's raw device
 events, so Windows pointer speed and acceleration don't matter; "Windows" moves as the desktop
 cursor does. View: "3D" keeps the crosshair in the arena's centre and turns the view, as in game
@@ -100,8 +103,13 @@ so Riot's server never sees it.
 
 Settings tab: Riot Client path, "keep in the system tray when closed" (on by default; while minimized or in the tray it
 polls every 30 minutes so sessions keep refreshing; the tray menu quits), Live Match's skin columns, client version
-(fetched at startup), image cache size and clearing, app updates, and a Riot redirect-token import as an
-advanced fallback for API access.
+(fetched at startup), image cache size and clearing, app updates, experiments, and a Riot redirect-token
+import as an advanced fallback for API access.
+
+Experiments: features still being tried, for beta only. Stable builds don't show Settings >
+Experiments and run without them; beta starts with each on and a switch turns it off.
+`accounts.json` keeps the names switched off (`disabled_experiments`), so a name a build doesn't
+know is ignored and kept. Each name is a constant in `storage.rs`; `PrimeApp::experiment` checks one.
 
 One instance: starting Prime while it runs, even from the tray, brings the running window forward
 and the new start exits (`single_instance.rs`). Debug builds use their own name, so `cargo run`
@@ -111,6 +119,15 @@ Updates: Velopack checks the GitHub releases of `spiiritual/prime` at startup an
 window comes back from the tray or a second start (at most every 10 minutes), unless an update
 prompt was dismissed. `PRIME_UPDATE_SOURCE` and
 `PRIME_UPDATE_CHANNEL` override the source and channel.
+
+Beta: Velopack keeps one feed per channel, stable's `win` and `beta`, and an installed copy follows
+the channel it was packaged for, so nothing is saved for it. Settings > Updates has "Join beta" or
+"Go back to stable", which checks the other channel and offers its latest release, older or not.
+Betas are versioned `x.y.z-beta.N` (before `x.y.z`) and published as GitHub pre-releases, packaged
+for beta only. Each stable release is packaged for both, so beta never falls behind, except a
+hotfix while beta is ahead, which a channel can't take and the next beta carries. Velopack reads
+only the 10 newest GitHub releases, so stable checks skip pre-releases. Features not ready for
+stable stay behind an experiment.
 
 ## Feature flags
 
@@ -140,8 +157,11 @@ Local data: `%APPDATA%\spiiritual\prime\config\` holds `accounts.json`, `launche
 The chat proxy's certificate is cached in `%LOCALAPPDATA%\spiiritual\prime\cache\chat-proxy-localhost.pfx`
 and downloaded again when it's missing, unreadable, out of date or 30 days old (an in-date copy
 is kept if that download fails).
-`accounts.json` rejects unknown fields, so a build older than a setting it holds can't load it.
-Settings left at their default aren't written, which keeps that rare.
+`accounts.json` and settings profiles keep fields this build doesn't know (`UnknownFields`,
+flattened into every saved struct) and write them back unchanged, so
+an older build, or stable after a beta, loads a newer file and loses nothing. A new saved struct
+needs an `unknown` too. Imported accounts drop theirs. Settings left at their default aren't
+written.
 
 ## Rules
 

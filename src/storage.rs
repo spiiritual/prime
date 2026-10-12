@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -14,7 +15,6 @@ use crate::riot::chat_proxy::PresenceStatus;
 const STORAGE_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct StoredState {
     pub version: u32,
     pub accounts: Vec<AccountProfile>,
@@ -41,7 +41,30 @@ pub struct StoredState {
     /// The Aim Trainer's settings and best runs. Left out until one is set.
     #[serde(default, skip_serializing_if = "AimTrainerState::is_default")]
     pub aim_trainer: AimTrainerState,
+    /// The experiments a beta tester switched off in Settings, by name; beta starts with every
+    /// one on. A name this build doesn't know is kept and ignored.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub disabled_experiments: BTreeSet<String>,
+    #[serde(flatten)]
+    pub unknown: UnknownFields,
 }
+
+/// Fields a newer Prime wrote that this build doesn't know, such as a beta's settings. They're
+/// kept and written back as they were, so going back a version loses nothing. `Debug` shows only
+/// their names, since a newer build may keep tokens in them.
+#[derive(Clone, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct UnknownFields(serde_json::Map<String, serde_json::Value>);
+
+impl std::fmt::Debug for UnknownFields {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_set().entries(self.0.keys()).finish()
+    }
+}
+
+/// The new Aim Trainer modes: the Sensitivity and View choices, 3D included. Off, as in stable,
+/// runs use VALORANT sensitivity and the 2D crosshair, as the trainer first shipped.
+pub const AIM_MODES_EXPERIMENT: &str = "aim-trainer-modes";
 
 fn minimize_on_close_default() -> bool {
     true
@@ -63,6 +86,8 @@ impl Default for StoredState {
             presence_status: PresenceStatus::default(),
             chat_proxy: chat_proxy_default(),
             aim_trainer: AimTrainerState::default(),
+            disabled_experiments: BTreeSet::new(),
+            unknown: UnknownFields::default(),
         }
     }
 }
@@ -493,6 +518,7 @@ mod tests {
             sensitivity: Some(0.34),
             dpi: Some(1600),
             finished_at_unix: 1_791_331_200,
+            unknown: Default::default(),
         });
         repo.save(&state).expect("save");
         assert_eq!(repo.load().expect("load").aim_trainer, state.aim_trainer);
@@ -628,46 +654,30 @@ mod tests {
     }
 
     #[test]
-    fn rejects_legacy_accounts_with_region_and_notes() {
+    fn keeps_fields_a_newer_build_wrote() {
         let account = AccountProfile::new("Main", Shard::Na).expect("account");
-        let raw = serde_json::json!({
-            "version": 1,
-            "accounts": [{
-                "id": account.id,
-                "display_name": "Main",
-                "username": "player",
-                "puuid": "puuid-a",
-                "game_name": "Player",
-                "tag_line": "NA1",
-                "region": "latam",
-                "shard": "na",
-                "session": null,
-                "launcher_session": null,
-                "competitive_rank": {
-                    "tier": 15,
-                    "rank_name": "Gold 1",
-                    "ranked_rating": 42
-                },
-                "account_level": 123,
-                "notes": "old local notes"
-            }],
-            "selected_account": account.id,
-            "riot_client_path": null
-        });
+        let mut raw = serde_json::to_value(StoredState {
+            selected_account: Some(account.id),
+            accounts: vec![account],
+            ..StoredState::default()
+        })
+        .expect("state json");
+        raw["beta_setting"] = serde_json::json!({ "token": "secret" });
+        raw["accounts"][0]["beta_account_field"] = serde_json::json!(7);
+        raw["aim_trainer"] = serde_json::json!({ "beta_mode": "4d" });
         let dir = tempdir().expect("temp dir");
         let path = dir.path().join("accounts.json");
-        fs::write(&path, serde_json::to_string_pretty(&raw).unwrap()).expect("write");
-        let repo = AccountRepository::new(path);
+        fs::write(&path, raw.to_string()).expect("write");
+        let repo = AccountRepository::new(path.clone());
 
-        let error = repo.load().expect_err("legacy state is rejected");
+        let state = repo.load().expect("a newer build's file loads");
+        repo.save(&state).expect("save");
 
-        match error {
-            StorageError::Json(error) => {
-                let message = error.to_string();
-                assert!(message.contains("unknown field"), "{message}");
-            }
-            other => panic!("expected JSON schema error, got {other:?}"),
-        }
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("saved json");
+        assert_eq!(saved, raw, "written back as they were");
+        let debug = format!("{state:?}");
+        assert!(debug.contains("beta_setting") && !debug.contains("secret"));
     }
 
     #[test]

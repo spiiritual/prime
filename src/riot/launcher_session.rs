@@ -63,6 +63,7 @@ pub fn capture_launcher_session_from_data_dir(
             // Riot Client does not persist the account PUUID in this file; the UI resolves it
             // through launcher reauth before saving the backup to an account profile.
             puuid: String::new(),
+            unknown: Default::default(),
         },
     })
 }
@@ -121,6 +122,7 @@ pub fn sync_launcher_session_backup_from_data_dir(
         data_dir: backup.data_dir.clone(),
         captured_at_unix: OffsetDateTime::now_utc().unix_timestamp(),
         puuid: backup.puuid.clone(),
+        unknown: Default::default(),
     })
 }
 
@@ -453,6 +455,7 @@ rso-authenticator:
             data_dir: data_dir.to_path_buf(),
             captured_at_unix: 100,
             puuid: "puuid-value".to_string(),
+            unknown: Default::default(),
         }
     }
 
@@ -745,6 +748,7 @@ rso-authenticator:
             data_dir: backup_dir.path().to_path_buf(),
             captured_at_unix: 100,
             puuid: "account-puuid".to_string(),
+            unknown: Default::default(),
         };
 
         let synced = sync_launcher_session_backup_from_data_dir(&backup, source.path())
@@ -806,6 +810,7 @@ rso-authenticator:
                     data_dir: first_dir.clone(),
                     captured_at_unix: 100,
                     puuid: "first-puuid".to_string(),
+                    unknown: Default::default(),
                 },
             ),
             (
@@ -814,6 +819,7 @@ rso-authenticator:
                     data_dir: second_dir.clone(),
                     captured_at_unix: 100,
                     puuid: "SECOND-PUUID".to_string(),
+                    unknown: Default::default(),
                 },
             ),
         ];
@@ -874,6 +880,7 @@ rso-authenticator:
             data_dir: backup_dir.path().to_path_buf(),
             captured_at_unix: 100,
             puuid: "account-puuid".to_string(),
+            unknown: Default::default(),
         };
 
         let err = sync_launcher_session_backup_from_data_dir(&backup, source.path())

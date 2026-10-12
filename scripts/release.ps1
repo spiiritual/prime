@@ -9,6 +9,13 @@ Bumps the patch version, runs cargo check/test/build, packages the win channel, 
 tags, pushes, and creates the GitHub release using generated git-log notes.
 
 .EXAMPLE
+.\scripts\release.ps1 -Channel beta -UseGeneratedNotes -Publish
+
+Releases a beta: 0.3.1 becomes 0.3.2-beta.1, then 0.3.2-beta.2, and the next stable patch is 0.3.2.
+Betas go to the beta channel only, as GitHub pre-releases. Stable releases are packaged for the
+beta channel too, so beta never falls behind stable.
+
+.EXAMPLE
 .\scripts\release.ps1 -Version 0.2.0 -ReleaseNotesFile .\notes.md -Publish
 
 Releases an explicit version with curated release notes.
@@ -172,17 +179,26 @@ function Get-LockPackageVersion {
 function ConvertTo-NextVersion {
     param(
         [Parameter(Mandatory = $true)] [string] $CurrentVersion,
-        [Parameter(Mandatory = $true)] [string] $BumpKind
+        [Parameter(Mandatory = $true)] [string] $BumpKind,
+        [switch] $Beta
     )
 
-    $match = [regex]::Match($CurrentVersion, '^(?<major>0|[1-9]\d*)\.(?<minor>0|[1-9]\d*)\.(?<patch>0|[1-9]\d*)$')
+    $match = [regex]::Match($CurrentVersion, '^(?<major>0|[1-9]\d*)\.(?<minor>0|[1-9]\d*)\.(?<patch>0|[1-9]\d*)(-beta\.(?<beta>[1-9]\d*))?$')
     if (-not $match.Success) {
-        throw "Automatic bumping only supports stable x.y.z versions. Current version is '$CurrentVersion'. Pass -Version explicitly."
+        throw "Automatic bumping only supports x.y.z and x.y.z-beta.N versions. Current version is '$CurrentVersion'. Pass -Version explicitly."
     }
 
     $major = [int] $match.Groups["major"].Value
     $minor = [int] $match.Groups["minor"].Value
     $patch = [int] $match.Groups["patch"].Value
+
+    # A patch after a beta continues or finishes that version: x.y.z-beta.N comes before x.y.z.
+    if ($match.Groups["beta"].Success -and $BumpKind -eq "patch") {
+        if ($Beta) {
+            return "$major.$minor.$patch-beta.$([int] $match.Groups["beta"].Value + 1)"
+        }
+        return "$major.$minor.$patch"
+    }
 
     switch ($BumpKind) {
         "major" {
@@ -199,11 +215,21 @@ function ConvertTo-NextVersion {
         }
     }
 
+    if ($Beta) {
+        return "$major.$minor.$patch-beta.1"
+    }
     return "$major.$minor.$patch"
 }
 
 function Get-LastReleaseTag {
-    $result = Invoke-Captured git @("describe", "--tags", "--match", "v[0-9]*", "--abbrev=0") -AllowFailure
+    param([switch] $Beta)
+
+    # Stable notes cover everything since the last stable release, betas included.
+    $describe = @("describe", "--tags", "--match", "v[0-9]*", "--abbrev=0")
+    if (-not $Beta) {
+        $describe += @("--exclude", "*-beta*")
+    }
+    $result = Invoke-Captured git $describe -AllowFailure
     if ($result.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($result.Output)) {
         return $null
     }
@@ -213,10 +239,11 @@ function Get-LastReleaseTag {
 
 function New-GeneratedReleaseNotes {
     param(
-        [Parameter(Mandatory = $true)] [string] $NewVersion
+        [Parameter(Mandatory = $true)] [string] $NewVersion,
+        [switch] $Beta
     )
 
-    $lastTag = Get-LastReleaseTag
+    $lastTag = Get-LastReleaseTag -Beta:$Beta
     if ($lastTag) {
         $range = "$lastTag..HEAD"
         $log = (Invoke-Captured git @("log", "--pretty=format:- %s (%h)", $range)).Output
@@ -296,9 +323,20 @@ if ((-not [string]::IsNullOrWhiteSpace($status)) -and (-not $AllowDirty)) {
     throw "The worktree has uncommitted changes. Commit or stash them first, or rerun with -AllowDirty to stage only Cargo.toml/Cargo.lock."
 }
 
+$isBeta = $Channel -eq "beta"
+if ($isBeta) {
+    # Betas stay off the repo's "Latest" release, so new installs from GitHub get stable.
+    $Prerelease = $true
+}
+
 $currentVersion = Get-PackageVersion $cargoToml
 if (-not $Version) {
-    $Version = ConvertTo-NextVersion $currentVersion $Bump
+    $Version = ConvertTo-NextVersion $currentVersion $Bump -Beta:$isBeta
+}
+
+# A beta without its suffix would take the stable version's tag, and stable can't ship as a beta.
+if ($isBeta -ne ($Version -match '-beta\.[1-9]\d*$')) {
+    throw "Version '$Version' doesn't fit channel '$Channel': betas end in -beta.N and nothing else does."
 }
 
 if ($Version -eq $currentVersion) {
@@ -329,7 +367,7 @@ if ($ReleaseNotesFile) {
 } elseif ($ReleaseNotes) {
     Write-Utf8File $notesPath $ReleaseNotes
 } else {
-    Write-Utf8File $notesPath (New-GeneratedReleaseNotes $Version)
+    Write-Utf8File $notesPath (New-GeneratedReleaseNotes $Version -Beta:$isBeta)
 }
 
 Set-PackageVersion $cargoToml $Version
@@ -365,47 +403,78 @@ if (-not (Test-Path -LiteralPath $releaseExe)) {
 Copy-Item -LiteralPath $releaseExe -Destination (Join-Path $stageDir "prime.exe")
 
 $vpk = Resolve-Velopack
-Invoke-Checked $vpk @(
-    "--yes",
-    "--skip-updates",
-    "pack",
-    "--packId", "dev.spiiritual.prime",
-    "--packVersion", $Version,
-    "--packDir", $stageDir,
-    "--mainExe", "prime.exe",
-    "--packTitle", "Prime",
-    "--icon", (Join-Path $root "assets\icon.ico"),
-    "--packAuthors", "spiiritual",
-    "--channel", $Channel,
-    "--runtime", "win-x64",
-    "--outputDir", $releaseDir,
-    "--releaseNotes", $notesPath
-)
 
-# Velopack leaves the channel out of package and RELEASES names for the default "win" channel
-# (dev.spiiritual.prime-1.2.3-full.nupkg, RELEASES) but includes it for others (-beta-full.nupkg,
-# RELEASES-beta).
-$channelSuffix = if ($Channel -eq "win") { "" } else { "-$Channel" }
+function Invoke-Pack {
+    param([Parameter(Mandatory = $true)] [string] $PackChannel)
 
-$requiredArtifacts = @(
-    (Join-Path $releaseDir "dev.spiiritual.prime-$Version$channelSuffix-full.nupkg"),
-    (Join-Path $releaseDir "dev.spiiritual.prime-$Channel-Setup.exe"),
-    (Join-Path $releaseDir "dev.spiiritual.prime-$Channel-Portable.zip"),
-    (Join-Path $releaseDir "releases.$Channel.json"),
-    (Join-Path $releaseDir "RELEASES$channelSuffix"),
-    (Join-Path $releaseDir "assets.$Channel.json")
-)
+    Invoke-Checked $vpk @(
+        "--yes",
+        "--skip-updates",
+        "pack",
+        "--packId", "dev.spiiritual.prime",
+        "--packVersion", $Version,
+        "--packDir", $stageDir,
+        "--mainExe", "prime.exe",
+        "--packTitle", "Prime",
+        "--icon", (Join-Path $root "assets\icon.ico"),
+        "--packAuthors", "spiiritual",
+        "--channel", $PackChannel,
+        "--runtime", "win-x64",
+        "--outputDir", $releaseDir,
+        "--releaseNotes", $notesPath
+    ) | Out-Host
 
-foreach ($artifact in $requiredArtifacts) {
-    if (-not (Test-Path -LiteralPath $artifact)) {
-        throw "Expected Velopack artifact was not found: $artifact"
+    # Velopack leaves the channel out of package and RELEASES names for the default "win" channel
+    # (dev.spiiritual.prime-1.2.3-full.nupkg, RELEASES) but includes it for others (-beta-full.nupkg,
+    # RELEASES-beta).
+    $channelSuffix = if ($PackChannel -eq "win") { "" } else { "-$PackChannel" }
+
+    $requiredArtifacts = @(
+        (Join-Path $releaseDir "dev.spiiritual.prime-$Version$channelSuffix-full.nupkg"),
+        (Join-Path $releaseDir "dev.spiiritual.prime-$PackChannel-Setup.exe"),
+        (Join-Path $releaseDir "dev.spiiritual.prime-$PackChannel-Portable.zip"),
+        (Join-Path $releaseDir "releases.$PackChannel.json"),
+        (Join-Path $releaseDir "RELEASES$channelSuffix"),
+        (Join-Path $releaseDir "assets.$PackChannel.json")
+    )
+
+    foreach ($artifact in $requiredArtifacts) {
+        if (-not (Test-Path -LiteralPath $artifact)) {
+            throw "Expected Velopack artifact was not found: $artifact"
+        }
     }
+
+    $deltaArtifact = Join-Path $releaseDir "dev.spiiritual.prime-$Version$channelSuffix-delta.nupkg"
+    if (Test-Path -LiteralPath $deltaArtifact) {
+        $requiredArtifacts += $deltaArtifact
+    }
+    return $requiredArtifacts
 }
 
-$deltaArtifact = Join-Path $releaseDir "dev.spiiritual.prime-$Version$channelSuffix-delta.nupkg"
-$releaseAssets = @($requiredArtifacts)
-if (Test-Path -LiteralPath $deltaArtifact) {
-    $releaseAssets += $deltaArtifact
+function Get-ChannelLatestVersion {
+    param([Parameter(Mandatory = $true)] [string] $PackChannel)
+
+    $feed = Join-Path $releaseDir "releases.$PackChannel.json"
+    if (-not (Test-Path -LiteralPath $feed)) {
+        return $null
+    }
+    return (Get-Content -LiteralPath $feed -Raw | ConvertFrom-Json).Assets |
+        ForEach-Object { [System.Management.Automation.SemanticVersion] $_.Version } |
+        Sort-Object |
+        Select-Object -Last 1
+}
+
+$releaseAssets = @(Invoke-Pack $Channel)
+# Beta users follow the beta channel only, so each stable release goes there too, unless beta is
+# already ahead (a stable hotfix during a beta): a channel can't take an older version, and the
+# next beta carries the fix.
+if ($Channel -eq "win") {
+    $betaLatest = Get-ChannelLatestVersion "beta"
+    if ($betaLatest -and $betaLatest -gt [System.Management.Automation.SemanticVersion] $Version) {
+        Write-Warning "Beta is at $betaLatest, ahead of $Version, so this release goes to stable only."
+    } else {
+        $releaseAssets += Invoke-Pack "beta"
+    }
 }
 
 Invoke-Checked git @("add", "Cargo.toml", "Cargo.lock")

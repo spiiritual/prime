@@ -1409,6 +1409,7 @@ mod tests {
             data_dir: std::path::PathBuf::from("backup"),
             captured_at_unix: 100,
             puuid: "puuid".to_string(),
+            unknown: Default::default(),
         });
 
         assert_eq!(launcher_session_captured_at_unix(&account), Some(100));

@@ -108,6 +108,7 @@ fn captured_account_draft(
             data_dir,
             captured_at_unix: 100,
             puuid: puuid.to_string(),
+            unknown: Default::default(),
         },
         puuid: puuid.to_string(),
         game_name: Some(game_name.to_string()),
@@ -1974,6 +1975,7 @@ fn require_launcher_session_rejects_missing_backup_folder() {
         data_dir: PathBuf::from("missing-launcher-backup"),
         captured_at_unix: 100,
         puuid: "puuid".to_string(),
+        unknown: Default::default(),
     }))
     .expect_err("missing backup folder");
 
@@ -1987,6 +1989,7 @@ fn require_launcher_session_rejects_missing_private_settings_file() {
         data_dir: dir.path().to_path_buf(),
         captured_at_unix: 100,
         puuid: "puuid".to_string(),
+        unknown: Default::default(),
     }))
     .expect_err("missing private settings");
 
@@ -2002,6 +2005,7 @@ fn require_launcher_session_accepts_ready_backup() {
         data_dir: dir.path().to_path_buf(),
         captured_at_unix: 100,
         puuid: "puuid".to_string(),
+        unknown: Default::default(),
     };
 
     let accepted = require_launcher_session(Some(backup)).expect("ready backup");
@@ -2020,6 +2024,7 @@ fn staged_recapture(backup_root: &Path, puuid: &str, settings: &str) -> Captured
             data_dir,
             captured_at_unix: 200,
             puuid: puuid.to_string(),
+            unknown: Default::default(),
         },
     }
 }
@@ -2336,6 +2341,7 @@ fn finished_launch_ignores_a_previous_login_for_a_replaced_slot() {
         data_dir: backup_root.join("replaced").join("Data"),
         captured_at_unix: 500,
         puuid: current.puuid.clone(),
+        unknown: Default::default(),
     };
     app.state.push_account(previous.clone());
 
@@ -3094,6 +3100,7 @@ fn account_with_backup(backup_root: &Path, name: &str, settings: &str) -> Accoun
             data_dir,
             captured_at_unix: 100,
             puuid: format!("{name}-puuid"),
+            unknown: Default::default(),
         })
         .expect("attach backup");
     account
@@ -3320,6 +3327,7 @@ fn duplicate_current_account_capture_updates_existing_profile_without_confirmati
         data_dir: existing_data.clone(),
         captured_at_unix: 50,
         puuid: "puuid-a".to_string(),
+        unknown: Default::default(),
     });
     app.state.push_account(existing);
     let draft = captured_account_draft(&backup_root, "puuid-a", "Player", "NA1", Shard::Eu);
@@ -3794,6 +3802,7 @@ fn cache_account_api_context_updates_refreshed_launcher_session() {
         data_dir: "old-backup".into(),
         captured_at_unix: 100,
         puuid: "puuid".to_string(),
+        unknown: Default::default(),
     });
     state.push_account(account);
     let session = AuthSession::new("access", None, None, "Bearer", Some(3600), 100);
@@ -3801,6 +3810,7 @@ fn cache_account_api_context_updates_refreshed_launcher_session() {
         data_dir: "new-backup".into(),
         captured_at_unix: 200,
         puuid: "puuid".to_string(),
+        unknown: Default::default(),
     };
 
     cache_account_api_context(
@@ -4243,6 +4253,23 @@ fn bringing_the_window_back_checks_for_updates_unless_one_was_dismissed() {
         app.app_update_status,
         super::AppUpdateStatus::Dismissed(_)
     ));
+}
+
+#[test]
+fn switching_update_channel_checks_that_channel_unless_busy() {
+    let dir = tempdir().expect("temp dir");
+    let mut app = test_app(dir.path());
+    app.app_update_status = super::AppUpdateStatus::UpToDate;
+
+    let task = app.update(Message::SwitchUpdateChannel(crate::updater::BETA_CHANNEL));
+    assert!(task.units() > 0, "checks");
+    assert!(matches!(
+        app.app_update_status,
+        super::AppUpdateStatus::Checking
+    ));
+
+    let task = app.update(Message::SwitchUpdateChannel(crate::updater::BETA_CHANNEL));
+    assert_eq!(task.units(), 0, "one check at a time");
 }
 
 #[test]
@@ -5079,6 +5106,7 @@ fn availability_checks_drop_sessions_for_a_replaced_login() {
         data_dir: dir.path().join("old-slot"),
         captured_at_unix: 50,
         puuid: "Main-puuid".to_string(),
+        unknown: Default::default(),
     };
 
     let _ = app.update(availability_refresh(account.id, Some(stale)));
@@ -7331,7 +7359,49 @@ fn aim_app(dir: &Path) -> PrimeApp {
     let _ = app.update(aim(AimMessage::SensitivityChanged("0.34".into())));
     // Hard's pace, which the timings below were written for.
     app.state.aim_trainer.difficulty = crate::aim_trainer::Difficulty::Hard;
+    // A beta build, whose Aim Trainer modes experiment these tests cover.
+    app.update_channel = Some(crate::updater::BETA_CHANNEL.to_string());
     app
+}
+
+#[test]
+fn aim_modes_without_the_experiment_are_the_original_ones() {
+    use crate::aim_trainer::{SensitivityMode, ViewMode};
+
+    let dir = tempdir().expect("temp dir");
+    let mut app = aim_app(dir.path());
+    let _ = app.update(aim(AimMessage::SensitivityModeChanged(
+        SensitivityMode::Windows,
+    )));
+
+    // Stable never runs it.
+    app.update_channel = Some(crate::updater::STABLE_CHANNEL.to_string());
+    assert!(!app.experiment(crate::storage::AIM_MODES_EXPERIMENT));
+    app.update_channel = Some(crate::updater::BETA_CHANNEL.to_string());
+    assert!(app.experiment(crate::storage::AIM_MODES_EXPERIMENT));
+
+    let task = app.update(Message::ExperimentToggled(
+        crate::storage::AIM_MODES_EXPERIMENT,
+        false,
+    ));
+    assert!(task.units() > 0, "saved");
+    assert!(!app.experiment(crate::storage::AIM_MODES_EXPERIMENT));
+    let _ = app.update(aim(AimMessage::Start));
+    let AimPhase::Playing(game) = &app.aim.phase else {
+        panic!("playing");
+    };
+    assert_eq!(
+        (game.sensitivity_mode(), game.mode()),
+        (SensitivityMode::Valorant, ViewMode::TwoD)
+    );
+    assert_eq!(
+        (
+            app.state.aim_trainer.sensitivity_mode,
+            app.state.aim_trainer.view_mode
+        ),
+        (SensitivityMode::Windows, ViewMode::ThreeD),
+        "the saved choices come back with the experiment"
+    );
 }
 
 /// Sends frames `ms` apart in 100 ms steps, the way `window::frames` would.
@@ -7568,6 +7638,7 @@ fn aim_best_run_is_replaced_only_by_a_higher_score() {
         sensitivity: Some(0.34),
         dpi: Some(800),
         finished_at_unix: 0,
+        unknown: Default::default(),
     };
     app.state.aim_trainer.best = Some(best(1));
 
@@ -7587,8 +7658,11 @@ fn aim_best_run_is_replaced_only_by_a_higher_score() {
         panic!("over");
     };
     assert!(*new_best);
-    assert_eq!(previous_best.map(|run| run.score), Some(1));
-    assert_eq!(app.state.aim_trainer.best.map(|run| run.score), Some(2));
+    assert_eq!(previous_best.as_ref().map(|run| run.score), Some(1));
+    assert_eq!(
+        app.state.aim_trainer.best.as_ref().map(|run| run.score),
+        Some(2)
+    );
 
     app.state.aim_trainer.best = Some(best(5));
     let _ = app.update(aim(AimMessage::Start));
@@ -7597,7 +7671,10 @@ fn aim_best_run_is_replaced_only_by_a_higher_score() {
         panic!("over");
     };
     assert!(!*new_best);
-    assert_eq!(app.state.aim_trainer.best.map(|run| run.score), Some(5));
+    assert_eq!(
+        app.state.aim_trainer.best.as_ref().map(|run| run.score),
+        Some(5)
+    );
 
     // Each difficulty keeps its own best.
     let _ = app.update(aim(AimMessage::DifficultyChanged(
@@ -7615,7 +7692,10 @@ fn aim_best_run_is_replaced_only_by_a_higher_score() {
         app.state.aim_trainer.best_easy.map(|run| run.score),
         Some(1)
     );
-    assert_eq!(app.state.aim_trainer.best.map(|run| run.score), Some(5));
+    assert_eq!(
+        app.state.aim_trainer.best.as_ref().map(|run| run.score),
+        Some(5)
+    );
 }
 
 #[test]

@@ -88,6 +88,7 @@ pub(in crate::ui) async fn save_game_settings_profile(
         preference_base_url: context.preference_base_url.clone(),
         settings_version,
         preference: document,
+        unknown: Default::default(),
     };
     let repository = GameSettingsProfileRepository::new(profile_dir);
     repository
@@ -143,6 +144,7 @@ pub(in crate::ui) async fn apply_game_settings_profile(
                 .map_err(|error| error.to_string())?
                 .roaming_settings_version,
             preference: target_document.clone(),
+            unknown: Default::default(),
         };
         repository
             .save(&backup_profile)
