@@ -62,10 +62,7 @@ pub(super) fn is_for_friend(stanza: &str) -> bool {
 pub(super) fn announcement(status: PresenceStatus) -> String {
     let now = time::OffsetDateTime::now_utc();
     let millis = now.unix_timestamp_nanos() / 1_000_000;
-    let valorant = BASE64_STANDARD.encode(
-        "{\"isValid\":true,\"partyId\":\"00000000-0000-0000-0000-000000000000\",\
-         \"partyClientVersion\":\"unknown\",\"accountLevel\":1000}",
-    );
+    let valorant = BASE64_STANDARD.encode(valorant_presence(millis));
     let stamp = format!(
         "{}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}",
         now.year(),
@@ -85,11 +82,78 @@ pub(super) fn announcement(status: PresenceStatus) -> String {
     format!(
         "<presence from='{from}' id='prime-{millis}'><games>\
          <keystone><st>chat</st><s.t>{millis}</s.t><s.p>keystone</s.p></keystone>\
-         <valorant><st>chat</st><s.t>{millis}</s.t><s.p>valorant</s.p><p>{valorant}</p></valorant>\
+         <valorant><st>chat</st><s.t>{millis}</s.t><s.p>valorant</s.p><s.r>PC</s.r><p>{valorant}</p><pty/></valorant>\
          </games><show>chat</show><platform>riot</platform></presence>\
          <message from='{from}' stamp='{stamp}' id='prime-{millis}' type='chat'>\
          <body>Prime is active. Friends see you {seen_as}.</body></message>"
     )
+}
+
+/// VALORANT's nested presence, as Deceive sends it since VALORANT dropped the flat one. VALORANT
+/// logs the fields it reads and doesn't find, such as the loop and party states.
+fn valorant_presence(millis: i128) -> String {
+    let no_party = "00000000-0000-0000-0000-000000000000";
+    serde_json::json!({
+        "isValid": true,
+        "isIdle": false,
+        "queueId": "competitive",
+        "provisioningFlow": "Invalid",
+        "partyId": no_party,
+        "partySize": 1,
+        "maxPartySize": 5,
+        "partyOwnerMatchScoreAllyTeam": 0,
+        "partyOwnerMatchScoreEnemyTeam": 0,
+        "premierPresenceData": {
+            "rosterId": "",
+            "rosterName": "Prime is active.",
+            "rosterTag": "Prime Active!",
+            "rosterType": "VCT",
+            "division": 0,
+            "score": 0,
+            "plating": 0,
+            "showAura": false,
+            "showTag": true,
+            "showPlating": false
+        },
+        "matchPresenceData": {
+            "sessionLoopState": "MENUS",
+            "provisioningFlow": "Invalid",
+            "matchMap": "",
+            "queueId": "competitive"
+        },
+        "partyPresenceData": {
+            "partyId": no_party,
+            "isPartyOwner": true,
+            "partyState": "DEFAULT",
+            "partyAccessibility": "CLOSED",
+            "partyLFM": false,
+            "partyClientVersion": "unknown",
+            "partyVersion": millis,
+            "partySize": 1,
+            "queueEntryTime": "0001.01.01-00.00.00",
+            "isPartyCrossPlayEnabled": false,
+            "isPlayerCrossPlayEnabled": false,
+            "partyPrecisePlatformTypes": 1,
+            "customGameName": "Prime Active!",
+            "customGameTeam": "",
+            "maxPartySize": 5,
+            "tournamentId": "",
+            "rosterId": "",
+            "partyOwnerSessionLoopState": "MENUS",
+            "partyOwnerMatchMap": "",
+            "partyOwnerProvisioningFlow": "Invalid",
+            "partyOwnerMatchScoreAllyTeam": 0,
+            "partyOwnerMatchScoreEnemyTeam": 0
+        },
+        "playerPresenceData": {
+            "playerCardId": "893deca1-4123-9c1f-2985-aa9de74cb512",
+            "playerTitleId": "e3ca05a4-4e44-9afe-3791-7d96ca8f71fa",
+            "accountLevel": 999,
+            "competitiveTier": 0,
+            "leaderboardPosition": 0
+        }
+    })
+    .to_string()
 }
 
 #[cfg(test)]
@@ -123,5 +187,21 @@ mod tests {
             text.contains("you offline (invisible).</body></message>"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn the_friend_has_valorants_nested_presence() {
+        let text = announcement(PresenceStatus::Online);
+        let valorant = &text[text.find("<s.p>valorant</s.p>").expect("valorant")..];
+        let p =
+            &valorant[valorant.find("<p>").expect("<p>") + 3..valorant.find("</p>").expect("</p>")];
+        let json: serde_json::Value =
+            serde_json::from_slice(&BASE64_STANDARD.decode(p).expect("base64")).expect("json");
+
+        // Without these, VALORANT logs an unhandled loop state and party state for the friend.
+        assert_eq!(json["matchPresenceData"]["sessionLoopState"], "MENUS");
+        assert_eq!(json["partyPresenceData"]["partyState"], "DEFAULT");
+        assert!(json["playerPresenceData"].is_object(), "{json}");
+        assert!(json["premierPresenceData"].is_object(), "{json}");
     }
 }
