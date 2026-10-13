@@ -12,7 +12,10 @@ use crate::ui::data::live_match::{LIVE_MATCH_WEAPON_GROUPS, shown_weapons, weapo
 use crate::ui::data::{format_bytes, typed_riot_client_path};
 use crate::ui::shell::popover_style;
 use crate::ui::theme::{self, Icon, button, text};
-use crate::ui::{AppUpdateStatus, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp, SettingsSection};
+use crate::ui::{
+    AppUpdateStatus, CHAT_PROXY_PAUSED, MAIN_PANEL_SCROLLABLE_ID, Message, PrimeApp,
+    SettingsSection,
+};
 use crate::updater::{BETA_CHANNEL, STABLE_CHANNEL};
 
 const SECTION_NAV_WIDTH: f32 = 170.0;
@@ -46,9 +49,13 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
              next launch.",
             column![
                 riot_client_path_controls(app),
-                checkbox(app.state.chat_proxy)
-                    .label("Route chat through Prime to choose how friends see you")
-                    .on_toggle(Message::ChatProxyToggled)
+                checkbox(app.routes_chat())
+                    .label(if CHAT_PROXY_PAUSED {
+                        "Route chat through Prime: paused in this version while VALORANT crashes                          are looked into"
+                    } else {
+                        "Route chat through Prime to choose how friends see you"
+                    })
+                    .on_toggle_maybe((!CHAT_PROXY_PAUSED).then_some(Message::ChatProxyToggled))
                     .text_size(13),
             ]
             .spacing(12)

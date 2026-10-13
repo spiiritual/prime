@@ -15,7 +15,7 @@ use crate::ui::components::card_style;
 use crate::ui::data::{format_bytes, typed_riot_client_path};
 use crate::ui::shell::{presence_label, presence_mark};
 use crate::ui::theme::{self, Icon, button, text};
-use crate::ui::{AppUpdateStatus, Message, PrimeApp, SettingsPage};
+use crate::ui::{AppUpdateStatus, CHAT_PROXY_PAUSED, Message, PrimeApp, SettingsPage};
 
 const SECTION_NAV_WIDTH: f32 = 190.0;
 const WEAPON_SLOT_WIDTH: f32 = 132.0;
@@ -53,15 +53,25 @@ pub(super) fn tab(app: &PrimeApp) -> Element<'_, Message> {
         SettingsPage::Status => (
             "Choose how friends see you while you play.",
             vec![
-                setting_row(
-                    "Route chat through Prime",
-                    "Needed to appear Mobile or Invisible. Applies from the next launch.",
-                    switch(app.state.chat_proxy, Message::ChatProxyToggled),
-                ),
+                if CHAT_PROXY_PAUSED {
+                    setting_row(
+                        "Route chat through Prime",
+                        "Paused in this version while VALORANT crashes are looked into.",
+                        text("Off").size(13).color(theme::MUTED).into(),
+                    )
+                } else {
+                    setting_row(
+                        "Route chat through Prime",
+                        "Needed to appear Mobile or Invisible. Applies from the next launch.",
+                        switch(app.state.chat_proxy, Message::ChatProxyToggled),
+                    )
+                },
                 setting_row(
                     "Status friends see",
-                    if app.state.chat_proxy {
+                    if app.routes_chat() {
                         "Also in the sidebar, above the version."
+                    } else if CHAT_PROXY_PAUSED {
+                        "Friends see you online while routing is paused."
                     } else {
                         "Turn on routing chat through Prime to choose."
                     },
@@ -253,7 +263,7 @@ fn switch<'a>(on: bool, message: fn(bool) -> Message) -> Element<'a, Message> {
 
 /// The same choice as the sidebar's status menu, usable only while chat goes through Prime.
 fn status_choices(app: &PrimeApp) -> Element<'_, Message> {
-    let enabled = app.state.chat_proxy;
+    let enabled = app.routes_chat();
     let current = app.state.presence_status;
     let choices = PresenceStatus::ALL
         .into_iter()
