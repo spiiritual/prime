@@ -3531,7 +3531,7 @@ impl PrimeApp {
             Task::none()
         };
 
-        let launch = if self.state.chat_proxy {
+        let launch = if self.routes_chat() {
             Task::perform(
                 start_chat_proxy(self.state.presence_status),
                 move |result| Message::ChatProxyStarted(id, result),
@@ -3541,9 +3541,12 @@ impl PrimeApp {
             self.chat_proxy = None;
             let launch = self.run_account_launch(account, None);
             if !self.state.presence_status.is_online() {
-                self.set_status(Status::warning(
-                    "Friends see you online: routing chat through Prime is off in Settings, so                      your saved status doesn't apply",
-                ));
+                self.set_status(Status::warning(if super::CHAT_PROXY_PAUSED {
+                    "Friends see you online: the invisible status is paused in this version"
+                } else {
+                    "Friends see you online: routing chat through Prime is off in Settings, so \
+                     your saved status doesn't apply"
+                }));
             }
             launch
         };
@@ -3831,7 +3834,12 @@ impl PrimeApp {
     /// through the chat proxy, so the status can be picked before a launch starts with it, or a
     /// proxy still runs after the setting was turned off. A running proxy takes a change at once.
     pub(super) fn status_control_visible(&self) -> bool {
-        self.accounts_loaded && (self.state.chat_proxy || self.chat_proxy.is_some())
+        self.accounts_loaded && (self.routes_chat() || self.chat_proxy.is_some())
+    }
+
+    /// Whether the next launch goes through the chat proxy.
+    pub(super) fn routes_chat(&self) -> bool {
+        !super::CHAT_PROXY_PAUSED && self.state.chat_proxy
     }
 
     /// Launch and login capture progress stays in the status bar while it runs, so background

@@ -38,6 +38,11 @@ use data::live_match::{LiveMatch, LiveMatchError, LiveMatchResult};
 use data::loadout::{LoadoutResult, LoadoutSummary};
 use data::shop::{StoreSummary, StorefrontResult};
 
+/// Emergency switch: launches skip the chat proxy while VALORANT crashes with it are looked into.
+/// The saved switch and status are kept, so setting this back to false restores them. Tests
+/// keep covering the proxy.
+const CHAT_PROXY_PAUSED: bool = !cfg!(test);
+
 const LOADING_TICK_INTERVAL: Duration = Duration::from_millis(120);
 const LAUNCH_PROGRESS_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const ACCOUNT_AVAILABILITY_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
