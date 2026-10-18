@@ -11,7 +11,6 @@ use crate::aim_trainer::{
     self, AimRun, AimTrainerState, Difficulty, Game, SensitivityMode, View, ViewMode,
 };
 use crate::raw_mouse;
-use crate::storage::AIM_MODES_EXPERIMENT;
 
 #[derive(Clone, Debug)]
 pub(super) enum AimMessage {
@@ -258,15 +257,10 @@ impl PrimeApp {
         }
     }
 
-    /// The Sensitivity and View a new run uses. Without the experiment they're the original
-    /// trainer's, whatever is saved, so switching it back on restores the saved choices.
+    /// The Sensitivity and View a new run uses.
     pub(super) fn aim_modes(&self) -> (SensitivityMode, ViewMode) {
         let settings = &self.state.aim_trainer;
-        if self.experiment(AIM_MODES_EXPERIMENT) {
-            (settings.sensitivity_mode, settings.view_mode)
-        } else {
-            (SensitivityMode::Valorant, ViewMode::TwoD)
-        }
+        (settings.sensitivity_mode, settings.view_mode)
     }
 
     fn start_aim_run(&mut self) -> Task<Message> {

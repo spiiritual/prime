@@ -13,7 +13,7 @@ use crate::riot::launcher_session::{
     CapturedLauncherSession, adopt_launcher_session_backup, remove_launcher_session_backup,
 };
 use crate::secret_clipboard::copy_secret_text;
-use crate::storage::{AccountRepository, SETTINGS_PAGES_EXPERIMENT, StoredState};
+use crate::storage::{AccountRepository, StoredState};
 use crate::updater::{UpdateCheckOutcome, check_for_update, download_and_prepare_update};
 
 use super::aim::{AimMessage, AimPhase, AimTrainerTab};
@@ -42,8 +42,8 @@ use super::{
     AccountsTab, AppUpdateStatus, ImageViewerImage, ImageViewerSource, LoadoutTab, LoginCapture,
     LoginCaptureTarget, MAIN_PANEL_SCROLLABLE_ID, Message, PendingSettingsChange,
     PendingSettingsCheck, PresetNamePrompt, PresetNameTarget, PrimeApp, QuitAction, SettingsChange,
-    SettingsPage, SettingsSection, Status, StatusKind, Tab, TabScrollOffsets, ViewRequest,
-    background_refresh_active, screens,
+    SettingsPage, Status, StatusKind, Tab, TabScrollOffsets, ViewRequest,
+    background_refresh_active,
 };
 
 impl PrimeApp {
@@ -75,9 +75,7 @@ impl PrimeApp {
                 aim: AimTrainerTab::default(),
                 new_display_name: String::new(),
                 redirect_input: String::new(),
-                settings_section: SettingsSection::RiotClient,
                 settings_page: SettingsPage::General,
-                token_import_open: false,
                 client_version_input: String::new(),
                 riot_client_path_input: String::new(),
                 status: Status::progress("Loading accounts"),
@@ -514,12 +512,6 @@ impl PrimeApp {
 
                 self.close_account_surfaces();
                 self.show_add_account_prompt = true;
-                // Stable, without the interface refresh, repeats its dialog in a toast.
-                if !self.refreshed() {
-                    self.set_status(Status::info(
-                        "Before Riot Client opens, confirm that you will tick \u{201c}Stay signed in\u{201d}.",
-                    ));
-                }
 
                 check_capture_prompt_game_task()
             }
@@ -553,16 +545,7 @@ impl PrimeApp {
 
                 // The sign-in dialog shows what's happening, so the only toast is for a loss.
                 let discarded = self.discard_pending_account();
-                if !self.refreshed() {
-                    self.set_status(Status::progress(format!(
-                        "{}Opening Riot Client. When it appears, sign in with \u{201c}Stay signed in\u{201d} ticked.",
-                        if discarded {
-                            "Discarded the unsaved captured account. "
-                        } else {
-                            ""
-                        }
-                    )));
-                } else if discarded {
+                if discarded {
                     self.set_status(Status::warning("Discarded the unsaved captured account"));
                 }
                 self.close_account_surfaces();
@@ -730,14 +713,7 @@ impl PrimeApp {
                 match result {
                     Ok(export) => {
                         // The export dialog is the result.
-                        if self.refreshed() {
-                            self.clear_progress_status();
-                        } else {
-                            self.set_status(Status::success(format!(
-                                "Prepared account export for {}",
-                                export.display_name
-                            )));
-                        }
+                        self.clear_progress_status();
                         self.exported_account = Some(export);
                     }
                     Err(error) => {
@@ -1062,26 +1038,15 @@ impl PrimeApp {
                     return Task::none();
                 }
 
-                let Some(account) = self
-                    .state
-                    .accounts
-                    .iter()
-                    .find(|account| account.id == account_id)
-                else {
+                if !self.state.accounts.iter().any(|account| account.id == account_id) {
                     self.open_account_menu = None;
                     self.account_switcher_open = false;
                     self.set_status(Status::error("Account profile no longer exists"));
                     return Task::none();
-                };
+                }
 
                 // The sign-in dialog shows what's happening, so no toast.
-                let summary = account.summary();
                 self.close_account_surfaces();
-                if !self.refreshed() {
-                    self.set_status(Status::progress(format!(
-                        "Opening Riot Client and waiting for remembered login capture for {summary}"
-                    )));
-                }
                 // Capture into a separate slot so the account's working backup is only replaced
                 // after the login is confirmed to belong to this account.
                 self.start_login_capture(LoginCaptureTarget::Existing {
@@ -2338,16 +2303,8 @@ impl PrimeApp {
                 }
                 self.save_riot_client_path_if_valid()
             }
-            Message::SettingsSectionSelected(section) => {
-                self.settings_section = section;
-                screens::scroll_to_settings_section(section)
-            }
             Message::SettingsPageSelected(page) => {
                 self.settings_page = page;
-                Task::none()
-            }
-            Message::ToggleTokenImport => {
-                self.token_import_open = !self.token_import_open;
                 Task::none()
             }
             Message::OpenInExplorer(path) => Task::perform(
@@ -3025,18 +2982,11 @@ impl PrimeApp {
 
     /// How Prime is set up, for Export logs: no account names, IDs or tokens.
     pub(super) fn system_info(&self) -> String {
-        use crate::storage::{
-            AIM_MODES_EXPERIMENT, INTERFACE_REFRESH_EXPERIMENT, SETTINGS_PAGES_EXPERIMENT,
-        };
-
-        let experiments: Vec<&str> = [
-            AIM_MODES_EXPERIMENT,
-            INTERFACE_REFRESH_EXPERIMENT,
-            SETTINGS_PAGES_EXPERIMENT,
-        ]
-        .into_iter()
-        .filter(|name| self.experiment(name))
-        .collect();
+        let experiments: Vec<&str> = crate::storage::EXPERIMENTS
+            .iter()
+            .map(|&(name, _)| name)
+            .filter(|name| self.experiment(name))
+            .collect();
         let env = |name| std::env::var(name).unwrap_or_else(|_| "unset".to_string());
         format!(
             "Prime {} ({})\n\
@@ -3787,19 +3737,16 @@ impl PrimeApp {
         Ok(self.state.clone())
     }
 
-    /// Experiments are for beta: other builds don't show them and run without them.
+    /// Experiments are for beta: other builds don't show them and run without them. Beta hides
+    /// the page too while the build has none.
     pub(super) fn experiments_shown(&self) -> bool {
-        self.update_channel.as_deref() == Some(crate::updater::BETA_CHANNEL)
+        !crate::storage::EXPERIMENTS.is_empty()
+            && self.update_channel.as_deref() == Some(crate::updater::BETA_CHANNEL)
     }
 
     /// Beta starts with every experiment on; testers can switch each off in Settings.
     pub(super) fn experiment(&self, name: &str) -> bool {
         self.experiments_shown() && !self.state.disabled_experiments.contains(name)
-    }
-
-    /// The interface refresh experiment: beta's new look for spinners, dialogs and placeholders.
-    pub(super) fn refreshed(&self) -> bool {
-        self.experiment(crate::storage::INTERFACE_REFRESH_EXPERIMENT)
     }
 
     pub(super) fn save_task(&self) -> Task<Message> {
@@ -3831,12 +3778,12 @@ impl PrimeApp {
         typed_riot_client_path(&self.riot_client_path_input) != self.state.riot_client_path
     }
 
-    /// With Settings pages, which have no Save button, saves the typed path once it's empty (find
+    /// Settings has no Save button for the path: saves the typed path once it's empty (find
     /// it automatically) or names a file, so half-typed paths are left alone.
     fn save_riot_client_path_if_valid(&mut self) -> Task<Message> {
         let valid =
             typed_riot_client_path(&self.riot_client_path_input).is_none_or(|path| path.is_file());
-        if self.experiment(SETTINGS_PAGES_EXPERIMENT) && valid && self.riot_client_path_unsaved() {
+        if valid && self.riot_client_path_unsaved() {
             self.handle_message(Message::SaveSettings)
         } else {
             Task::none()

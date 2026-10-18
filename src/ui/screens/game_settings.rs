@@ -598,7 +598,7 @@ fn small_button(
 
 fn progress(app: &PrimeApp, label: String, size: u32) -> Element<'static, Message> {
     row![
-        spinner(app.refreshed(), app.loading_frame, 14.0, theme::MUTED),
+        spinner(app.loading_frame, 14.0, theme::MUTED),
         text(label).size(size).color(theme::MUTED)
     ]
     .spacing(6)

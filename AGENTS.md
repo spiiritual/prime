@@ -25,9 +25,11 @@ Accounts tab:
 
 - Keeps account profiles (display name, Riot ID, PUUID, region and shard) in `accounts.json`.
 - Adds accounts by capturing Riot Client's remembered login. "Add new account" clears the live login,
-  waits for the sign-in, then asks for a display name. In beta (`interface-refresh`), while it waits, it asks the local Riot Client
+  waits for the sign-in, then asks for a display name. While it waits, it asks the local Riot Client
   every 3 seconds whether anyone is signed in; signed in for 3 checks with no remembered login means
-  "Stay signed in" wasn't ticked, and the dialog says so and keeps waiting. "Add current account" captures whoever is signed in
+  "Stay signed in" wasn't ticked, and the dialog says so and keeps waiting. The sign-in dialog has a
+  "Stay signed in" callout and numbered steps, with no progress toast over it, and Add account's
+  prompt shows "Stay signed in" in bold gold. "Add current account" captures whoever is signed in
   now. "Re-capture login" replaces a saved account's captured login.
 - Launches VALORANT for the selected account: closes Riot Client and VALORANT, restores that account's
   saved Riot Client `Data`, then runs `RiotClientServices.exe --launch-product=valorant --launch-patchline=live`.
@@ -48,9 +50,7 @@ the window: the tier reached, the pass's completion and a rail of chapters on to
 rewards (the current one first; others' art loads when opened), and the next weapon skins ahead.
 
 Aim Trainer tab: red dots that grow until they burst (health 100, a burst costs 15, a
-miss 5). The Sensitivity and View choices are a beta experiment (Settings > Experiments);
-without it, as in stable, runs use VALORANT sensitivity and the 2D view, as the trainer first shipped,
-and the saved choices come back when it's switched on. The setup modal picks two things. Sensitivity: "VALORANT" turns `0.07° × sens` per raw
+miss 5). The setup modal picks two things. Sensitivity: "VALORANT" turns `0.07° × sens` per raw
 mouse count, read with Windows Raw Input (`src/raw_mouse.rs`) because iced drops winit's raw device
 events, so Windows pointer speed and acceleration don't matter; "Windows" moves as the desktop
 cursor does. View: "3D" keeps the crosshair in the arena's centre and turns the view, as in game
@@ -110,29 +110,25 @@ so Riot's server never sees it.
 Settings tab: Riot Client path, "keep in the system tray when closed" (on by default; while minimized or in the tray it
 polls every 30 minutes so sessions keep refreshing; the tray menu quits), Live Match's skin columns, client version
 (fetched at startup), image cache size and clearing, Export logs, app updates, experiments, and a Riot redirect-token
-import as an advanced fallback for API access. Stable shows them as one scrolling page whose nav scrolls
-to a section.
+import as an advanced fallback for API access.
 
-With the settings-pages beta experiment, Settings is instead one page per section, picked from a nav
-beside it, each setting a row with its control on the right (`screens/settings_pages.rs`). General:
+Settings is one page per section, picked from a nav beside it, each setting a row with its control on the right (`screens/settings_pages.rs`). General:
 the tray switch and the Riot Client path, saved as soon as it's empty or names a file, with no Save
 button. Status: the chat proxy switch and the status friends see. Live Match: its skin columns.
 Storage: the data folder, image cache size and clearing, and Export logs. About & updates: app updates, the beta
-channel and the client version (editable). Experiments. Advanced: the redirect-token import, not
+channel and the client version (editable). Experiments, in beta while the build has any. Advanced: the redirect-token import, not
 collapsed.
 
 Experiments: features still being tried, for beta only. Stable builds don't show Settings >
 Experiments and run without them; beta starts with each on and a switch turns it off.
 `accounts.json` keeps the names switched off (`disabled_experiments`), so a name a build doesn't
-know is ignored and kept. Each name is a constant in `storage.rs`; `PrimeApp::experiment` checks one.
+know is ignored and kept. Each is listed with its Settings label in `storage::EXPERIMENTS`;
+`PrimeApp::experiment` checks one. There are none right now: `aim-trainer-modes`,
+`interface-refresh` and `settings-pages` have shipped to stable.
 
-- `aim-trainer-modes`: the Aim Trainer's Sensitivity and View choices.
-- `interface-refresh` (`PrimeApp::refreshed`): Lucide's loader as the one spinner (stable keeps the
-  dot grid); the sign-in dialog's "Stay signed in" callout, numbered steps and unticked check, with
-  no progress toast over it; spinners on busy buttons, and centred states when Shop or
-  Loadout can't load yet; themed placeholders for missing art, the loading wallet and bundle
-  items, and "Looking up name…" in Live Match; and no toasts that repeat Add account's, the
-  sign-in's or Export account's dialog. Add account's prompt shows "Stay signed in" in bold gold.
+Interface: Lucide's loader is the one spinner; busy buttons show it, Shop and Loadout show a centred
+state when they can't load yet, missing art and loading items have themed placeholders, Live Match
+says "Looking up name…", and dialogs speak for themselves with no toast repeating them.
 
 Logs: Prime logs what it does to `%LOCALAPPDATA%\spiiritual\prime\logs\prime.log` (`logging.rs`;
 debug builds write `prime-dev.log`), keeping the last 5 runs: each status it shows, Riot Client

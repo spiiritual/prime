@@ -12,7 +12,7 @@ use crate::riot::chat_proxy::PresenceStatus;
 
 use super::components::{
     account_avatar, anchored_popover, anchored_popover_above, balances_unavailable,
-    currency_balance_display, loading_indicator, spinner, wallet_skeleton,
+    currency_balance_display, spinner, wallet_skeleton,
 };
 use super::data::account_details::{AccountAvailability, Busy};
 use super::data::live_match::{MatchPhase, indicator_detail};
@@ -49,7 +49,6 @@ const TOAST_RISE: f32 = 8.0;
 
 impl PrimeApp {
     pub(super) fn view(&self) -> Element<'_, Message> {
-        super::components::set_refreshed(self.refreshed());
         if self.aim_fullscreen() {
             return super::screens::aim_trainer_fullscreen(self);
         }
@@ -70,7 +69,7 @@ impl PrimeApp {
         let dialog = self.open_dialog().and_then(|dialog| {
             let overlay = match dialog {
                 Dialog::AddAccount => {
-                    add_account_prompt_overlay(self.capture_prompt_valorant_running, self.refreshed())
+                    add_account_prompt_overlay(self.capture_prompt_valorant_running)
                 }
                 Dialog::LoginCapture => login_capture_overlay(self, self.login_capture.as_ref()?),
                 Dialog::CapturedAccount => {
@@ -117,8 +116,7 @@ impl PrimeApp {
                     super::screens::bundle_details(
                         self.store_summary.as_ref()?,
                         bundle,
-                        self.refreshed()
-                            && self.bundle_art_loading.as_ref() == Some(&bundle.store_id),
+                        self.bundle_art_loading.as_ref() == Some(&bundle.store_id),
                         self.now,
                     )
                 }
@@ -171,11 +169,7 @@ impl PrimeApp {
         if super::image_viewer_enabled()
             && let Some(image) = &self.image_viewer
         {
-            layers = layers.push(image_viewer_overlay(
-                image,
-                self.loading_frame,
-                self.refreshed(),
-            ));
+            layers = layers.push(image_viewer_overlay(image, self.loading_frame));
         }
         layers.into()
     }
@@ -639,11 +633,7 @@ impl PrimeApp {
     fn status_toast(&self) -> Element<'_, Message> {
         let kind = self.status.kind;
         let lead = if status_spinner_active(self) {
-            if self.refreshed() {
-                spinner(true, self.loading_frame, 15.0, theme::MUTED)
-            } else {
-                loading_indicator(self.loading_frame)
-            }
+            spinner(self.loading_frame, 15.0, theme::MUTED)
         } else {
             match kind {
                 StatusKind::Error => theme::icon(theme::Icon::TriangleAlert, 15.0, theme::ACCENT),
@@ -1434,11 +1424,9 @@ fn account_identity_card(account: &AccountProfile) -> Element<'_, Message> {
     )
 }
 
-/// Without the interface refresh (`refresh`), the "Stay signed in" step is a plain point.
-fn add_account_prompt_overlay(valorant_running: bool, refresh: bool) -> Element<'static, Message> {
-    let tick_step: Element<'static, Message> = if refresh {
-        // The step people miss, so the box's name stands out.
-        row![
+fn add_account_prompt_overlay(valorant_running: bool) -> Element<'static, Message> {
+    // The step people miss, so the box's name stands out.
+    let tick_step: Element<'static, Message> = row![
             container(theme::icon(
                 theme::Icon::MousePointerClick,
                 14.0,
@@ -1462,13 +1450,7 @@ fn add_account_prompt_overlay(valorant_running: bool, refresh: bool) -> Element<
         ]
         .spacing(10)
         .align_y(alignment::Vertical::Center)
-        .into()
-    } else {
-        dialog_point(
-            theme::Icon::MousePointerClick,
-            "Sign in and tick \u{201c}Stay signed in\u{201d}",
-        )
-    };
+        .into();
     let mut body = column![
         dialog_point(
             theme::Icon::Power,
@@ -1505,8 +1487,6 @@ fn add_account_prompt_overlay(valorant_running: bool, refresh: bool) -> Element<
 
 /// Shown while a capture waits for a sign-in in Riot Client.
 fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> Element<'a, Message> {
-    // Without the interface refresh, stable's dialog: no callout, warning or step numbers.
-    let refresh = app.refreshed();
     let riot_client_open = capture.wait.is_some();
     let existing = match capture.target {
         LoginCaptureTarget::NewAccount(_) => None,
@@ -1532,12 +1512,8 @@ fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> El
             app,
         )
     };
-    let sign_in_title = if refresh {
-        "Sign in with \u{201c}Stay signed in\u{201d} ticked"
-    } else {
-        "Sign in and tick \u{201c}Stay signed in\u{201d}"
-    };
-    let sign_in_step = if refresh && capture.unticked() {
+    let sign_in_title = "Sign in with \u{201c}Stay signed in\u{201d} ticked";
+    let sign_in_step = if capture.unticked() {
         capture_step(
             CaptureStep::Warning,
             "You signed in without \u{201c}Stay signed in\u{201d}",
@@ -1549,11 +1525,7 @@ fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> El
         capture_step(
             CaptureStep::Active,
             sign_in_title,
-            if refresh {
-                "Waiting for you to sign in\u{2026}"
-            } else {
-                "Waiting for remembered login\u{2026}"
-            },
+            "Waiting for you to sign in\u{2026}",
             app,
         )
     } else {
@@ -1597,19 +1569,7 @@ fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> El
              save.",
         )
     };
-    let body = if refresh {
-        column![stay_signed_in_callout(callout_title, callout_detail), steps].spacing(10)
-    } else {
-        column![
-            steps,
-            dialog_note(
-                theme::Icon::Info,
-                theme::MUTED,
-                "Without \u{201c}Stay signed in\u{201d}, Riot Client won't remember the login \
-                 and capture can't finish.",
-            )
-        ]
-    };
+    let body = column![stay_signed_in_callout(callout_title, callout_detail), steps].spacing(10);
     let footer_label = if riot_client_open {
         "Waiting for login"
     } else {
@@ -1631,25 +1591,12 @@ fn login_capture_overlay<'a>(app: &'a PrimeApp, capture: &'a LoginCapture) -> El
                 riot_client_open.then_some(Message::CancelLoginCapture),
             ),
             // The running step already spins, so the footer only says what Prime is doing.
-            container(if refresh {
-                Element::from(
-                    text(footer_label)
-                        .size(13)
-                        .font(theme::BOLD_FONT)
-                        .color(theme::MUTED),
-                )
-            } else {
-                row![
-                    spinner(false, app.loading_frame, 14.0, theme::MUTED),
-                    text("Waiting for login")
-                        .size(13)
-                        .font(theme::BOLD_FONT)
-                        .color(theme::MUTED)
-                ]
-                .spacing(8)
-                .align_y(alignment::Vertical::Center)
-                .into()
-            })
+            container(
+                text(footer_label)
+                    .size(13)
+                    .font(theme::BOLD_FONT)
+                    .color(theme::MUTED),
+            )
             .padding([9, 16])
             .style(|_| filled(theme::RAISED).border(iced::border::rounded(8)))
             .into(),
@@ -1744,9 +1691,7 @@ fn capture_step<'a>(
                 .border(iced::border::rounded(12))
             })
             .into(),
-        CaptureStep::Active => container(spinner(
-            app.refreshed(),
-            app.loading_frame,
+        CaptureStep::Active => container(spinner(app.loading_frame,
             13.0,
             theme::ACCENT,
         ))
@@ -1759,16 +1704,12 @@ fn capture_step<'a>(
             })
         })
         .into(),
-        CaptureStep::Pending(number) => container(if app.refreshed() {
-            Element::from(
-                text(number.to_string())
-                    .size(11)
-                    .font(theme::BOLD_FONT)
-                    .color(theme::FAINT),
-            )
-        } else {
-            space().into()
-        })
+        CaptureStep::Pending(number) => container(
+            text(number.to_string())
+                .size(11)
+                .font(theme::BOLD_FONT)
+                .color(theme::FAINT),
+        )
         .center(24)
         .style(|_| filled(theme::RAISED).border(iced::border::rounded(12)))
         .into(),
@@ -1909,10 +1850,10 @@ fn import_account_prompt_overlay(app: &PrimeApp) -> Element<'_, Message> {
                 "Cancel",
                 (!app.import_account_in_progress).then_some(Message::CancelImportAccount),
             ),
-            if app.import_account_in_progress && app.refreshed() {
+            if app.import_account_in_progress {
                 button(
                     row![
-                        spinner(true, app.loading_frame, 15.0, theme::BG),
+                        spinner(app.loading_frame, 15.0, theme::BG),
                         text("Importing\u{2026}")
                             .size(13)
                             .font(theme::SEMIBOLD_FONT)
@@ -2383,15 +2324,10 @@ fn app_update_changelog(changelog: &str) -> Element<'_, Message> {
 fn image_viewer_overlay(
     image_to_view: &ImageViewerImage,
     loading_frame: usize,
-    refresh: bool,
 ) -> Element<'_, Message> {
     let status: Element<_> = if image_to_view.high_res_loading {
         row![
-            if refresh {
-                spinner(true, loading_frame, 15.0, theme::MUTED)
-            } else {
-                loading_indicator(loading_frame)
-            },
+            spinner(loading_frame, 15.0, theme::MUTED),
             text("Loading full image\u{2026}").size(13)
         ]
         .spacing(8)
