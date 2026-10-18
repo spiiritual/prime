@@ -9,7 +9,6 @@ use iced::{
 use time::{OffsetDateTime, UtcOffset};
 
 use crate::aim_trainer::{self, AimRun, Difficulty, Game, SensitivityMode, ViewMode};
-use crate::storage::AIM_MODES_EXPERIMENT;
 use crate::ui::aim::{AimMessage, AimPhase, AimTrainerTab};
 use crate::ui::components::{mono, segmented};
 use crate::ui::theme::{self, Icon, text};
@@ -246,36 +245,30 @@ fn setup_card(app: &PrimeApp, paused: bool) -> Element<'_, Message> {
     ]
     .spacing(14);
 
-    // The Sensitivity and View choices are an experiment; without it runs use the original modes.
-    let modes = app.experiment(AIM_MODES_EXPERIMENT);
-    if modes {
-        card = card.push(choice(
-            "Sensitivity",
-            [
-                (SensitivityMode::Valorant, "VALORANT"),
-                (SensitivityMode::Windows, "Windows"),
-            ],
-            sensitivity_mode,
-            sensitivity_hint,
-            paused,
-            AimMessage::SensitivityModeChanged,
-        ));
-    }
+    card = card.push(choice(
+        "Sensitivity",
+        [
+            (SensitivityMode::Valorant, "VALORANT"),
+            (SensitivityMode::Windows, "Windows"),
+        ],
+        sensitivity_mode,
+        sensitivity_hint,
+        paused,
+        AimMessage::SensitivityModeChanged,
+    ));
 
     if sensitivity_mode == SensitivityMode::Valorant {
         card = card.push(sensitivity_fields(tab, paused));
     }
 
-    if modes {
-        card = card.push(choice(
-            "View",
-            [(ViewMode::ThreeD, "3D"), (ViewMode::TwoD, "2D")],
-            view_mode,
-            view_hint,
-            paused,
-            AimMessage::ViewModeChanged,
-        ));
-    }
+    card = card.push(choice(
+        "View",
+        [(ViewMode::ThreeD, "3D"), (ViewMode::TwoD, "2D")],
+        view_mode,
+        view_hint,
+        paused,
+        AimMessage::ViewModeChanged,
+    ));
 
     card = card.push(choice(
         "Difficulty",

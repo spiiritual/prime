@@ -177,11 +177,10 @@ fn app_subscription(app: &PrimeApp) -> Subscription<Message> {
             .push(iced::time::every(RIOT_CLIENT_CHECK_INTERVAL).map(|_| Message::RiotClientTick));
     }
 
-    if app.refreshed()
-        && app
-            .login_capture
-            .as_ref()
-            .is_some_and(|capture| capture.wait.is_some())
+    if app
+        .login_capture
+        .as_ref()
+        .is_some_and(|capture| capture.wait.is_some())
     {
         subscriptions.push(
             iced::time::every(LOGIN_CAPTURE_SIGN_IN_CHECK_INTERVAL)
@@ -204,8 +203,7 @@ fn background_refresh_active(app: &PrimeApp) -> bool {
 /// account details, don't count, since each tick rebuilds the whole window.
 /// Live Match is fetching the names players hide, after "Show hidden details" or on a poll.
 fn hidden_names_loading(app: &PrimeApp) -> bool {
-    // Stable, without the interface refresh, shows "Name unavailable" while they load.
-    app.refreshed() && app.show_hidden_details && app.live_match_request.is_some()
+    app.show_hidden_details && app.live_match_request.is_some()
 }
 
 fn loading_indicator_active(app: &PrimeApp) -> bool {
@@ -322,8 +320,7 @@ fn status_spinner_active(app: &PrimeApp) -> bool {
 /// briefly so actions still get feedback without cluttering the window.
 fn status_bar_visible(app: &PrimeApp) -> bool {
     // The sign-in dialog shows its own progress; only warnings and errors show over it.
-    if app.refreshed()
-        && app.login_capture.is_some()
+    if app.login_capture.is_some()
         && matches!(
             app.status.kind,
             StatusKind::Progress | StatusKind::Info | StatusKind::Success
@@ -404,11 +401,8 @@ struct PrimeApp {
     aim: AimTrainerTab,
     new_display_name: String,
     redirect_input: String,
-    /// The Settings section last picked from its menu.
-    settings_section: SettingsSection,
-    /// The Settings page shown, with the settings-pages experiment on.
+    /// The Settings page shown.
     settings_page: SettingsPage,
-    token_import_open: bool,
     client_version_input: String,
     riot_client_path_input: String,
     status: Status,
@@ -953,45 +947,7 @@ impl TabScrollOffsets {
     }
 }
 
-/// The Settings tab's sections, in page order.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum SettingsSection {
-    RiotClient,
-    SystemTray,
-    LiveMatch,
-    Storage,
-    Updates,
-    Experiments,
-    Advanced,
-}
-
-impl SettingsSection {
-    const ALL: [SettingsSection; 7] = [
-        SettingsSection::RiotClient,
-        SettingsSection::SystemTray,
-        SettingsSection::LiveMatch,
-        SettingsSection::Storage,
-        SettingsSection::Updates,
-        SettingsSection::Experiments,
-        SettingsSection::Advanced,
-    ];
-}
-
-impl std::fmt::Display for SettingsSection {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            SettingsSection::RiotClient => "Riot Client",
-            SettingsSection::SystemTray => "System tray",
-            SettingsSection::LiveMatch => "Live Match",
-            SettingsSection::Storage => "Storage & cache",
-            SettingsSection::Updates => "Updates",
-            SettingsSection::Experiments => "Experiments",
-            SettingsSection::Advanced => "Advanced",
-        })
-    }
-}
-
-/// The Settings tab's pages with the settings-pages experiment on, in nav order.
+/// The Settings tab's pages, in nav order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SettingsPage {
     General,
@@ -1228,9 +1184,7 @@ enum Message {
     BrowseRiotClientPath,
     RiotClientPathPicked(Option<PathBuf>),
     SaveSettings,
-    SettingsSectionSelected(SettingsSection),
     SettingsPageSelected(SettingsPage),
-    ToggleTokenImport,
     OpenInExplorer(PathBuf),
     ExplorerOpened(Result<(), String>),
     ImageCacheSizeLoaded(Result<CacheUsage, String>),

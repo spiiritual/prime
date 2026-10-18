@@ -16,48 +16,26 @@ fn aim_app(dir: &Path) -> PrimeApp {
     let _ = app.update(aim(AimMessage::SensitivityChanged("0.34".into())));
     // Hard's pace, which the timings below were written for.
     app.state.aim_trainer.difficulty = crate::aim_trainer::Difficulty::Hard;
-    // A beta build, whose Aim Trainer modes experiment these tests cover.
-    app.update_channel = Some(crate::updater::BETA_CHANNEL.to_string());
     app
 }
 
 #[test]
-fn aim_modes_without_the_experiment_are_the_original_ones() {
-    use crate::aim_trainer::{SensitivityMode, ViewMode};
+fn stable_runs_use_the_saved_aim_modes() {
+    use crate::aim_trainer::SensitivityMode;
 
     let dir = tempdir().expect("temp dir");
     let mut app = aim_app(dir.path());
+    app.update_channel = Some(crate::updater::STABLE_CHANNEL.to_string());
     let _ = app.update(aim(AimMessage::SensitivityModeChanged(
         SensitivityMode::Windows,
     )));
-
-    // Stable never runs it.
-    app.update_channel = Some(crate::updater::STABLE_CHANNEL.to_string());
-    assert!(!app.experiment(crate::storage::AIM_MODES_EXPERIMENT));
-    app.update_channel = Some(crate::updater::BETA_CHANNEL.to_string());
-    assert!(app.experiment(crate::storage::AIM_MODES_EXPERIMENT));
-
-    let task = app.update(Message::ExperimentToggled(
-        crate::storage::AIM_MODES_EXPERIMENT,
-        false,
-    ));
-    assert!(task.units() > 0, "saved");
-    assert!(!app.experiment(crate::storage::AIM_MODES_EXPERIMENT));
     let _ = app.update(aim(AimMessage::Start));
     let AimPhase::Playing(game) = &app.aim.phase else {
         panic!("playing");
     };
     assert_eq!(
         (game.sensitivity_mode(), game.mode()),
-        (SensitivityMode::Valorant, ViewMode::TwoD)
-    );
-    assert_eq!(
-        (
-            app.state.aim_trainer.sensitivity_mode,
-            app.state.aim_trainer.view_mode
-        ),
-        (SensitivityMode::Windows, ViewMode::ThreeD),
-        "the saved choices come back with the experiment"
+        (SensitivityMode::Windows, app.state.aim_trainer.view_mode)
     );
 }
 

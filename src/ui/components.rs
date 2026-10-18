@@ -1,11 +1,10 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer, widget::Tree,
 };
 use iced::widget::image::Handle;
-use iced::widget::{Column, Row, column, container, image, row, space};
+use iced::widget::{Row, column, container, image, row, space};
 use iced::{
     Color, ContentFit, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector,
     alignment,
@@ -416,30 +415,8 @@ pub(super) fn asset_background_image<'a>(
     }
 }
 
-/// Whether the window being drawn has the interface refresh experiment, for placeholders drawn
-/// too deep to be handed the app. `PrimeApp::view` sets it each frame.
-// ponytail: one flag for the one window; pass `refresh` down instead if a second window draws.
-static REFRESHED: AtomicBool = AtomicBool::new(false);
-
-pub(super) fn set_refreshed(refreshed: bool) {
-    REFRESHED.store(refreshed, Ordering::Relaxed);
-}
-
-fn refreshed() -> bool {
-    REFRESHED.load(Ordering::Relaxed)
-}
-
 /// Art that doesn't exist, or that couldn't be downloaded.
 fn no_image_placeholder<'a>(height: impl Into<Length>) -> Element<'a, Message> {
-    if !refreshed() {
-        return container(text("No image").size(13))
-            .width(Length::Fill)
-            .height(height)
-            .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Center)
-            .style(iced::widget::container::rounded_box)
-            .into();
-    }
     container(
         column![
             theme::icon(theme::Icon::ImageOff, 18.0, theme::FAINT),
@@ -763,16 +740,7 @@ gradientTransform="translate({center_x} {center_y}) scale({scale_x} {scale_y}) t
 
 /// The one loading spinner: Lucide's `loader`, its spokes fading in turn on each loading tick.
 /// Rotating the icon instead wouldn't show, since a 45° turn of eight spokes looks the same.
-/// Without the interface refresh (`refresh`), it's stable's compact dot grid.
-pub(super) fn spinner(
-    refresh: bool,
-    frame: usize,
-    size: f32,
-    color: Color,
-) -> Element<'static, Message> {
-    if !refresh {
-        return compact_loading_indicator(frame);
-    }
+pub(super) fn spinner(frame: usize, size: f32, color: Color) -> Element<'static, Message> {
     const SPOKES: [&str; 8] = [
         "M12 2v4",
         "m16.2 7.8 2.9-2.9",
@@ -814,90 +782,6 @@ fn spoke_opacity(active: usize, index: usize, count: usize) -> f32 {
     }
 }
 
-/// Stable's spinner, a grid of white dots; `spinner` replaces it with the interface refresh.
-pub(super) fn loading_indicator(frame: usize) -> Element<'static, Message> {
-    loading_orbit(frame, 5.0, 7.0, 2)
-}
-
-pub(super) fn compact_loading_indicator(frame: usize) -> Element<'static, Message> {
-    loading_orbit(frame, 3.0, 5.0, 1)
-}
-
-fn loading_orbit(
-    frame: usize,
-    dot_size: f32,
-    slot_size: f32,
-    spacing: u32,
-) -> Element<'static, Message> {
-    let active = frame % 8;
-    let mut grid = Column::new().spacing(spacing);
-
-    for row_index in 0..3 {
-        let mut row = Row::new().spacing(spacing);
-
-        for column_index in 0..3 {
-            let cell: Element<_> = if let Some(index) = orbit_index(row_index, column_index) {
-                let intensity = loading_intensity(active, index, 8);
-                let size = dot_size * (0.45 + 0.55 * intensity);
-                container(space())
-                    .width(size)
-                    .height(size)
-                    .style(move |_| loading_shape_style(intensity, size / 2.0))
-                    .into()
-            } else {
-                space().width(0.0).height(0.0).into()
-            };
-
-            row = row.push(
-                container(cell)
-                    .width(slot_size)
-                    .height(slot_size)
-                    .align_x(alignment::Horizontal::Center)
-                    .align_y(alignment::Vertical::Center),
-            );
-        }
-
-        grid = grid.push(row);
-    }
-
-    grid.into()
-}
-
-fn orbit_index(row: usize, column: usize) -> Option<usize> {
-    match (row, column) {
-        (0, 1) => Some(0),
-        (0, 2) => Some(1),
-        (1, 2) => Some(2),
-        (2, 2) => Some(3),
-        (2, 1) => Some(4),
-        (2, 0) => Some(5),
-        (1, 0) => Some(6),
-        (0, 0) => Some(7),
-        _ => None,
-    }
-}
-
-fn loading_intensity(active: usize, index: usize, count: usize) -> f32 {
-    let distance = active.abs_diff(index);
-    let wrapped_distance = distance.min(count - distance);
-
-    match wrapped_distance {
-        0 => 1.0,
-        1 => 0.62,
-        2 => 0.34,
-        _ => 0.18,
-    }
-}
-
-fn loading_shape_style(intensity: f32, radius: f32) -> iced::widget::container::Style {
-    let alpha = 0.18 + 0.74 * intensity;
-    let mut style = iced::widget::container::Style {
-        background: Some(Color::from_rgba8(255, 255, 255, alpha).into()),
-        ..Default::default()
-    };
-    style.border.radius = iced::border::radius(radius);
-    style
-}
 
 pub(super) fn currency_balance_display(summary: &StoreSummary) -> Element<'_, Message> {
     if summary.currency_balances.is_empty() {
@@ -915,18 +799,8 @@ pub(super) fn balances_unavailable<'a>() -> Element<'a, Message> {
         .into()
 }
 
-/// The wallet's box while it loads, with a block for each balance chip. Without the interface
-/// refresh, skeleton pills in the wallet's place.
+/// The wallet's box while it loads, with a block for each balance chip.
 pub(super) fn wallet_skeleton<'a>() -> Element<'a, Message> {
-    if !refreshed() {
-        return row![
-            skeleton(92, 34.0, 8.0, 1.0),
-            skeleton(64, 34.0, 8.0, 1.0),
-            skeleton(84, 34.0, 8.0, 1.0),
-        ]
-        .spacing(8)
-        .into();
-    }
     let chip = |width| container(skeleton(width, 13.0, 4.0, 1.0)).padding([8, 12]);
 
     container(row![chip(56), chip(44), chip(60)].spacing(4))
@@ -944,14 +818,7 @@ fn currency_balance_row<'a>(balances: &'a [CurrencyBalanceDisplay]) -> Element<'
 
     container(row)
         .padding(4)
-        .style(|theme| {
-            if refreshed() {
-                return card_style(10.0);
-            }
-            let mut style = iced::widget::container::bordered_box(theme);
-            style.border.radius = 10.0.into();
-            style
-        })
+        .style(|_| card_style(10.0))
         .into()
 }
 

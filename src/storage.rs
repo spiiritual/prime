@@ -62,17 +62,9 @@ impl std::fmt::Debug for UnknownFields {
     }
 }
 
-/// The new Aim Trainer modes: the Sensitivity and View choices, 3D included. Off, as in stable,
-/// runs use VALORANT sensitivity and the 2D crosshair, as the trainer first shipped.
-pub const AIM_MODES_EXPERIMENT: &str = "aim-trainer-modes";
-
-/// The interface refresh: one spinner, the reworked sign-in dialog, busy buttons, placeholders
-/// that look like what they stand in for. Off, as in stable, Prime looks as it did before.
-pub const INTERFACE_REFRESH_EXPERIMENT: &str = "interface-refresh";
-
-/// Settings as one page per section. Off, as in stable, it is one scrolling page whose nav
-/// scrolls to a section.
-pub const SETTINGS_PAGES_EXPERIMENT: &str = "settings-pages";
+/// The experiments in this build, as `(name, Settings label)`. Beta starts with each on and shows
+/// a switch for it; empty while nothing is being tried.
+pub const EXPERIMENTS: &[(&str, &str)] = &[];
 
 fn minimize_on_close_default() -> bool {
     true

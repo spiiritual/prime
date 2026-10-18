@@ -10,8 +10,6 @@ mod shop;
 use iced::Element;
 use iced::widget::row;
 
-use crate::storage::SETTINGS_PAGES_EXPERIMENT;
-
 use super::components::{empty_state, spinner, unavailable_state};
 use super::theme::{self, Icon, button, text};
 use super::{Message, PrimeApp, Tab};
@@ -26,7 +24,6 @@ pub(super) use game_settings::original_settings;
 pub(super) use game_settings::selected_preset;
 pub(super) use live_match::hidden_details_toggle as live_match_hidden_details_toggle;
 pub(super) use loadout::sub_tabs as loadout_sub_tabs;
-pub(super) use settings::scroll_to_settings_section;
 pub(super) use shop::bundle_details;
 
 pub(super) fn tab(app: &PrimeApp, tab: Tab) -> Element<'_, Message> {
@@ -35,8 +32,7 @@ pub(super) fn tab(app: &PrimeApp, tab: Tab) -> Element<'_, Message> {
         Tab::Shop => shop::tab(app),
         Tab::Loadout => loadout::tab(app),
         Tab::AimTrainer => aim_trainer::tab(app),
-        Tab::Settings if app.experiment(SETTINGS_PAGES_EXPERIMENT) => settings_pages::tab(app),
-        Tab::Settings => settings::tab(app),
+        Tab::Settings => settings_pages::tab(app),
         Tab::LiveMatch => live_match::tab(app),
     }
 }
@@ -65,21 +61,12 @@ pub(super) fn fills_page(app: &PrimeApp, tab: Tab) -> bool {
 
 /// A tab's menu that stays beside its scrolling page; only Settings has one.
 pub(super) fn side_nav(app: &PrimeApp, tab: Tab) -> Option<Element<'_, Message>> {
-    (tab == Tab::Settings).then(|| {
-        if app.experiment(SETTINGS_PAGES_EXPERIMENT) {
-            settings_pages::section_nav(app)
-        } else {
-            settings::section_nav(app)
-        }
-    })
+    (tab == Tab::Settings).then(|| settings_pages::section_nav(app))
 }
 
 /// What Shop or Loadout shows instead of content it can't load yet: no account to load, or the
 /// Riot client version still missing.
 fn account_view_waiting<'a>(app: &PrimeApp, what: &str) -> Option<Element<'a, Message>> {
-    if !app.refreshed() {
-        return account_view_waiting_line(app, what);
-    }
     if app.state.accounts.is_empty() {
         return Some(empty_state(
             Icon::Users,
@@ -103,7 +90,7 @@ fn account_view_waiting<'a>(app: &PrimeApp, what: &str) -> Option<Element<'a, Me
     let retry = button(
         row![
             if fetching {
-                spinner(true, app.loading_frame, 14.0, theme::MUTED)
+                spinner(app.loading_frame, 14.0, theme::MUTED)
             } else {
                 theme::icon(Icon::RefreshCw, 14.0, theme::TEXT)
             },
@@ -136,25 +123,8 @@ fn account_view_waiting<'a>(app: &PrimeApp, what: &str) -> Option<Element<'a, Me
     ))
 }
 
-/// Stable's `account_view_waiting`, without the interface refresh: one line of text.
-fn account_view_waiting_line(app: &PrimeApp, what: &str) -> Option<Element<'static, Message>> {
-    let line = if app.state.accounts.is_empty() {
-        format!("Add an account on the Accounts tab to see its {what}.")
-    } else if app.state.selected_account().is_none() {
-        format!("Select an account to see its {what}.")
-    } else if app.client_version_input.trim().is_empty() {
-        "Waiting for the Riot client version. Prime keeps retrying; you can also refresh it in Settings."
-            .to_string()
-    } else {
-        return None;
-    };
-
-    Some(text(line).into())
-}
-
 /// Shop and Loadout can't load: `account_view_waiting` shows a centred state instead, unless
 /// they already have something to show.
 fn account_view_blocked(app: &PrimeApp) -> bool {
-    app.refreshed()
-        && (app.state.selected_account().is_none() || app.client_version_input.trim().is_empty())
+    app.state.selected_account().is_none() || app.client_version_input.trim().is_empty()
 }

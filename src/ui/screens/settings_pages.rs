@@ -1,4 +1,4 @@
-//! Settings as one page per section, behind the settings-pages beta experiment.
+//! Settings, one page per section.
 
 use std::path::Path;
 
@@ -24,6 +24,7 @@ const WEAPON_SLOT_WIDTH: f32 = 132.0;
 pub(super) fn section_nav(app: &PrimeApp) -> Element<'_, Message> {
     SettingsPage::ALL
         .into_iter()
+        .filter(|page| *page != SettingsPage::Experiments || app.experiments_shown())
         .fold(column![].spacing(2), |nav, page| {
             nav.push(section_nav_item(page, app.settings_page == page))
         })

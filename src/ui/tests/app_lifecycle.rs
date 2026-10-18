@@ -527,25 +527,9 @@ fn an_empty_riot_client_path_means_find_it_automatically() {
 }
 
 #[test]
-fn an_edited_riot_client_path_shows_as_unsaved_until_saved() {
-    let dir = tempdir().expect("temp dir");
-    let mut app = test_app(dir.path());
-    let client = dir.path().join("RiotClientServices.exe");
-    fs::write(&client, "exe").expect("client");
-    assert!(!app.riot_client_path_unsaved());
-
-    let _ = app.update(Message::RiotClientPathChanged(client.display().to_string()));
-    assert!(app.riot_client_path_unsaved());
-
-    let _ = app.update(Message::SaveSettings);
-    assert!(!app.riot_client_path_unsaved());
-}
-
-#[test]
 fn a_typed_riot_client_path_saves_once_the_file_exists() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    app.update_channel = Some(crate::updater::BETA_CHANNEL.to_string());
     let client = dir.path().join("RiotClientServices.exe");
     fs::write(&client, "exe").expect("client");
 
@@ -595,9 +579,6 @@ fn fetch_latest_waits_for_its_lookup_and_the_shop_fills_the_page_without_a_versi
     let dir = tempdir().expect("temp dir");
     let (mut app, _, _) = two_account_app(dir.path());
     app.client_version_input.clear();
-    // Stable, without the interface refresh, keeps its line of text on the scrolling page.
-    assert!(!crate::ui::screens::fills_page(&app, crate::ui::Tab::Shop));
-    app.update_channel = Some(crate::updater::BETA_CHANNEL.to_string());
     assert!(crate::ui::screens::fills_page(&app, crate::ui::Tab::Shop));
 
     assert_eq!(app.update(Message::RefreshClientVersion).units(), 1);
@@ -612,22 +593,11 @@ fn fetch_latest_waits_for_its_lookup_and_the_shop_fills_the_page_without_a_versi
 }
 
 #[test]
-fn stable_settings_stay_one_scrolling_page() {
+fn settings_nav_switches_pages() {
     let dir = tempdir().expect("temp dir");
     let mut app = test_app(dir.path());
-    app.update_channel = Some(crate::updater::STABLE_CHANNEL.to_string());
-    assert!(!app.experiment(crate::storage::SETTINGS_PAGES_EXPERIMENT));
-
-    // The nav scrolls to the section rather than switching pages.
-    let task = app.update(Message::SettingsSectionSelected(
-        crate::ui::SettingsSection::Storage,
-    ));
-    assert_eq!(app.settings_section, crate::ui::SettingsSection::Storage);
     assert_eq!(app.settings_page, crate::ui::SettingsPage::General);
-    assert!(task.units() > 0);
 
-    app.update_channel = Some(crate::updater::BETA_CHANNEL.to_string());
-    assert!(app.experiment(crate::storage::SETTINGS_PAGES_EXPERIMENT));
     let task = app.update(Message::SettingsPageSelected(
         crate::ui::SettingsPage::Storage,
     ));

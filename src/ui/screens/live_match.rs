@@ -430,7 +430,7 @@ fn player_row<'a>(
             if streamer && error.is_none() && super::super::hidden_names_loading(app) {
                 name_row.push(
                     row![
-                        spinner(true, app.loading_frame, 14.0, theme::MUTED),
+                        spinner(app.loading_frame, 14.0, theme::MUTED),
                         text("Looking up name\u{2026}")
                             .size(13)
                             .font(theme::SEMIBOLD_FONT)
