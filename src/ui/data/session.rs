@@ -200,6 +200,10 @@ pub(in crate::ui) async fn active_api_session(
     api: &RiotApi,
     account: &AccountProfile,
 ) -> Result<ApiSession, String> {
+    if let Some(session) = riot_client_session(account).await {
+        return Ok(session);
+    }
+
     // A stored token issued for another Riot account is skipped rather than used as this one.
     if let Some(session) = &account.session
         && !session.is_expired()
@@ -226,11 +230,36 @@ pub(in crate::ui) async fn refreshed_api_session(
     api: &RiotApi,
     account: &AccountProfile,
 ) -> Result<ApiSession, String> {
+    if let Some(session) = riot_client_session(account).await {
+        return Ok(session);
+    }
     if let Some(backup) = &account.launcher_session {
         return launcher_api_session(api, backup).await;
     }
 
     active_api_session(api, account).await
+}
+
+/// The Riot Client's own session when it's signed in on this PC as this account, so Prime doesn't
+/// refresh a second session alongside the game's. Riot asking for Riot Mobile verification
+/// before ranked lined up with Prime polling through a second session.
+async fn riot_client_session(account: &AccountProfile) -> Option<ApiSession> {
+    // Tests never reach the Riot Client running on this PC.
+    if cfg!(test) {
+        return None;
+    }
+    let puuid = account.puuid.as_deref().or_else(|| {
+        account
+            .launcher_session
+            .as_ref()
+            .map(|backup| backup.puuid.as_str())
+    })?;
+    let session = crate::riot::local_client::signed_in_session(puuid).await?;
+
+    Some(ApiSession {
+        session,
+        launcher_session: None,
+    })
 }
 
 async fn launcher_api_session(
@@ -253,16 +282,23 @@ pub(in crate::ui::data) async fn reauth_launcher_backup(
     backup: &LauncherSessionBackup,
 ) -> Result<ApiSession, String> {
     let refresh_token = read_backup_refresh_token(backup).map_err(|error| error.to_string())?;
-    let reauth = api
-        .refresh_token_reauth(&refresh_token)
-        .await
-        .map_err(|error| match error {
-            // Already says what happened and what to do.
-            crate::riot::client::RiotApiError::RefreshTokenRejected(_) => error.to_string(),
-            error => format!(
+    if let Some(error) = rejected_refresh_token(&refresh_token) {
+        return Err(error);
+    }
+    let reauth = match api.refresh_token_reauth(&refresh_token).await {
+        Ok(reauth) => reauth,
+        // Already says what happened and what to do.
+        Err(error @ crate::riot::client::RiotApiError::RefreshTokenRejected(_)) => {
+            let error = error.to_string();
+            remember_rejected_refresh_token(&refresh_token, &error);
+            return Err(error);
+        }
+        Err(error) => {
+            return Err(format!(
                 "launcher session reauth failed: {error}. Recapture the Riot Client session or import a fresh redirect token."
-            ),
-        })?;
+            ));
+        }
+    };
 
     if let Some(rotated) = reauth
         .refresh_token
@@ -279,6 +315,34 @@ pub(in crate::ui::data) async fn reauth_launcher_backup(
         // Still the same sign-in, so it keeps its capture time.
         launcher_session: Some(backup.clone()),
     })
+}
+
+/// Refresh tokens Riot rejected, by hash, with the error each got. Riot never takes a rejected
+/// one again (signing out revokes it), so polls stop sending it; a re-capture saves a new one.
+// ponytail: in memory, so each start of Prime sends a dead login once more; save it if that matters.
+static REJECTED_REFRESH_TOKENS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<u64, String>>,
+> = std::sync::LazyLock::new(Default::default);
+
+fn refresh_token_key(refresh_token: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    refresh_token.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn rejected_refresh_token(refresh_token: &str) -> Option<String> {
+    REJECTED_REFRESH_TOKENS
+        .lock()
+        .ok()?
+        .get(&refresh_token_key(refresh_token))
+        .cloned()
+}
+
+fn remember_rejected_refresh_token(refresh_token: &str, error: &str) {
+    if let Ok(mut rejected) = REJECTED_REFRESH_TOKENS.lock() {
+        rejected.insert(refresh_token_key(refresh_token), error.to_string());
+    }
 }
 
 pub(in crate::ui) async fn entitlement_token(
@@ -457,5 +521,24 @@ pub(in crate::ui) mod tests {
         let result = iced::futures::executor::block_on(super::active_api_session(&api, &account));
 
         assert!(result.is_err(), "the other account's token was used");
+    }
+
+    #[test]
+    fn remembers_a_rejected_refresh_token() {
+        assert_eq!(
+            super::rejected_refresh_token("refresh-token-test-rejected"),
+            None
+        );
+
+        super::remember_rejected_refresh_token("refresh-token-test-rejected", "signed out");
+
+        assert_eq!(
+            super::rejected_refresh_token("refresh-token-test-rejected").as_deref(),
+            Some("signed out")
+        );
+        assert_eq!(
+            super::rejected_refresh_token("refresh-token-test-other"),
+            None
+        );
     }
 }

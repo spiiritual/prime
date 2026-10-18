@@ -49,12 +49,21 @@ impl RedirectTokens {
 
 /// Reads the `sub` claim of a JWT without verifying it. Riot tokens use the PUUID as the subject.
 pub fn jwt_subject(token: &str) -> Option<String> {
-    let payload = token.split('.').nth(1)?;
-    let claims = URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
-    let claims: serde_json::Value = serde_json::from_slice(&claims).ok()?;
+    let claims = jwt_claims(token)?;
     let subject = claims.get("sub")?.as_str()?.trim();
 
     (!subject.is_empty()).then(|| subject.to_string())
+}
+
+/// Reads the `exp` claim (Unix seconds) of a JWT without verifying it.
+pub fn jwt_expires_at(token: &str) -> Option<i64> {
+    jwt_claims(token)?.get("exp")?.as_i64()
+}
+
+fn jwt_claims(token: &str) -> Option<serde_json::Value> {
+    let payload = token.split('.').nth(1)?;
+    let claims = URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
+    serde_json::from_slice(&claims).ok()
 }
 
 pub fn parse_redirect_tokens(redirect_url: &str) -> Result<RedirectTokens, AuthParseError> {
@@ -140,6 +149,16 @@ mod tests {
             Some("puuid-a")
         );
         assert_eq!(jwt_subject("not-a-jwt"), None);
+    }
+
+    #[test]
+    fn reads_when_a_token_expires() {
+        let claims = URL_SAFE_NO_PAD.encode(r#"{"sub":"puuid-a","exp":1792030415}"#);
+        assert_eq!(
+            jwt_expires_at(&format!("header.{claims}.signature")),
+            Some(1792030415)
+        );
+        assert_eq!(jwt_expires_at(&jwt_with_subject("puuid-a")), None);
     }
 
     #[test]
