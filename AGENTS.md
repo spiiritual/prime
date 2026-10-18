@@ -219,6 +219,10 @@ written.
   account and restore it before launching.
 - Requests re-authenticate from the captured launcher session when possible. Refreshed sessions and
   entitlement tokens are saved back to the account.
+- While the Riot Client on this PC is signed in as an account, that account's requests use the Riot
+  Client's own session (`/entitlements/v1/token` on its local API) instead of refreshing a second
+  one. Riot asking for Riot Mobile verification before ranked lined up with Prime polling through
+  a second session. A refresh token Riot rejects isn't sent again until Prime restarts.
 - Signing the account out anywhere revokes its saved refresh token (`invalid_grant`), and only a
   re-capture fixes it. Signing in or launching the game elsewhere does not revoke it.
 - Each account's region is saved after the first Riot Geo lookup and reused; the shard comes from

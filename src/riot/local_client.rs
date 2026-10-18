@@ -174,6 +174,47 @@ pub async fn riot_client_signed_in() -> bool {
     .is_some_and(|token| token["subject"].as_str().is_some_and(|subject| !subject.is_empty()))
 }
 
+/// The session the Riot Client on this PC is using, when it's signed in as `puuid`. Requests for
+/// that account go through it rather than a second session of Prime's own, so Riot sees one
+/// session for the account the game is using.
+pub async fn signed_in_session(puuid: &str) -> Option<crate::account::AuthSession> {
+    let auth = read_lockfile()?;
+    let body = local_request(&auth, |client, base| {
+        client.get(format!("{base}/entitlements/v1/token"))
+    })
+    .await
+    .ok()?;
+    entitlements_session(&body, puuid)
+}
+
+/// The session in an `/entitlements/v1/token` response, when its subject is `puuid`.
+pub fn entitlements_session(body: &str, puuid: &str) -> Option<crate::account::AuthSession> {
+    #[derive(Deserialize)]
+    struct Tokens {
+        #[serde(rename = "accessToken")]
+        access_token: String,
+        token: String,
+        subject: String,
+    }
+
+    let tokens: Tokens = serde_json::from_str(body).ok()?;
+    if puuid.trim().is_empty()
+        || !tokens.subject.trim().eq_ignore_ascii_case(puuid.trim())
+        || tokens.access_token.trim().is_empty()
+    {
+        return None;
+    }
+
+    Some(crate::account::AuthSession {
+        expires_at_unix: crate::riot::auth::jwt_expires_at(&tokens.access_token),
+        access_token: tokens.access_token,
+        id_token: None,
+        entitlements_token: Some(tokens.token).filter(|token| !token.trim().is_empty()),
+        token_type: "Bearer".to_string(),
+        unknown: Default::default(),
+    })
+}
+
 /// Whether the Riot Client is running on this PC, judged by its lockfile.
 pub fn riot_client_running() -> bool {
     read_lockfile().is_some()
@@ -392,5 +433,21 @@ mod tests {
             presence_score(&body, "self"),
             Err(ScoreUnavailable::Failed(_))
         ));
+    }
+
+    #[test]
+    fn uses_the_riot_client_session_only_for_its_signed_in_account() {
+        let body = r#"{"accessToken":"header.e30.signature","entitlements":[],"issuer":"x","subject":"PUUID-A","token":"entitlement"}"#;
+
+        let session =
+            entitlements_session(body, "puuid-a").expect("session for the signed-in account");
+        assert_eq!(session.access_token, "header.e30.signature");
+        assert_eq!(session.entitlements_token.as_deref(), Some("entitlement"));
+        assert_eq!(entitlements_session(body, "puuid-b"), None);
+        assert_eq!(entitlements_session(body, ""), None);
+        assert_eq!(
+            entitlements_session(r#"{"subject":"puuid-a"}"#, "puuid-a"),
+            None
+        );
     }
 }
